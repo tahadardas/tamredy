@@ -38,6 +38,7 @@ export function alarmMessage(token: string, data: Record<string, string>, ttlSec
 
 export interface ServiceAccount { project_id: string; client_email: string; private_key: string; }
 export type SendResult = 'ok' | 'unregistered' | 'error';
+export interface PushResponse { result: SendResult; errorDetail?: string; }
 type Fetch = typeof fetch;
 
 /** Minimal FCM HTTP v1 client (service-account JWT -> OAuth token -> messages:send). */
@@ -47,7 +48,7 @@ export class FcmClient {
   private readonly fetchImpl: Fetch;
   constructor(sa: ServiceAccount, fetchImpl: Fetch = fetch) { this.sa = sa; this.fetchImpl = fetchImpl; }
 
-  private async accessToken(): Promise<string> {
+  async accessToken(): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     if (this.token && this.token.exp - 60 > now) return this.token.value;
     const assertion = jwt.sign({ scope: 'https://www.googleapis.com/auth/firebase.messaging' }, this.sa.private_key, {
@@ -64,56 +65,238 @@ export class FcmClient {
   }
 
   async send(deviceToken: string, msg: { title: string; body: string }, data: Record<string, string>): Promise<SendResult> {
-    return this.post({ message: { token: deviceToken, notification: msg, data, android: { priority: 'HIGH' }, apns: { headers: { 'apns-priority': '10' } } } });
+    const r = await this.post({ message: { token: deviceToken, notification: msg, data, android: { priority: 'HIGH' }, apns: { headers: { 'apns-priority': '10' } } } });
+    return r.result;
   }
 
   async sendAlarm(deviceToken: string, data: Record<string, string>, ttlSeconds: number, copy: { title: string; body: string }): Promise<SendResult> {
+    const r = await this.post(alarmMessage(deviceToken, data, ttlSeconds, copy));
+    return r.result;
+  }
+
+  async sendDetailed(deviceToken: string, msg: { title: string; body: string }, data: Record<string, string>): Promise<PushResponse> {
+    return this.post({ message: { token: deviceToken, notification: msg, data, android: { priority: 'HIGH' }, apns: { headers: { 'apns-priority': '10' } } } });
+  }
+
+  async sendAlarmDetailed(deviceToken: string, data: Record<string, string>, ttlSeconds: number, copy: { title: string; body: string }): Promise<PushResponse> {
     return this.post(alarmMessage(deviceToken, data, ttlSeconds, copy));
   }
 
-  private async post(body: unknown): Promise<SendResult> {
+  private async post(body: unknown): Promise<PushResponse> {
     try {
+      const token = await this.accessToken();
       const r = await this.fetchImpl(`https://fcm.googleapis.com/v1/projects/${this.sa.project_id}/messages:send`, {
-        method: 'POST', headers: { Authorization: `Bearer ${await this.accessToken()}`, 'Content-Type': 'application/json' },
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (r.ok) return 'ok';
+      if (r.ok) return { result: 'ok' };
+      const errText = await r.text();
+      let e: any = {};
+      try { e = JSON.parse(errText); } catch {}
       if (r.status === 404 || r.status === 400) {
-        const e = await r.json().catch(() => ({})) as { error?: { details?: { errorCode?: string }[]; status?: string } };
-        if (e.error?.details?.some(d => d.errorCode === 'UNREGISTERED') || e.error?.status === 'NOT_FOUND') return 'unregistered';
+        if (e.error?.details?.some((d: any) => d.errorCode === 'UNREGISTERED') || e.error?.status === 'NOT_FOUND') {
+          return { result: 'unregistered', errorDetail: errText };
+        }
       }
-      return 'error';
-    } catch { return 'error'; }
+      return { result: 'error', errorDetail: `HTTP ${r.status}: ${errText}` };
+    } catch (err: any) {
+      return { result: 'error', errorDetail: err?.message || String(err) };
+    }
   }
 }
 
-export interface OutboxEvent { id: string | number; event_type: string; payload: { recipientUserId?: string; recipientUserIds?: string[]; requestId?: string; offerId?: string; expiresAt?: string; percent?: number }; }
+export interface OutboxEvent {
+  id: string | number;
+  event_type: string;
+  payload: {
+    recipientUserId?: string;
+    recipientUserIds?: string[];
+    requestId?: string;
+    offerId?: string;
+    expiresAt?: string;
+    percent?: number;
+  };
+}
 export interface Db { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number | null }>; }
 
-/** Sends pushes for a batch of events with ONE token lookup (no per-event query) and prunes dead tokens. */
-export async function pushBatch(db: Db, fcm: Pick<FcmClient, 'send' | 'sendAlarm'>, events: OutboxEvent[]): Promise<{ sent: number; pruned: number }> {
-  // The loud alarm for new requests can be switched off from the marketing page (then offers arrive as normal notifications).
+/** Sends pushes for a batch of events with decoupled ledger logging in notification_deliveries. */
+export async function pushDeliverBatch(
+  db: Db,
+  fcm: FcmClient,
+  events: OutboxEvent[]
+): Promise<{ sent: number; failed: number; pruned: number }> {
   const alarmOn = events.some(e => e.event_type === 'offer.created') ? await alarmEnabled(db) : false;
+
   const planned = events.flatMap(e => {
     const copy = pushCopy(e.event_type, e.payload);
     if (!copy) return [];
     const users = [...(e.payload.recipientUserIds ?? []), ...(e.payload.recipientUserId ? [e.payload.recipientUserId] : [])];
     const alarm = alarmOn && e.event_type === 'offer.created';
-    const ttl = e.payload.expiresAt ? (new Date(e.payload.expiresAt).getTime() - Date.now()) / 1000 : 20;
-    return users.map(u => ({ user: u, copy, alarm, ttl, data: { type: e.event_type, requestId: e.payload.requestId ?? '', offerId: e.payload.offerId ?? '', expiresAt: e.payload.expiresAt ?? '' } }));
+    const expiresAt = e.payload.expiresAt ? new Date(e.payload.expiresAt) : null;
+    const ttl = expiresAt ? (expiresAt.getTime() - Date.now()) / 1000 : 20;
+
+    return users.map(u => ({
+      eventId: e.id,
+      user: u,
+      copy,
+      alarm,
+      ttl,
+      expiresAt,
+      data: {
+        type: e.event_type,
+        requestId: e.payload.requestId ?? '',
+        offerId: e.payload.offerId ?? '',
+        expiresAt: e.payload.expiresAt ?? '',
+      },
+    }));
   });
-  if (!planned.length) return { sent: 0, pruned: 0 };
-  const rows = (await db.query('SELECT user_id,token FROM device_tokens WHERE user_id=ANY($1::uuid[])', [[...new Set(planned.map(p => p.user))]])).rows;
-  const byUser = new Map<string, string[]>();
-  for (const r of rows) byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), r.token]);
-  const dead: string[] = [];
-  let sent = 0;
-  await Promise.all(planned.flatMap(p => (byUser.get(p.user) ?? []).map(async t => {
-    const res = p.alarm ? await fcm.sendAlarm(t, p.data, p.ttl, p.copy) : await fcm.send(t, p.copy, p.data);
-    if (res === 'ok') sent++; else if (res === 'unregistered') dead.push(t);
-  })));
-  if (dead.length) await db.query('DELETE FROM device_tokens WHERE token=ANY($1::text[])', [dead]);
-  return { sent, pruned: dead.length };
+
+  if (!planned.length) return { sent: 0, failed: 0, pruned: 0 };
+
+  const uniqueUsers = [...new Set(planned.map(p => p.user))];
+  const tokenRows = (
+    await db.query(
+      'SELECT user_id, token, platform FROM device_tokens WHERE user_id=ANY($1::uuid[])',
+      [uniqueUsers]
+    )
+  ).rows;
+
+  const byUser = new Map<string, { token: string; platform: string }[]>();
+  for (const r of tokenRows) {
+    byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), { token: r.token, platform: r.platform }]);
+  }
+
+  const deadTokens: string[] = [];
+  let sentCount = 0;
+  let failedCount = 0;
+
+  for (const item of planned) {
+    const devices = byUser.get(item.user) ?? [];
+    if (!devices.length) {
+      // Record token missing in delivery ledger
+      await db.query(
+        `INSERT INTO notification_deliveries(
+          event_id, recipient_user_id, channel, status, attempts, last_error_code, last_error_detail, payload, expires_at
+        ) VALUES($1, $2, 'FCM_PUSH', 'FAILED', 1, 'NO_DEVICE_TOKEN', 'User has no registered active device tokens', $3::jsonb, $4)`,
+        [item.eventId, item.user, JSON.stringify(item.data), item.expiresAt]
+      );
+      failedCount++;
+      continue;
+    }
+
+    for (const dev of devices) {
+      // Check if offer expired before attempting push
+      if (item.expiresAt && item.expiresAt.getTime() <= Date.now()) {
+        await db.query(
+          `INSERT INTO notification_deliveries(
+            event_id, recipient_user_id, device_token, channel, status, attempts, last_error_code, last_error_detail, payload, expires_at
+          ) VALUES($1, $2, $3, 'FCM_PUSH', 'FAILED', 1, 'OFFER_EXPIRED', 'Offer expired prior to delivery attempt', $4::jsonb, $5)`,
+          [item.eventId, item.user, dev.token, JSON.stringify(item.data), item.expiresAt]
+        );
+        failedCount++;
+        continue;
+      }
+
+      const res = item.alarm
+        ? await fcm.sendAlarmDetailed(dev.token, item.data, item.ttl, item.copy)
+        : await fcm.sendDetailed(dev.token, item.copy, item.data);
+
+      if (res.result === 'ok') {
+        sentCount++;
+        await db.query(
+          `INSERT INTO notification_deliveries(
+            event_id, recipient_user_id, device_token, channel, status, attempts, sent_at, payload, expires_at
+          ) VALUES($1, $2, $3, 'FCM_PUSH', 'SENT', 1, now(), $4::jsonb, $5)`,
+          [item.eventId, item.user, dev.token, JSON.stringify(item.data), item.expiresAt]
+        );
+      } else if (res.result === 'unregistered') {
+        deadTokens.push(dev.token);
+        failedCount++;
+        await db.query(
+          `INSERT INTO notification_deliveries(
+            event_id, recipient_user_id, device_token, channel, status, attempts, last_error_code, last_error_detail, payload, expires_at
+          ) VALUES($1, $2, $3, 'FCM_PUSH', 'UNREGISTERED', 1, 'UNREGISTERED', $4, $5::jsonb, $6)`,
+          [item.eventId, item.user, dev.token, res.errorDetail ?? 'Token unregistered by FCM', JSON.stringify(item.data), item.expiresAt]
+        );
+      } else {
+        failedCount++;
+        await db.query(
+          `INSERT INTO notification_deliveries(
+            event_id, recipient_user_id, device_token, channel, status, attempts, next_attempt_at, last_error_code, last_error_detail, payload, expires_at
+          ) VALUES($1, $2, $3, 'FCM_PUSH', 'FAILED', 1, now() + interval '5 seconds', 'FCM_ERROR', $4, $5::jsonb, $6)`,
+          [item.eventId, item.user, dev.token, res.errorDetail ?? 'Delivery failed', JSON.stringify(item.data), item.expiresAt]
+        );
+      }
+    }
+  }
+
+  if (deadTokens.length) {
+    await db.query('DELETE FROM device_tokens WHERE token=ANY($1::text[])', [deadTokens]);
+  }
+
+  return { sent: sentCount, failed: failedCount, pruned: deadTokens.length };
+}
+
+/** Retries any failed notification deliveries whose offers have not expired. */
+export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number> {
+  const pending = await db.query(`
+    SELECT id, recipient_user_id, device_token, attempts, max_attempts, payload, expires_at
+    FROM notification_deliveries
+    WHERE status = 'FAILED'
+      AND attempts < max_attempts
+      AND next_attempt_at <= now()
+      AND (expires_at IS NULL OR expires_at > now())
+    ORDER BY next_attempt_at ASC
+    LIMIT 20
+    FOR UPDATE SKIP LOCKED
+  `);
+
+  if (!pending.rowCount) return 0;
+
+  let retriedCount = 0;
+  for (const row of pending.rows) {
+    if (!row.device_token) {
+      await db.query(`UPDATE notification_deliveries SET status='ABANDONED' WHERE id=$1`, [row.id]);
+      continue;
+    }
+
+    const payload = typeof row.payload === 'object' ? row.payload : {};
+    const copy = pushCopy(payload.type, payload);
+    if (!copy) {
+      await db.query(`UPDATE notification_deliveries SET status='ABANDONED' WHERE id=$1`, [row.id]);
+      continue;
+    }
+
+    const isAlarm = payload.type === 'offer.created';
+    const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
+    const ttl = expiresAt ? Math.max(2, (expiresAt.getTime() - Date.now()) / 1000) : 20;
+
+    const res = isAlarm
+      ? await fcm.sendAlarmDetailed(row.device_token, payload, ttl, copy)
+      : await fcm.sendDetailed(row.device_token, copy, payload);
+
+    if (res.result === 'ok') {
+      retriedCount++;
+      await db.query(`UPDATE notification_deliveries SET status='SENT', sent_at=now(), attempts=attempts+1 WHERE id=$1`, [row.id]);
+    } else if (res.result === 'unregistered') {
+      await db.query(`UPDATE notification_deliveries SET status='UNREGISTERED', attempts=attempts+1, last_error_code='UNREGISTERED', last_error_detail=$2 WHERE id=$1`, [row.id, res.errorDetail]);
+      await db.query(`DELETE FROM device_tokens WHERE token=$1`, [row.device_token]);
+    } else {
+      const nextDelay = (row.attempts + 1) * 5;
+      await db.query(`UPDATE notification_deliveries SET attempts=attempts+1, next_attempt_at=now()+($2||' seconds')::interval, last_error_detail=$3 WHERE id=$1`, [row.id, String(nextDelay), res.errorDetail]);
+    }
+  }
+
+  return retriedCount;
+}
+
+// Kept for backward compatibility
+export async function pushBatch(db: Db, fcm: Pick<FcmClient, 'send' | 'sendAlarm'>, events: OutboxEvent[]): Promise<{ sent: number; pruned: number }> {
+  if (fcm instanceof FcmClient) {
+    const res = await pushDeliverBatch(db, fcm, events);
+    return { sent: res.sent, pruned: res.pruned };
+  }
+  return { sent: 0, pruned: 0 };
 }
 
 async function alarmEnabled(db: Db): Promise<boolean> {
@@ -122,7 +305,15 @@ async function alarmEnabled(db: Db): Promise<boolean> {
 
 export function loadServiceAccount(raw: string | undefined): ServiceAccount | undefined {
   if (!raw?.trim()) return undefined; // empty placeholder file = push disabled
-  const sa = JSON.parse(raw) as ServiceAccount;
-  if (!sa.project_id || !sa.client_email || !sa.private_key) throw new Error('FCM_SERVICE_ACCOUNT_JSON is incomplete');
-  return sa;
+  try {
+    const sa = JSON.parse(raw) as ServiceAccount;
+    if (!sa.project_id || !sa.client_email || !sa.private_key) {
+      console.warn('[FCM] Incomplete service account structure');
+      return undefined;
+    }
+    return sa;
+  } catch (e) {
+    console.warn('[FCM] Failed to parse service account JSON:', e);
+    return undefined;
+  }
 }
