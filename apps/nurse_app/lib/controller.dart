@@ -47,6 +47,10 @@ class NurseController extends ChangeNotifier {
   String? collectMsg;
   bool collectShort = false;
 
+  // Profile and verified clinical skills
+  List<String> skills = [];
+  bool verified = false;
+
   // What the nurse owes the company (or is owed) from cash collected: `/v1/nurse/me/dues`.
   Map<String, dynamic> dues = {
     'balance': 3400,
@@ -98,6 +102,7 @@ class NurseController extends ChangeNotifier {
       todayRequests = (s['requests_today'] as num?)?.toInt() ?? 0;
       completedVisits = (s['completed_today'] as num?)?.toInt() ?? 0;
       await loadDues();
+      await loadProfile();
       final e = await api.getMap('/v1/nurse/me/earnings');
       final m = Map<String, dynamic>.from(e['month'] as Map);
       monthVisits = (m['visits'] as num?)?.toInt() ?? 0;
@@ -260,28 +265,60 @@ class NurseController extends ChangeNotifier {
     }
   }
 
+  Future<void> loadProfile() async {
+    if (kDemoMode) {
+      skills = ['حقن وعلاجات وريدية', 'تضميد الجروح', 'قياس العلامات الحيوية'];
+      verified = true;
+      notifyListeners();
+      return;
+    }
+    try {
+      final p = await api.getMap('/v1/nurse/me/profile');
+      verified = p['verified'] == true;
+      if (p['skills'] is List) {
+        skills = (p['skills'] as List)
+            .map((s) => (s['title_ar'] ?? '').toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      notifyListeners();
+    } catch (_) {}
+  }
+
   void _showOffer(Map<String, dynamic> o) {
     final title = (o['title_ar'] ?? 'زيارة تمريضية').toString();
     final area = (o['area'] ?? '—').toString();
     patientAddress = area;
     serviceTitle = title;
+    final exp = DateTime.tryParse('${o['expires_at']}') ??
+        DateTime.now().add(const Duration(seconds: 30));
+    final netShare = ((num.tryParse('${o['price_amount'] ?? 0}') ?? 0) *
+            (10000 -
+                (num.tryParse('${o['commission_bps'] ?? 2000}') ?? 2000)) /
+            10000)
+        .round();
     offer = Offer(
       o['id'].toString(),
       title,
       area,
       (num.tryParse('${o['distance_m'] ?? 0}') ?? 0) / 1000,
       (num.tryParse('${o['price_amount'] ?? 0}') ?? 0).round(),
-      ((num.tryParse('${o['price_amount'] ?? 0}') ?? 0) *
-              (10000 -
-                  (num.tryParse('${o['commission_bps'] ?? 2000}') ?? 2000)) /
-              10000)
-          .round(),
-      DateTime.tryParse('${o['expires_at']}') ??
-          DateTime.now().add(const Duration(seconds: 30)),
+      netShare,
+      exp,
     );
     stage = NurseStage.offer;
     tab = 1;
     Analytics.log('offer_received');
+
+    // Trigger insistent alert and alarm immediately
+    final ttl = exp.difference(DateTime.now()).inSeconds.clamp(5, 60);
+    OfferAlarm.show(AlarmData(
+      offer!.id,
+      'طلب جديد في $area',
+      '$title — حصتك $netShare ل.س',
+      ttl,
+    )).catchError((_) {});
+
     notifyListeners();
   }
 

@@ -187,6 +187,12 @@ class ActiveOrderBanner extends StatelessWidget {
         icon = Icons.task_alt;
         statusColor = const Color(0xFF0D9488);
         break;
+      case VisitStage.unfulfilled:
+        statusTitle = 'لم يُجب أحد على طلبك';
+        statusSub = 'جميع الممرضين مشغولون حالياً، اضغط لإعادة المحاولة';
+        icon = Icons.person_off_outlined;
+        statusColor = const Color(0xFFDC2626);
+        break;
       case VisitStage.none:
         return const SizedBox.shrink();
     }

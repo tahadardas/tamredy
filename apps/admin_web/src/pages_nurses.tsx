@@ -109,11 +109,65 @@ function Detail({id, onClose, onChanged}: {id: string; onClose: () => void; onCh
         onCancel={onClose} onSave={async b => { await sendJson('PATCH', `/v1/admin/nurses/${id}/profile`, b); setMsg('تم الحفظ'); onChanged(); await load(); }}/>
       {msg && <p className="hint">{msg}</p>}</>}
     {tab === 'skills' && <>
-      <p className="hint">الخدمات التي يحق للممرض تنفيذها. لا يصله طلب لخدمة غير مفعّلة له هنا.</p>
-      <div className="skills">{p.skills.map((s: any) => <label key={s.id} className="check"><input type="checkbox" checked={picked.includes(s.id)}
-        onChange={() => setPicked(picked.includes(s.id) ? picked.filter(x => x !== s.id) : [...picked, s.id])}/> {s.title_ar}</label>)}</div>
+      <div className="skills-header">
+        <div>
+          <h4 style={{margin: '0 0 4px 0', fontSize: '15px', color: 'var(--ink)'}}>المهارات والخدمات السريرية المصرح بها</h4>
+          <p className="hint" style={{margin: 0}}>
+            تم تفعيل <strong style={{color: '#059669'}}>{picked.length}</strong> من أصل <strong>{p.skills.length}</strong> خدمة. لا يصله طلب لخدمة غير معتمدة هنا.
+          </p>
+        </div>
+        <div style={{display: 'flex', gap: '8px'}}>
+          <button type="button" className="pill" onClick={() => setPicked(p.skills.map((s: any) => s.id))}>تحديد الكل</button>
+          <button type="button" className="pill" onClick={() => setPicked([])}>إلغاء التحديد</button>
+        </div>
+      </div>
+      <div className="skills-grid">
+        {p.skills.map((s: any) => {
+          const isChecked = picked.includes(s.id);
+          return (
+            <div
+              key={s.id}
+              className={`skill-card ${isChecked ? 'active' : ''}`}
+              onClick={() => setPicked(isChecked ? picked.filter((x: any) => x !== s.id) : [...picked, s.id])}
+            >
+              <div className="skill-card-top">
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  readOnly
+                  style={{cursor: 'pointer', transform: 'scale(1.2)'}}
+                />
+                <span className={`badge ${isChecked ? 'ok' : 'muted'}`}>
+                  {isChecked ? 'مصرح به' : 'غير مفعّل'}
+                </span>
+              </div>
+              <div className="skill-card-body">
+                <strong className="skill-card-title">{s.title_ar}</strong>
+                <div className="skill-card-meta">
+                  {s.price_amount && <span>السعر: {Number(s.price_amount).toLocaleString()} ل.س</span>}
+                  {s.requires_prescription && <span style={{color: '#d97706'}}>• تتطلب وصفة</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
       {err && <p className="hint err">{err}</p>}
-      <div className="actions"><button className="pill on" onClick={() => void run(async () => { await sendJson('PUT', `/v1/admin/nurses/${id}/skills`, {serviceIds: picked}); setMsg('تم حفظ المهارات'); onChanged(); })}>حفظ المهارات</button></div>{msg && <p className="hint">{msg}</p>}</>}
+      <div className="actions" style={{marginTop: '16px'}}>
+        <button
+          className="pill on"
+          style={{padding: '10px 24px', fontSize: '14px', fontWeight: 600}}
+          onClick={() => void run(async () => {
+            await sendJson('PUT', `/v1/admin/nurses/${id}/skills`, {serviceIds: picked});
+            setMsg('تم حفظ مهارات الممرض بنجاح وتحديث صلاحيات استقبال الطلبات');
+            onChanged();
+          })}
+        >
+          حفظ المهارات المعتمدة ({picked.length})
+        </button>
+      </div>
+      {msg && <p className="hint" style={{color: '#059669', fontWeight: 600}}>{msg}</p>}
+    </>}
     {tab === 'docs' && <Documents nurseId={id} docs={p.documents} reload={async () => { await load(); onChanged(); }}/>}
     {tab === 'lic' && <Table head={['النوع', 'رقم الوثيقة', 'تنتهي', 'الحالة', 'ملاحظة']} rows={p.credentials.map((c: any) => [KIND[c.doc_kind] ?? 'رخصة', c.license_ref, fmtDate(c.expires_at), LIC[c.review_status]?.[0] ?? c.review_status, c.review_reason ?? '—'])}/>}
   </Modal>;

@@ -81,7 +81,7 @@ class WalletTx {
   const WalletTx(this.title, this.sub, this.amount);
 }
 
-enum VisitStage { none, searching, enRoute, arrived, inService, completed }
+enum VisitStage { none, searching, enRoute, arrived, inService, completed, unfulfilled }
 
 /// Patient app state. In demo mode a timer simulates the dispatch lifecycle;
 /// otherwise the real API (`/v1/...`) is used.
@@ -843,13 +843,19 @@ class PatientController extends ChangeNotifier {
     if (requestId == null) return;
     try {
       final d = await api.getMap('/v1/requests/$requestId/tracking');
-      stage = switch (d['status']) {
+      final status = '${d['status']}';
+      stage = switch (status) {
         'EN_ROUTE' => VisitStage.enRoute,
         'ARRIVED' => VisitStage.arrived,
         'IN_SERVICE' => VisitStage.inService,
         'COMPLETED' => VisitStage.completed,
+        'UNFULFILLED' => VisitStage.unfulfilled,
+        'CANCELLED' => VisitStage.none,
         _ => VisitStage.searching,
       };
+      if (stage == VisitStage.unfulfilled || stage == VisitStage.none) {
+        _timer?.cancel();
+      }
       final lat = num.tryParse('${d['nurse_lat']}'),
           lng = num.tryParse('${d['nurse_lng']}');
       nurseBadge = d['nurseBadge'] is Map
@@ -872,10 +878,31 @@ class PatientController extends ChangeNotifier {
     }
   }
 
+  void resetToHome() {
+    _timer?.cancel();
+    _demoMove?.cancel();
+    stage = VisitStage.none;
+    requestId = null;
+    route = null;
+    nursePos = null;
+    bill = null;
+    tab = 0;
+    notifyListeners();
+  }
+
+  Future<void> retryRequest() async {
+    _timer?.cancel();
+    _demoMove?.cancel();
+    _idemKey = null;
+    requestId = null;
+    stage = VisitStage.searching;
+    notifyListeners();
+    await submit();
+  }
+
   Future<bool> cancel() async {
-    if (requestId == null) {
-      stage = VisitStage.none;
-      notifyListeners();
+    if (requestId == null || stage == VisitStage.unfulfilled) {
+      resetToHome();
       return true;
     }
     busy = true;
@@ -885,17 +912,12 @@ class PatientController extends ChangeNotifier {
       if (!kDemoMode) {
         await api.post('/v1/requests/$requestId/cancel');
       }
-      _timer?.cancel();
-      _demoMove?.cancel();
-      Analytics.log('request_cancelled', {'stage': stage.name});
-      stage = VisitStage.none;
-      requestId = null;
-      notifyListeners();
+      resetToHome();
       return true;
-    } catch (e) {
-      error = explainError(e, fallback: 'تعذر إلغاء الطلب من الخادم. يرجى المحاولة لاحقًا أو التواصل مع الممرض.');
-      notifyListeners();
-      return false;
+    } catch (_) {
+      // Regardless of network state or if already cancelled on server, clean up locally
+      resetToHome();
+      return true;
     } finally {
       busy = false;
       notifyListeners();

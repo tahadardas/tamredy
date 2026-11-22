@@ -81,7 +81,8 @@ export class RequestsService {
       const rr=await c.query('SELECT * FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
       const req=rr.rows[0];
       if(!req || req.requester_user_id!==userId) missing();
-      if(!['OFFERING','ASSIGNED','EN_ROUTE'].includes(req.status)) conflict('REQUEST_CANNOT_BE_CANCELLED');
+      if(req.status === 'CANCELLED') return {requestId, status: 'CANCELLED'};
+      if(!['REQUESTED','OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(req.status)) conflict('REQUEST_CANNOT_BE_CANCELLED');
       const aa=await c.query(`SELECT * FROM request_assignments WHERE request_id=$1 AND status='ACTIVE'`,[requestId]);
       if(aa.rowCount) {
         const assignment=aa.rows[0];

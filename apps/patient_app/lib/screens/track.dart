@@ -134,6 +134,68 @@ class TrackScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = c.service;
+    if (c.stage == VisitStage.unfulfilled) {
+      return TamScaffold(
+        title: 'لم يتم العثور على ممرض',
+        subtitle: 'تعذر توفير كادر متاح حالياً',
+        nav: nav,
+        children: [
+          TamCard(
+            padding: const EdgeInsets.fromLTRB(20, 32, 20, 28),
+            child: Column(
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFCA5A5), width: 2),
+                  ),
+                  child: const Icon(
+                    Icons.person_off_outlined,
+                    size: 42,
+                    color: Color(0xFFDC2626),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'نعتذر منك، لم يُجب أحد على طلبك',
+                  style: tamText(
+                    size: 19,
+                    weight: FontWeight.w800,
+                    color: TamreedyColors.navy,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'جميع الكوادر التمريضية القريبة منك مشغولة حالياً بزيارات أخرى، أو خارج نطاق التغطية اللحظية. يمكنك إعادة المحاولة الآن أو اختيار وقت لاحق.',
+                  textAlign: TextAlign.center,
+                  style: tamText(size: 13, color: TamreedyColors.subtext, height: 1.6),
+                ),
+                const SizedBox(height: 24),
+                KeyValueRow('نوع الخدمة', s?.title ?? '—'),
+                KeyValueRow('موقع الزيارة', c.address),
+                const SizedBox(height: 24),
+                PrimaryButton(
+                  'إعادة المحاولة الآن',
+                  onPressed: c.busy ? null : () async {
+                    await c.retryRequest();
+                  },
+                ),
+                const SizedBox(height: 12),
+                SoftButton(
+                  'العودة إلى الرئيسية',
+                  onPressed: () {
+                    c.resetToHome();
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
     if (c.stage == VisitStage.searching) {
       return TamScaffold(
         title: 'جارٍ البحث عن ممرض',

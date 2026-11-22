@@ -77,7 +77,7 @@ export class AdminNursesController {
     try { nid = n.national_id_enc ? this.docs.decryptText(n.national_id_enc) : null; } catch { nid = null; }
     const { national_id_enc: _e, ...rest } = n;
     const [skills, creds, docs] = await Promise.all([
-      this.db.query(`SELECT s.id,s.title_ar,coalesce(k.approved,false) AS approved FROM services s LEFT JOIN nurse_skills k ON k.service_id=s.id AND k.nurse_id=$1 ORDER BY s.sort_order,s.title_ar`, [id]),
+      this.db.query(`SELECT s.id,s.title_ar,s.code,s.price_amount,s.requires_prescription,coalesce(k.approved,false) AS approved FROM services s LEFT JOIN nurse_skills k ON k.service_id=s.id AND k.nurse_id=$1 ORDER BY s.sort_order,s.title_ar`, [id]),
       this.db.query(`SELECT id,license_ref,doc_kind,expires_at,review_status,review_reason,approved,document_id,submitted_at FROM nurse_credentials WHERE nurse_id=$1 ORDER BY submitted_at DESC`, [id]),
       this.db.query(`SELECT id,kind,title,original_name,mime,size_bytes,expires_at,created_at FROM nurse_documents WHERE nurse_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC`, [id]),
     ]);

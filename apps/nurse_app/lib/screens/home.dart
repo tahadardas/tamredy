@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../alarm.dart';
 import '../controller.dart';
@@ -486,32 +487,136 @@ class ProfileScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             SoftButton(
-              'تجربة نغمة الإنذار',
+              'تجربة نغمة الإنذار والتنبيه',
               onPressed: () async {
+                HapticFeedback.heavyImpact();
                 await OfferAlarm.requestPermissions().catchError((_) {});
                 await OfferAlarm.show(
                   const AlarmData(
                     'test',
-                    'تجربة الإنذار',
-                    'هكذا يصلك الطلب الجديد',
-                    10,
+                    '🔔 تجربة إنذار طلب جديد',
+                    'طلب في دمشق — حقن وريدي وعلاجات (حصتك 20,000 ل.س)',
+                    20,
                   ),
                 );
+                if (context.mounted) {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (ctx) => Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 68,
+                            height: 68,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFFF59E0B), width: 2),
+                            ),
+                            child: const Icon(Icons.notifications_active, color: Color(0xFFD97706), size: 36),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'تجربة إنذار الطلبات الواردة',
+                            style: tamText(size: 18, weight: FontWeight.w800, color: TamreedyColors.navy),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'تم تشغيل صوت الإنذار والاهتزاز، وإرسال إشعار كامل الأهمية إلى شريط الإشعارات.',
+                            textAlign: TextAlign.center,
+                            style: tamText(size: 13, color: TamreedyColors.subtext, height: 1.5),
+                          ),
+                          const SizedBox(height: 18),
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: TamreedyColors.canvas,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: TamreedyColors.border),
+                            ),
+                            child: Column(
+                              children: [
+                                KeyValueRow('المنطقة التجريبية', 'دمشق — المزة فيلات'),
+                                KeyValueRow('نوع الخدمة', 'حقن وعلاجات وريدية'),
+                                KeyValueRow('حصة الممرض', '20,000 ل.س'),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          PrimaryButton(
+                            'إيقاف صوت الإنذار',
+                            onPressed: () {
+                              OfferAlarm.cancelAll();
+                              Navigator.of(ctx).pop();
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
               },
             ),
           ],
         ),
       ),
-      const SectionTitle('مهارات معتمدة'),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: const [
-          StatusChip('ضمادات'),
-          StatusChip('علامات حيوية'),
-          StatusChip('حقن وعلاجات'),
-        ],
-      ),
+      const SectionTitle('مهاراتي السريرية المعتمدة'),
+      if (c.skills.isEmpty)
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEF3C7),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Color(0xFFD97706), size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'لم يتم اعتماد أي مهارات سريرية لك بعد. يرجى مراجعة الإدارة لاعتماد خدماتك لتتمكن من استقبال الطلبات في منطقتك.',
+                  style: tamText(size: 12, color: const Color(0xFF92400E), height: 1.5),
+                ),
+              ),
+            ],
+          ),
+        )
+      else
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final s in c.skills)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.verified, size: 14, color: Color(0xFF059669)),
+                    const SizedBox(width: 6),
+                    Text(
+                      s,
+                      style: tamText(size: 12, weight: FontWeight.w600, color: const Color(0xFF065F46)),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
     ],
   );
 }
