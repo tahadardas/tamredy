@@ -11,6 +11,8 @@ void main() {
     addTearDown(tester.view.reset);
     mapsEnabled = false; // no network tiles in tests
     final c = PatientController();
+    c.services = kSampleServices;
+    c.serviceState = ServiceLoadState.loaded;
     await tester.pumpWidget(TamreedyPatientApp(controller: c));
     expect(find.text('طلب تمريض منزلي'), findsOneWidget);
     await tester.tap(find.text('تغيير ضماد'));

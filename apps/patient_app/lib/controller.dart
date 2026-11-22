@@ -83,80 +83,82 @@ class WalletTx {
 
 enum VisitStage { none, searching, enRoute, arrived, inService, completed, unfulfilled }
 
+const List<ServiceItem> kSampleServices = [
+  ServiceItem(
+    'inj',
+    'حقن وعلاجات',
+    'بوصفة طبية',
+    'يُنفذها ممرض مخول بعد التحقق من الوصفة والتعليمات الطبية.',
+    900,
+    0,
+    needsConfirmation: true,
+    rule: PricingRule(
+      basePrice: 900,
+      includedMinutes: 20,
+      blockMinutes: 10,
+      blockPrice: 300,
+      expectedMinutes: 20,
+      roundingStep: 50,
+    ),
+  ),
+  ServiceItem(
+    'dress',
+    'تغيير ضماد',
+    'متابعة الجروح',
+    'يُنفذها ممرض مخول بعد التحقق من الحالة والتعليمات الطبية المطلوبة.',
+    1200,
+    1,
+    needsConfirmation: true,
+    rule: PricingRule(
+      basePrice: 1200,
+      includedMinutes: 30,
+      blockMinutes: 15,
+      blockPrice: 400,
+      expectedMinutes: 40,
+      roundingStep: 50,
+    ),
+  ),
+  ServiceItem(
+    'vitals',
+    'متابعة منزلية',
+    'علامات حيوية',
+    'قياس العلامات الحيوية ومتابعة الحالة العامة في المنزل.',
+    1200,
+    2,
+    rule: PricingRule(
+      basePrice: 1200,
+      includedMinutes: 30,
+      blockMinutes: 15,
+      blockPrice: 400,
+      expectedMinutes: 30,
+      roundingStep: 50,
+    ),
+  ),
+  ServiceItem(
+    'elder',
+    'رعاية كبار السن',
+    'زيارات ورديات',
+    'رعاية تمريضية غير طبية لكبار السن في المنزل.',
+    1800,
+    3,
+    rule: PricingRule(
+      basePrice: 1800,
+      includedMinutes: 60,
+      blockMinutes: 30,
+      blockPrice: 800,
+      expectedMinutes: 60,
+      roundingStep: 50,
+    ),
+  ),
+];
+
 /// Patient app state. In demo mode a timer simulates the dispatch lifecycle;
 /// otherwise the real API (`/v1/...`) is used.
 class PatientController extends ChangeNotifier {
   final TamreedyApi api = TamreedyApi();
   int tab = 0;
 
-  List<ServiceItem> services = !kDemoMode ? const [] : const [
-    ServiceItem(
-      'inj',
-      'حقن وعلاجات',
-      'بوصفة طبية',
-      'يُنفذها ممرض مخول بعد التحقق من الوصفة والتعليمات الطبية.',
-      900,
-      0,
-      needsConfirmation: true,
-      rule: PricingRule(
-        basePrice: 900,
-        includedMinutes: 20,
-        blockMinutes: 10,
-        blockPrice: 300,
-        expectedMinutes: 20,
-        roundingStep: 50,
-      ),
-    ),
-    ServiceItem(
-      'dress',
-      'تغيير ضماد',
-      'متابعة الجروح',
-      'يُنفذها ممرض مخول بعد التحقق من الحالة والتعليمات الطبية المطلوبة.',
-      1200,
-      1,
-      needsConfirmation: true,
-      rule: PricingRule(
-        basePrice: 1200,
-        includedMinutes: 30,
-        blockMinutes: 15,
-        blockPrice: 400,
-        expectedMinutes: 40,
-        roundingStep: 50,
-      ),
-    ),
-    ServiceItem(
-      'vitals',
-      'متابعة منزلية',
-      'علامات حيوية',
-      'قياس العلامات الحيوية ومتابعة الحالة العامة في المنزل.',
-      1200,
-      2,
-      rule: PricingRule(
-        basePrice: 1200,
-        includedMinutes: 30,
-        blockMinutes: 15,
-        blockPrice: 400,
-        expectedMinutes: 30,
-        roundingStep: 50,
-      ),
-    ),
-    ServiceItem(
-      'elder',
-      'رعاية كبار السن',
-      'زيارات ورديات',
-      'رعاية تمريضية غير طبية لكبار السن في المنزل.',
-      1800,
-      3,
-      rule: PricingRule(
-        basePrice: 1800,
-        includedMinutes: 60,
-        blockMinutes: 30,
-        blockPrice: 800,
-        expectedMinutes: 60,
-        roundingStep: 50,
-      ),
-    ),
-  ];
+  List<ServiceItem> services = !kDemoMode ? const [] : kSampleServices;
   List<HistoryItem> history = !kDemoMode ? const [] : const [
     HistoryItem('العناية بالجروح', '20 نوفمبر 2026', 1200, 'مكتملة'),
     HistoryItem('زيارة علامات حيوية', '18 نوفمبر 2026', 900, 'مكتملة'),

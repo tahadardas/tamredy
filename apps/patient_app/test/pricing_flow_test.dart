@@ -6,6 +6,7 @@ void main() {
     'estimate appears instantly, promo lowers it, bad code is rejected',
     () async {
       final c = PatientController();
+      c.services = kSampleServices;
       final dress = c.services.firstWhere((s) => s.id == 'dress');
       c.pick(dress);
       expect([c.est!.min, c.est!.expected], [1200, 1600]);
@@ -23,6 +24,7 @@ void main() {
     'bill is produced from the visit and matches the estimate rules',
     () async {
       final c = PatientController();
+      c.services = kSampleServices;
       c.pick(c.services.firstWhere((s) => s.id == 'dress'));
       c.requestId = 'x';
       await c.loadBill();
