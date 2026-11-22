@@ -1,0 +1,426 @@
+openapi: 3.0.3
+info:
+  title: منصة تمريضي — Tamreedy Platform API
+  description: >-
+    المواصفة القياسية الموحدة لواجهات برمجة التطبيقات لمنظومة تمريضي لرعاية التمريض المنزلي بدمشق وريف دمشق.
+    تعتبر هذه المواصفة العقد الموحد والمصدر الوحيد للحقيقة (Single Source of Truth) بين الخادم وتطبيقات المريض والممرض ولوحة الإدارة.
+  version: 0.2.0
+servers:
+  - url: https://tamredy.dardus.com.sy/api
+    description: Production Server (Plesk / Nginx)
+  - url: http://localhost:3000
+    description: Local Development Server
+
+paths:
+  /v1/auth/login:
+    post:
+      summary: تسجيل الدخول برقم الهاتف وكلمة المرور
+      description: الوضع الافتراضي حتى توفير بوابة SMS معتمدة. بعد 5 محاولات فاشلة يتم قفل الحساب 15 دقيقة.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, password]
+              properties:
+                phone:
+                  type: string
+                  example: "+963911111111"
+                password:
+                  type: string
+                  minLength: 6
+                  example: "123456"
+      responses:
+        '200':
+          description: نجاح تسجيل الدخول
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenPair'
+        '401':
+          description: بيانات الدخول غير صحيحة
+        '429':
+          description: الحساب مقفل مؤقتاً لتكرار المحاولات الفاشلة
+
+  /v1/auth/refresh:
+    post:
+      summary: تجديد رمز الوصول (Refresh Token Rotation)
+      description: تدوير الرمز لمرة واحدة. في حال إعادة إرسال رمز مستخدم يتم إبطال عائلة الرموز كاملة فوراً.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: تم التجديد وإصدار زوج رموز جديد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenPair'
+
+  /v1/auth/logout:
+    post:
+      summary: تسجيل الخروج وإبطال الجلسة
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: تم تسجيل الخروج بنجاح
+
+  /v1/me/active-request:
+    get:
+      summary: استعادة الطلب النشط للمريض
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: حالة الطلب النشط الحالية
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hasActive:
+                    type: boolean
+                  request:
+                    $ref: '#/components/schemas/CareRequest'
+
+  /v1/services:
+    get:
+      summary: كتالوج الخدمات المتاحة للجمهور
+      description: يعيد الخدمات المعتمدة والمنشورة فقط.
+      responses:
+        '200':
+          description: قائمة الخدمات
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Service'
+
+  /v1/requests:
+    post:
+      summary: إنشاء طلب زيارة تمريضية جديد
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serviceId, beneficiaryId, lat, lng, nonEmergencyConfirmed]
+              properties:
+                serviceId:
+                  type: string
+                  format: uuid
+                beneficiaryId:
+                  type: string
+                  format: uuid
+                lat:
+                  type: number
+                  format: double
+                lng:
+                  type: number
+                  format: double
+                addressText:
+                  type: string
+                nonEmergencyConfirmed:
+                  type: boolean
+      responses:
+        '201':
+          description: تم إنشاء الطلب وبدء موجات التوزيع
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareRequest'
+
+  /v1/nurse/me/active-assignment:
+    get:
+      summary: استعادة الإسناد النشط للممرض
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: حالة الإسناد والتوفر الحالية
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  availability:
+                    type: string
+                    enum: [AVAILABLE, OFFLINE, SUSPENDED]
+                  hasActive:
+                    type: boolean
+                  assignment:
+                    type: object
+
+  /v1/nurse/me/offers:
+    get:
+      summary: عروض الطلبات الموجهة للممرض
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: قائمة العروض المؤهلة
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NurseOffer'
+
+  /v1/nurse/offers/{offerId}/accept:
+    post:
+      summary: قبول العرض (First Qualified Accept Wins)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: offerId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: تم قبول العرض بنجاح وتثبيت الإسناد
+        '409':
+          description: فاز ممرض آخر بالطلب أو انتهت صلاحية العرض
+
+  /v1/nurse/assignments/{id}/depart:
+    post:
+      summary: تأكيد بدء التوجه نحو المريض (EN_ROUTE)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: تم تحديث الحالة
+
+  /v1/nurse/assignments/{id}/arrive:
+    post:
+      summary: تأكيد الوصول إلى موقع المريض (ARRIVED)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: تم تحديث الحالة
+
+  /v1/nurse/assignments/{id}/start:
+    post:
+      summary: بدء تقديم الرعاية الطبية (IN_SERVICE)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: تم بدء الزيارة
+
+  /v1/nurse/assignments/{id}/complete:
+    post:
+      summary: إنهاء الزيارة وإصدار الفاتورة (COMPLETED)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: اكتملت الزيارة وصدرت الفاتورة
+
+  /v1/admin/dashboard:
+    get:
+      summary: مؤشرات الأداء الحية للوحة الإدارة (SaaS Live KPIs)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: إحصاءات تشغيلية ومالية مباشرة
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetrics'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AuthTokenPair:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresInSeconds:
+          type: integer
+          example: 900
+        role:
+          type: string
+          enum: [PATIENT, NURSE, ADMIN, CLINICAL_REVIEWER]
+
+    Service:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: WOUND_CARE
+        title_ar:
+          type: string
+          example: العناية بالجروح
+        description_ar:
+          type: string
+        price_amount:
+          type: number
+          example: 25000
+        included_minutes:
+          type: integer
+          example: 30
+        requires_prescription:
+          type: boolean
+        active:
+          type: boolean
+        dispatch_approved:
+          type: boolean
+
+    CareRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - REQUESTED
+            - OFFERING
+            - ASSIGNED
+            - EN_ROUTE
+            - ARRIVED
+            - IN_SERVICE
+            - COMPLETED
+            - CANCELLED
+            - UNFULFILLED
+            - ESCALATED
+        service_id:
+          type: string
+          format: uuid
+        beneficiary_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    NurseOffer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        request_id:
+          type: string
+          format: uuid
+        service_title:
+          type: string
+        area:
+          type: string
+          example: المزة
+        distance_km:
+          type: number
+          example: 2.4
+        nurse_share:
+          type: integer
+          example: 20000
+        expected_minutes:
+          type: integer
+          example: 30
+        expires_at:
+          type: string
+          format: date-time
+
+    DashboardMetrics:
+      type: object
+      properties:
+        available_nurses:
+          type: integer
+        busy_nurses:
+          type: integer
+        searching_requests:
+          type: integer
+        en_route:
+          type: integer
+        in_service:
+          type: integer
+        completed_today:
+          type: integer
+        cancelled_today:
+          type: integer
+        escalated_requests:
+          type: integer
+        revenue_today:
+          type: integer
+        commission_today:
+          type: integer
+        dues_pending:
+          type: integer

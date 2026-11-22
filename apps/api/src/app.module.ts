@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DbService } from './db/db.service.js';
 import { ReferenceCacheService } from './cache/reference-cache.service.js';
 import { AuthGuard } from './auth/auth.guard.js';
@@ -40,7 +42,16 @@ import { AppController } from './app.controller.js';
 import { CatalogController } from './catalog/catalog.controller.js';
 import { LiveGateway } from './realtime/live.gateway.js';
 @Module({
+  imports: [
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 120,
+    }]),
+  ],
   controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,MarketingController,MeController,ReferralController,NurseMeController],
-  providers:[DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,LiveGateway],
+  providers:[
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,LiveGateway
+  ],
 })
 export class AppModule {}
