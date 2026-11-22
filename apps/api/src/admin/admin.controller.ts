@@ -36,7 +36,14 @@ export class AdminController {
       (SELECT count(*)::integer FROM care_requests WHERE status='ESCALATED') AS escalated_requests,
       (SELECT coalesce(sum(price_amount),0)::bigint FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS revenue_today,
       (SELECT coalesce(sum(price_amount*commission_bps/10000),0)::bigint FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS commission_today,
-      (SELECT coalesce(sum(balance),0)::bigint FROM (SELECT nurse_id, coalesce(sum(amount),0) AS balance FROM settlement_ledgers GROUP BY nurse_id) bl WHERE balance > 0) AS dues_pending`);
+      (SELECT coalesce(
+        (SELECT coalesce(sum(cr.owed_to_company),0) FROM care_requests cr
+         JOIN request_assignments a ON a.request_id=cr.id
+         JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL
+         WHERE cr.payment_status='PAID')
+        - (SELECT coalesce(sum(amount),0) FROM nurse_settlements WHERE direction='FROM_NURSE')
+        + (SELECT coalesce(sum(amount),0) FROM nurse_settlements WHERE direction='TO_NURSE'),
+      0)::bigint) AS dues_pending`);
     return counts.rows[0];
   }
   @Get('requests') async requests(@Request() r:AuthRequest,@Query('limit') limit?:string,@Query('cursor') cursor?:string,@Query('status') status?:string) {

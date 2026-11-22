@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart' show mapsEnabled;
-import 'dart:ui';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamreedy_patient_app/controller.dart';
 import 'package:tamreedy_patient_app/main.dart';

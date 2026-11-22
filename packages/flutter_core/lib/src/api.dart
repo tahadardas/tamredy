@@ -33,7 +33,7 @@ final AppEnvironment kAppEnvironment = resolveEnvironment();
 String defaultBaseUrlForEnv(AppEnvironment env) {
   switch (env) {
     case AppEnvironment.production:
-      return 'https://api.tamreedy.com';
+      return 'https://tamredy.dardus.com.sy/api';
     case AppEnvironment.staging:
       return 'https://staging-api.tamreedy.com';
     case AppEnvironment.dev:
@@ -56,8 +56,11 @@ class TamreedyApi {
   static const String _customBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
 
   static String get baseUrl {
-    if (_customBaseUrl.isNotEmpty) return _customBaseUrl;
-    return defaultBaseUrlForEnv(kAppEnvironment);
+    String url = _customBaseUrl.isNotEmpty ? _customBaseUrl : defaultBaseUrlForEnv(kAppEnvironment);
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+    return url;
   }
 
   final _storage = const FlutterSecureStorage();
