@@ -47,6 +47,84 @@ class BillCard extends StatelessWidget {
   );
 }
 
+/// Animated radar ripple for searching phase (P04).
+class SearchingRadarAnimation extends StatefulWidget {
+  final double size;
+  const SearchingRadarAnimation({super.key, this.size = 140});
+
+  @override
+  State<SearchingRadarAnimation> createState() => _SearchingRadarAnimationState();
+}
+
+class _SearchingRadarAnimationState extends State<SearchingRadarAnimation> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return SizedBox(
+          width: widget.size,
+          height: widget.size,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              for (int i = 0; i < 3; i++) _buildRipple((_controller.value + (i * 0.33)) % 1.0),
+              Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  color: TamreedyColors.teal,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: TamreedyColors.teal.withValues(alpha: 0.35),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.health_and_safety_outlined, color: Colors.white, size: 30),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRipple(double value) {
+    final clamped = (1.0 - value).clamp(0.0, 1.0);
+    return Container(
+      width: widget.size * value,
+      height: widget.size * value,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: TamreedyColors.teal.withValues(alpha: clamped * 0.6),
+          width: 2.0,
+        ),
+      ),
+    );
+  }
+}
+
 /// P04 (searching) and P05 (nurse tracking) driven by the request stage.
 class TrackScreen extends StatelessWidget {
   final PatientController c;
@@ -59,35 +137,36 @@ class TrackScreen extends StatelessWidget {
     if (c.stage == VisitStage.searching) {
       return TamScaffold(
         title: 'جارٍ البحث عن ممرض',
-        subtitle: 'نبحث عن كادر مؤهل قريب منك',
+        subtitle: 'نبحث عن كادر مؤهل ومرخص قريب منك',
         nav: nav,
         children: [
           TamMap(height: 200, patient: c.position ?? kDamascus),
           const SizedBox(height: 12),
           TamCard(
-            padding: const EdgeInsets.fromLTRB(18, 28, 18, 18),
+            padding: const EdgeInsets.fromLTRB(18, 28, 18, 24),
             child: Column(
               children: [
-                const Icon(Icons.search, size: 40, color: TamreedyColors.teal),
-                const SizedBox(height: 18),
+                const SearchingRadarAnimation(size: 130),
+                const SizedBox(height: 20),
                 Text(
-                  'جارٍ عرض طلبك',
+                  'يتم فحص الكوادر التمريضية القريبة',
                   style: tamText(
-                    size: 22,
+                    size: 20,
                     weight: FontWeight.w800,
                     color: TamreedyColors.navy,
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Text(
-                  'سيظهر الممرض المكلّف فور قبول الطلب',
-                  style: tamText(size: 12, color: TamreedyColors.subtext),
+                  'نقوم بإرسال طلبك تباعاً لأقرب الممرضين المعتمدين والمناسبين للخدمة. سيتم إشعارك فور قبول الممرض للزيارة.',
+                  textAlign: TextAlign.center,
+                  style: tamText(size: 12.5, color: TamreedyColors.subtext, height: 1.6),
                 ),
                 const SizedBox(height: 22),
                 const StepBar(filled: 2),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 KeyValueRow('نوع الخدمة', s?.title ?? '—'),
-                KeyValueRow('موقع الطلب', c.address),
+                KeyValueRow('موقع الزيارة', c.address),
               ],
             ),
           ),

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../alarm.dart';
 import '../controller.dart';
+import '../main.dart';
+import 'visit.dart';
 
 /// N01 — dashboard / availability.
 class NurseHomeScreen extends StatelessWidget {
@@ -10,75 +12,344 @@ class NurseHomeScreen extends StatelessWidget {
   const NurseHomeScreen({super.key, required this.c, required this.nav});
 
   @override
-  Widget build(BuildContext context) => TamScaffold(
-    title: 'لوحة الممرض',
-    subtitle: 'الاستعداد لاستقبال الطلبات',
-    nav: nav,
-    children: [
-      HeroCard(
-        title: c.available ? 'أنت متاح الآن ●' : 'أنت غير متاح',
-        body: 'تصلك فقط الطلبات المناسبة لاختصاصك والقريبة من موقعك.',
-        trailing: Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: Switch(
-            value: c.available,
-            onChanged: c.setAvailable,
-            activeThumbColor: Colors.white,
-            activeTrackColor: TamreedyColors.tealAlt,
+  Widget build(BuildContext context) {
+    final hasActiveAssignment = c.stage != NurseStage.idle && c.stage != NurseStage.offer;
+    final isBlocked = c.dues['blocked'] == true;
+
+    return TamScaffold(
+      title: 'لوحة الممرض',
+      subtitle: 'إدارة التوفر والزيارات الميدانية',
+      nav: nav,
+      onRefresh: () => c.loadLive(),
+      children: [
+        if (isBlocked)
+          Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFFECACA), width: 1.5),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 26),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'استقبال الطلبات موقوف مؤقتاً',
+                        style: tamText(size: 15, weight: FontWeight.w800, color: const Color(0xFF991B1B)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'لقد تجاوزت سقف المستحقات النقدية غير الموردة للشركة. يرجى توريد المستحقات لاستئناف استلام الطلبات.',
+                        style: tamText(size: 12.5, color: const Color(0xFF7F1D1D), height: 1.5),
+                      ),
+                      const SizedBox(height: 10),
+                      InkWell(
+                        onTap: () => c.setTab(2),
+                        child: Row(
+                          children: [
+                            Text(
+                              'الانتقال إلى كشف المستحقات والتسويات',
+                              style: tamText(size: 13, weight: FontWeight.w800, color: const Color(0xFFDC2626)),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.arrow_back, size: 14, color: Color(0xFFDC2626)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (hasActiveAssignment)
+          _ActiveAssignmentBanner(c: c),
+        _AvailabilityCard(c: c, disabled: isBlocked || hasActiveAssignment),
+        if (c.error != null)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFECACA)),
+            ),
+            child: Text(
+              c.error!,
+              style: tamText(size: 12.5, color: TamreedyColors.danger),
+            ),
+          ),
+        Row(
+          children: [
+            Expanded(child: StatCard('طلبات اليوم', twoDigits(c.todayRequests))),
+            const SizedBox(width: 12),
+            Expanded(
+              child: StatCard('زيارات مكتملة', twoDigits(c.completedVisits)),
+            ),
+          ],
+        ),
+        const SectionTitle('التوفر والموقع الجغرافي'),
+        TamCard(
+          child: ListRow(
+            icon: Icons.location_on_outlined,
+            title: c.available ? 'موقعك محدث ومتزامن' : 'موقعك غير متزامن',
+            subtitle: c.available
+                ? 'يتم تحديث إحداثياتك بانتظام لاستقبال الطلبات القريبة'
+                : 'فعّل التوفر ليتمكن النظام من إسناد الطلبات المناسبة لك',
+            trailing: StatusChip(
+              c.available ? 'متاح' : 'غير متاح',
+              warning: !c.available,
+            ),
+            divider: false,
           ),
         ),
-      ),
-      if (c.error != null)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            c.error!,
-            style: tamText(size: 12, color: TamreedyColors.danger),
+        const SectionTitle('آخر الزيارات المنفذة'),
+        TamCard(
+          child: Column(
+            children: [
+              if (c.history.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('لا توجد زيارات سابقة مسجلة.'),
+                )
+              else
+                for (var i = 0; i < c.history.length && i < 2; i++)
+                  ListRow(
+                    icon: Icons.check_circle_outline,
+                    title: c.history[i].title,
+                    subtitle: '${c.history[i].date} • انتهت بنجاح',
+                    trailing: StatusChip(formatMoney(c.history[i].share)),
+                    divider: i == 0 && c.history.length > 1,
+                  ),
+            ],
           ),
         ),
-      Row(
-        children: [
-          Expanded(child: StatCard('طلبات اليوم', twoDigits(c.todayRequests))),
-          const SizedBox(width: 12),
-          Expanded(
-            child: StatCard('زيارات مكتملة', twoDigits(c.completedVisits)),
+      ],
+    );
+  }
+}
+
+class _ActiveAssignmentBanner extends StatelessWidget {
+  final NurseController c;
+  const _ActiveAssignmentBanner({required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    String statusLabel;
+    Color statusColor;
+
+    switch (c.stage) {
+      case NurseStage.enRoute:
+        statusLabel = 'في الطريق إلى المريض';
+        statusColor = const Color(0xFF2563EB);
+        break;
+      case NurseStage.arrived:
+        statusLabel = 'وصلت إلى الموقع';
+        statusColor = const Color(0xFF059669);
+        break;
+      case NurseStage.inService:
+        statusLabel = 'تقديم الرعاية التمريضية جارية';
+        statusColor = const Color(0xFF7C3AED);
+        break;
+      case NurseStage.completed:
+        statusLabel = 'اكتملت الزيارة — تحصيل الحساب';
+        statusColor = const Color(0xFF0D9488);
+        break;
+      default:
+        statusLabel = 'زيارة نشطة';
+        statusColor = TamreedyColors.teal;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: statusColor.withValues(alpha: 0.4), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: statusColor.withValues(alpha: 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
-      const SectionTitle('آخر نشاط'),
-      TamCard(
-        child: Column(
-          children: [
-            for (var i = 0; i < 2; i++)
-              ListRow(
-                icon: Icons.check,
-                title: i == 0 ? 'زيارة رعاية منزلية' : 'زيارة متابعة',
-                subtitle: i == 0
-                    ? 'اليوم • انتهت بنجاح'
-                    : 'الأمس • انتهت بنجاح',
-                trailing: const StatusChip('مكتملة'),
-                divider: i == 0,
-              ),
-          ],
-        ),
-      ),
-      const SectionTitle('التوفر والموقع'),
-      TamCard(
-        child: ListRow(
-          icon: Icons.location_on_outlined,
-          title: 'موقعك محدث',
-          subtitle: c.available
-              ? 'آخر تحديث قبل لحظات'
-              : 'فعّل التوفر لمشاركة الموقع',
-          trailing: StatusChip(
-            c.available ? 'متاح' : 'غير متاح',
-            warning: !c.available,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => VisitFlowScreen(c: c, nav: nurseNavBar(context, c, 0))),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.directions_walk_rounded, color: statusColor, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                c.serviceTitle,
+                                style: tamText(size: 15, weight: FontWeight.w800, color: TamreedyColors.navy),
+                              ),
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: statusColor.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  'زيارة جارية',
+                                  style: tamText(size: 11, weight: FontWeight.w700, color: statusColor),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            statusLabel,
+                            style: tamText(size: 12, weight: FontWeight.w600, color: statusColor),
+                          ),
+                          if (c.patientAddress.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              c.patientAddress,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: tamText(size: 11, color: TamreedyColors.subtext),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'متابعة شاشة الزيارة والملاحة',
+                        style: tamText(size: 13, weight: FontWeight.w800, color: Colors.white),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.arrow_back_ios_new, size: 13, color: Colors.white),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-          divider: false,
         ),
       ),
-    ],
-  );
+    );
+  }
+}
+
+class _AvailabilityCard extends StatelessWidget {
+  final NurseController c;
+  final bool disabled;
+  const _AvailabilityCard({required this.c, this.disabled = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = c.available;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: active ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: active ? const Color(0xFF86EFAC) : const Color(0xFFE2E8F0),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: active ? const Color(0xFF22C55E).withValues(alpha: 0.15) : const Color(0xFF94A3B8).withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              active ? Icons.check_circle_outline : Icons.power_settings_new_rounded,
+              color: active ? const Color(0xFF16A34A) : const Color(0xFF64748B),
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  active ? 'أنت متاح لاستقبال الطلبات ●' : 'أنت غير متاح حالياً',
+                  style: tamText(
+                    size: 16,
+                    weight: FontWeight.w800,
+                    color: active ? const Color(0xFF14532D) : const Color(0xFF334155),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  active
+                      ? 'تصلك الطلبات المتوافقة مع تخصصك والقريبة من موقعك'
+                      : 'فعّل المفتاح للبدء في استقبال إشعارات الطلبات القريبة',
+                  style: tamText(
+                    size: 12,
+                    color: active ? const Color(0xFF166534) : const Color(0xFF64748B),
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Switch(
+            value: active,
+            onChanged: disabled ? null : c.setAvailable,
+            activeThumbColor: Colors.white,
+            activeTrackColor: const Color(0xFF22C55E),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// N09 — visit history.
