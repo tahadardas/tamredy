@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart' show mapsEnabled;
 import 'dart:ui';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,10 +17,17 @@ void main() {
     await tester.tap(find.text('تغيير ضماد'));
     await tester.pumpAndSettle();
     expect(find.text('تفاصيل الخدمة'), findsOneWidget);
-    await tester.tap(find.text('متابعة'));
+    await tester.tap(find.byType(Checkbox).first);
     await tester.pumpAndSettle();
-    expect(find.text('تأكيد موقع الزيارة'), findsOneWidget);
-    await tester.tap(find.text('تأكيد الموقع ومتابعة الطلب'));
+    await tester.tap(find.text('متابعة إلى تحديد الموقع'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('أين تريد الزيارة؟'), findsOneWidget);
+    await tester.tap(find.text('استخدم موقعي الحالي'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('ثبّت مكان بيتك'), findsOneWidget);
+    await tester.tap(find.text('هذا بيتي — أرسل الطلب'));
     await tester.pump();
     await tester.pump();
     expect(c.stage, VisitStage.searching);
