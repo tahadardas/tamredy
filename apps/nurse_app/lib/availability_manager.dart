@@ -23,9 +23,8 @@ extension NurseReadinessStateX on NurseReadinessState {
       case NurseReadinessState.ready:
         return 'متاح وجاهز لاستقبال الطلبات';
       case NurseReadinessState.locationStale:
-        return 'الموقع غير محدث';
       case NurseReadinessState.locationRequired:
-        return 'يرجى السماح بالوصول إلى الموقع';
+        return 'يرجى تحديد الموقع الجغرافي';
       case NurseReadinessState.verificationRequired:
         return 'الترخيص بحاجة إلى اعتماد';
       case NurseReadinessState.skillsRequired:
@@ -46,11 +45,10 @@ extension NurseReadinessStateX on NurseReadinessState {
   String get description {
     switch (this) {
       case NurseReadinessState.ready:
-        return 'أنت الآن مؤهل وموقعك متزامن بدقة. ستصلك الطلبات القريبة فور إنشائها مع إنذار صوتي.';
+        return 'أنت الآن مؤهل وموقعك مسجل بنجاح. ستصلك الطلبات القريبة فور إنشائها مع إنذار صوتي.';
       case NurseReadinessState.locationStale:
-        return 'لم يتم تحديث إحداثياتك منذ فترة أو أن دقة GPS ضعيفة (>150م). يرجى الوقوف في مكان مكشوف.';
       case NurseReadinessState.locationRequired:
-        return 'يحتاج النظام لصلاحية الموقع الدقيق لحساب مسافة الوصول وتوزيع الحالات القريبة إليك.';
+        return 'يحتاج النظام لتحديد موقعك الجغرافي مرة واحدة على الأقل لحساب مسافة الوصول وتوزيع الحالات القريبة إليك.';
       case NurseReadinessState.verificationRequired:
         return 'حسابك أو وثيقة مزاولة المهنة بانتظار موافقة الإدارة للتحقق من الأهلية والترخيص.';
       case NurseReadinessState.skillsRequired:
@@ -290,8 +288,10 @@ class AvailabilityManager extends ChangeNotifier {
     try {
       final enabled = await Geolocator.isLocationServiceEnabled();
       if (!enabled) {
-        _state = NurseReadinessState.locationRequired;
-        notifyListeners();
+        if (_currentPosition == null && _lastLocationUpdate == null) {
+          _state = NurseReadinessState.locationRequired;
+          notifyListeners();
+        }
         return;
       }
 
@@ -300,17 +300,33 @@ class AvailabilityManager extends ChangeNotifier {
         perm = await Geolocator.requestPermission();
       }
       if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
-        _state = NurseReadinessState.locationRequired;
-        notifyListeners();
+        if (_currentPosition == null && _lastLocationUpdate == null) {
+          _state = NurseReadinessState.locationRequired;
+          notifyListeners();
+        }
         return;
       }
 
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 8),
-        ),
-      );
+      Position? pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
+      } catch (_) {
+        // Fallback to last known position if current GPS fix times out or fails indoors
+        pos = await Geolocator.getLastKnownPosition();
+      }
+
+      if (pos == null) {
+        if (_currentPosition == null && _lastLocationUpdate == null) {
+          _state = NurseReadinessState.locationRequired;
+          notifyListeners();
+        }
+        return;
+      }
 
       _currentPosition = pos;
       _lastAccuracy = pos.accuracy;
@@ -325,7 +341,7 @@ class AvailabilityManager extends ChangeNotifier {
       _reevaluateState();
       notifyListeners();
     } catch (e) {
-      // If position lookup failed, reevaluate
+      // If position lookup failed, reevaluate without dropping readiness if location exists
       _reevaluateState();
     } finally {
       _locationBusy = false;
@@ -351,7 +367,7 @@ class AvailabilityManager extends ChangeNotifier {
           _state = NurseReadinessState.locationRequired;
           break;
         case 'LOCATION_STALE':
-          _state = NurseReadinessState.locationStale;
+          _state = NurseReadinessState.ready;
           break;
         case 'VERIFICATION_REQUIRED':
           _state = NurseReadinessState.verificationRequired;
@@ -398,13 +414,16 @@ class AvailabilityManager extends ChangeNotifier {
       return;
     }
 
+    if (_currentPosition == null && _lastLocationUpdate == null) {
+      _state = NurseReadinessState.locationRequired;
+      return;
+    }
+
     final now = DateTime.now();
     final hbAge = _lastHeartbeat != null ? now.difference(_lastHeartbeat!).inSeconds : 999;
-    final locAge = _lastLocationUpdate != null ? now.difference(_lastLocationUpdate!).inSeconds : 999;
 
-    if (locAge > 120 || (_lastAccuracy != null && _lastAccuracy! > 150)) {
-      _state = NurseReadinessState.locationStale;
-    } else if (hbAge > 60) {
+    // Heartbeat cutoff relaxed to 120 seconds. Location presence is sufficient.
+    if (hbAge > 120) {
       _state = NurseReadinessState.connectionLost;
     } else {
       _state = NurseReadinessState.ready;

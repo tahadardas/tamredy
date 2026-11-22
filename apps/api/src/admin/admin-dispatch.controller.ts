@@ -31,17 +31,16 @@ export class AdminDispatchController {
           count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE')::int AS available_nurses,
           count(*) FILTER (WHERE n.verified = true)::int AS verified_nurses,
           count(*) FILTER (WHERE n.verified = false)::int AS unverified_nurses,
-          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND n.last_heartbeat_at > now() - interval '60 seconds')::int AS fresh_heartbeat_nurses,
-          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND (n.last_heartbeat_at <= now() - interval '60 seconds' OR n.last_heartbeat_at IS NULL))::int AS stale_heartbeat_nurses,
-          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND nl.recorded_at > now() - interval '120 seconds' AND nl.accuracy_m <= 150)::int AS fresh_location_nurses,
-          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND (nl.recorded_at <= now() - interval '120 seconds' OR nl.recorded_at IS NULL OR nl.accuracy_m > 150))::int AS stale_location_nurses,
+          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND n.last_heartbeat_at > now() - interval '120 seconds')::int AS fresh_heartbeat_nurses,
+          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND (n.last_heartbeat_at <= now() - interval '120 seconds' OR n.last_heartbeat_at IS NULL))::int AS stale_heartbeat_nurses,
+          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND nl.location IS NOT NULL)::int AS fresh_location_nurses,
+          count(*) FILTER (WHERE n.availability_intent = 'AVAILABLE' AND nl.location IS NULL)::int AS stale_location_nurses,
           count(*) FILTER (
             WHERE n.verified = true
               AND n.availability_intent = 'AVAILABLE'
               AND n.work_status = 'AVAILABLE'
-              AND n.last_heartbeat_at > now() - interval '60 seconds'
-              AND nl.recorded_at > now() - interval '120 seconds'
-              AND nl.accuracy_m <= 150
+              AND n.last_heartbeat_at > now() - interval '120 seconds'
+              AND nl.location IS NOT NULL
               AND EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > now())
               AND EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.approved = true)
           )::int AS ready_nurses

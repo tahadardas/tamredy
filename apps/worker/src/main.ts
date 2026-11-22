@@ -54,10 +54,8 @@ async function diagnoseExclusions(c: pg.PoolClient, requestId: string, serviceId
         WHEN n.verified = false THEN 'NOT_VERIFIED'
         WHEN n.availability_intent != 'AVAILABLE' THEN 'NURSE_OFFLINE'
         WHEN n.work_status != 'AVAILABLE' THEN 'NURSE_BUSY'
-        WHEN n.last_heartbeat_at IS NULL OR n.last_heartbeat_at <= now() - interval '60 seconds' THEN 'STALE_HEARTBEAT'
+        WHEN n.last_heartbeat_at IS NULL OR n.last_heartbeat_at <= now() - interval '120 seconds' THEN 'STALE_HEARTBEAT'
         WHEN nl.location IS NULL THEN 'NO_LOCATION'
-        WHEN nl.recorded_at <= now() - interval '120 seconds' THEN 'STALE_LOCATION'
-        WHEN nl.accuracy_m > 150 THEN 'LOW_GPS_ACCURACY'
         WHEN NOT EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > now()) THEN 'LICENSE_NOT_APPROVED'
         WHEN NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true) THEN 'SKILL_NOT_APPROVED'
         WHEN EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id = n.id AND a.status = 'ACTIVE') THEN 'ACTIVE_ASSIGNMENT'
@@ -146,8 +144,8 @@ async function doDispatch(): Promise<boolean> {
         JOIN nurse_skills ns ON ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true
         JOIN care_requests req ON req.id = $1
         WHERE n.verified = true AND n.work_status = 'AVAILABLE' AND n.availability_intent = 'AVAILABLE'
-          AND n.last_heartbeat_at > now() - interval '60 seconds'
-          AND nl.recorded_at > now() - interval '120 seconds' AND nl.accuracy_m <= 150
+          AND n.last_heartbeat_at > now() - interval '120 seconds'
+          AND nl.location IS NOT NULL
           AND EXISTS (SELECT 1 FROM nurse_credentials nc
                      WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > now())
           AND NOT EXISTS (SELECT 1 FROM request_offers existing

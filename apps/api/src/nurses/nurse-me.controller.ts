@@ -101,8 +101,9 @@ export class NurseMeController {
     const active = await this.db.query(`SELECT 1 FROM request_assignments a JOIN care_requests cr ON cr.id=a.request_id WHERE a.nurse_id=$1 AND a.status='ACTIVE' AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')`, [nurseId]);
     const hasActiveAssignment = (active.rowCount ?? 0) > 0;
 
-    const isHeartbeatFresh = row.heartbeat_age_s !== null && row.heartbeat_age_s <= 60;
-    const isLocationFresh = row.location_age_s !== null && row.location_age_s <= 120 && (row.accuracy_m ?? 999) <= 150;
+    const isHeartbeatFresh = row.heartbeat_age_s !== null && row.heartbeat_age_s <= 120;
+    const hasLocation = row.location_age_s !== null;
+    const isLocationFresh = hasLocation;
 
     const unmet: string[] = [];
     let calculatedStatus = 'READY';
@@ -123,12 +124,9 @@ export class NurseMeController {
     } else if (settlementBlocked) {
       calculatedStatus = 'SETTLEMENT_BLOCKED';
       unmet.push('استقبال الطلبات موقوف لتجاوز سقف المستحقات النقدية');
-    } else if (row.location_age_s === null) {
+    } else if (!hasLocation) {
       calculatedStatus = 'LOCATION_REQUIRED';
       unmet.push('يرجى تمكين أذونات وخدمة الموقع الجغرافي');
-    } else if (!isLocationFresh) {
-      calculatedStatus = 'LOCATION_STALE';
-      unmet.push(row.accuracy_m > 150 ? 'دقة الموقع الحالية منخفضة جداً (> 150م)' : 'إحداثيات الموقع قديمة وغير متزامنة');
     } else if (!isHeartbeatFresh) {
       calculatedStatus = 'CONNECTION_LOST';
       unmet.push('الاتصال بالخادم غير مستقر أو انقطع نبض الاتصال');

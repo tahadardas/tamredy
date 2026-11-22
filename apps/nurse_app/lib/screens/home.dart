@@ -140,10 +140,11 @@ class _ReadinessCard extends StatelessWidget {
 
     String telemetryText = '';
     if (c.available) {
-      final locAge = lastLoc != null ? DateTime.now().difference(lastLoc).inSeconds : null;
       final hbAge = lastHb != null ? DateTime.now().difference(lastHb).inSeconds : null;
-      final locStr = locAge != null ? 'الموقع: منذ $locAge ثانية${acc != null ? " (دقة ${acc.round()}م)" : ""}' : 'الموقع: جاري التحديد...';
-      final hbStr = hbAge != null ? 'النبض: منذ $hbAge ث' : 'النبض: متصل';
+      final locStr = (lastLoc != null || c.availabilityManager.currentPosition != null)
+          ? 'الموقع: مسجل ونشط${acc != null ? " (دقة ${acc.round()}م)" : ""}'
+          : 'الموقع: جاري التحديد...';
+      final hbStr = hbAge != null ? 'النبض: متزامن ($hbAge ث)' : 'النبض: متصل';
       telemetryText = '$locStr • $hbStr';
     }
 

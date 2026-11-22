@@ -42,9 +42,8 @@ test('Dispatch exclusion categorization accurately distinguishes readiness block
     if (!nurse.verified) return 'NOT_VERIFIED';
     if (nurse.availability_intent !== 'AVAILABLE') return 'NURSE_OFFLINE';
     if (nurse.work_status !== 'AVAILABLE') return 'NURSE_BUSY';
-    if (!nurse.last_heartbeat_at || (Date.now() - nurse.last_heartbeat_at) > 60000) return 'STALE_HEARTBEAT';
-    if (!nurse.location_recorded_at || (Date.now() - nurse.location_recorded_at) > 120000) return 'STALE_LOCATION';
-    if (nurse.accuracy_m > 150) return 'LOW_GPS_ACCURACY';
+    if (!nurse.last_heartbeat_at || (Date.now() - nurse.last_heartbeat_at) > 120000) return 'STALE_HEARTBEAT';
+    if (!nurse.has_location) return 'NO_LOCATION';
     if (!nurse.has_approved_credential) return 'LICENSE_NOT_APPROVED';
     if (!nurse.approved_skills.includes(request.service_id)) return 'SKILL_NOT_APPROVED';
     if (nurse.has_active_assignment) return 'ACTIVE_ASSIGNMENT';
@@ -59,8 +58,7 @@ test('Dispatch exclusion categorization accurately distinguishes readiness block
     availability_intent: 'AVAILABLE',
     work_status: 'AVAILABLE',
     last_heartbeat_at: Date.now() - 10000,
-    location_recorded_at: Date.now() - 20000,
-    accuracy_m: 15,
+    has_location: true,
     has_approved_credential: true,
     approved_skills: ['srv-wound-dressing'],
     has_active_assignment: false,
@@ -68,14 +66,11 @@ test('Dispatch exclusion categorization accurately distinguishes readiness block
 
   assert.equal(evaluateNurseReadiness(qualifiedNurse, req, 1200), 'ELIGIBLE');
 
-  // Stale heartbeat (>60s)
-  assert.equal(evaluateNurseReadiness({ ...qualifiedNurse, last_heartbeat_at: Date.now() - 75000 }, req, 1200), 'STALE_HEARTBEAT');
+  // Stale heartbeat (>120s)
+  assert.equal(evaluateNurseReadiness({ ...qualifiedNurse, last_heartbeat_at: Date.now() - 130000 }, req, 1200), 'STALE_HEARTBEAT');
 
-  // Stale location (>120s)
-  assert.equal(evaluateNurseReadiness({ ...qualifiedNurse, location_recorded_at: Date.now() - 150000 }, req, 1200), 'STALE_LOCATION');
-
-  // Low GPS accuracy (>150m)
-  assert.equal(evaluateNurseReadiness({ ...qualifiedNurse, accuracy_m: 250 }, req, 1200), 'LOW_GPS_ACCURACY');
+  // Missing location on file
+  assert.equal(evaluateNurseReadiness({ ...qualifiedNurse, has_location: false }, req, 1200), 'NO_LOCATION');
 
   // Missing skill
   assert.equal(evaluateNurseReadiness({ ...qualifiedNurse, approved_skills: ['srv-injections'] }, req, 1200), 'SKILL_NOT_APPROVED');
