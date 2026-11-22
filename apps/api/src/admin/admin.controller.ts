@@ -27,9 +27,16 @@ export class AdminController {
     requireRole(r.user!,'ADMIN');
     const counts=await this.db.query(`SELECT
       (SELECT count(*)::integer FROM nurses WHERE work_status='AVAILABLE' AND last_heartbeat_at>now()-interval '60 seconds') AS available_nurses,
+      (SELECT count(*)::integer FROM nurses WHERE work_status='AVAILABLE' AND last_heartbeat_at>now()-interval '60 seconds' AND EXISTS(SELECT 1 FROM request_assignments a WHERE a.nurse_id=nurses.id AND a.status='ACTIVE')) AS busy_nurses,
       (SELECT count(*)::integer FROM care_requests WHERE status='OFFERING') AS searching_requests,
-      (SELECT count(*)::integer FROM care_requests WHERE status='EN_ROUTE') AS en_route,
-      (SELECT count(*)::integer FROM care_requests WHERE status='IN_SERVICE') AS in_service`);
+      (SELECT count(*)::integer FROM care_requests WHERE status IN ('ASSIGNED', 'EN_ROUTE')) AS en_route,
+      (SELECT count(*)::integer FROM care_requests WHERE status IN ('ARRIVED', 'IN_SERVICE')) AS in_service,
+      (SELECT count(*)::integer FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS completed_today,
+      (SELECT count(*)::integer FROM care_requests WHERE status='CANCELLED' AND updated_at>=date_trunc('day',now())) AS cancelled_today,
+      (SELECT count(*)::integer FROM care_requests WHERE status='ESCALATED') AS escalated_requests,
+      (SELECT coalesce(sum(price_amount),0)::bigint FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS revenue_today,
+      (SELECT coalesce(sum(price_amount*commission_bps/10000),0)::bigint FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS commission_today,
+      (SELECT coalesce(sum(balance),0)::bigint FROM (SELECT nurse_id, coalesce(sum(amount),0) AS balance FROM settlement_ledgers GROUP BY nurse_id) bl WHERE balance > 0) AS dues_pending`);
     return counts.rows[0];
   }
   @Get('requests') async requests(@Request() r:AuthRequest,@Query('limit') limit?:string,@Query('cursor') cursor?:string,@Query('status') status?:string) {

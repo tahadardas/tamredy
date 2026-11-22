@@ -1,7 +1,19 @@
 import {useState, useEffect} from 'react';
 import {Chip, Notice, Panel, Row, Stat, Table, Icon} from './ui';
 
-export type Metrics = {available_nurses: number; searching_requests: number; en_route: number; in_service: number};
+export type Metrics = {
+  available_nurses: number;
+  busy_nurses?: number;
+  searching_requests: number;
+  en_route: number;
+  in_service: number;
+  completed_today?: number;
+  cancelled_today?: number;
+  escalated_requests?: number;
+  revenue_today?: number;
+  commission_today?: number;
+  dues_pending?: number;
+};
 export type RequestRow = {id: string; status: string; created_at: string; service_title?: string; beneficiary_name?: string};
 export type Page<T> = {items: T[]; hasMore: boolean; nextCursor: string | null};
 
@@ -75,13 +87,37 @@ export function Dashboard({live}: {live: Live}) {
   if (x.live?.unresponsive) alerts.push({icon: 'alert', title: `${x.live.unresponsive} ممرض غير مستجيب`, sub: 'حالتهم متاحة لكن دون نبض دوري حديث', chip: 'تحقق', chipTone: 'danger'});
   if (x.reviews?.safety_reports) alerts.push({icon: 'alert', title: `${x.reviews.safety_reports} بلاغ سلامة مفتوح`, sub: 'إشعار أمان عاجل من زيارة جارية أو سابقة', chip: 'أولوية قصوى', chipTone: 'danger'});
   if (x.reviews?.new_complaints) alerts.push({icon: 'star', title: `${x.reviews.new_complaints} شكوى جديدة`, sub: 'تقييمات ممرضين بانتظار المراجعة والاعتماد', chip: 'جديدة', chipTone: 'info'});
+  if (m?.escalated_requests && m.escalated_requests > 0) {
+    alerts.push({
+      icon: 'alert',
+      title: `${m.escalated_requests} طلب بحاجة لتدخل الإدارة عاجلاً`,
+      sub: 'طلبات تم تصعيدها بسبب تعذر الإسناد أو بلاغات طارئة',
+      chip: 'أولوية قصوى',
+      chipTone: 'danger',
+    });
+  }
 
   return <>
+    <div className="section-title">
+      <h3>المؤشرات التشغيلية الحية</h3>
+      <small className="text-muted">مراقبة فورية للجاهزية الميدانية والطلبات النشطة</small>
+    </div>
     <div className="stats">
-      <Stat icon="users" label="ممرضون متاحون الآن" value={pad(m?.available_nurses ?? 0)} sub="جاهزون لتلقي الطلبات"/>
+      <Stat icon="users" label="ممرضون متاحون" value={pad(m?.available_nurses ?? 0)} sub="جاهزون لتلقي الطلبات"/>
+      <Stat icon="pin" label="ممرضون مشغولون" value={pad(m?.busy_nurses ?? (m?.en_route ?? 0))} sub="في الطريق أو لدى المريض"/>
       <Stat icon="search" label="طلبات قيد البحث" value={pad(m?.searching_requests ?? 0)} sub="في موجات التوزيع الحالية"/>
-      <Stat icon="pulse" label="زيارات جارية الآن" value={pad(m?.in_service ?? 0)} sub="ممرض في الطريق أو لدى المريض"/>
-      <Stat icon="wallet" label="إيرادات اليوم التقديرية" value={`${n(x.extras?.revenueToday ?? 0)} ل.س`} sub="قيمة الطلبات المنجزة"/>
+      <Stat icon="pulse" label="زيارات جارية الآن" value={pad(m?.in_service ?? 0)} sub="قيد تقديم الرعاية الطبية"/>
+    </div>
+
+    <div className="section-title" style={{marginTop: '20px'}}>
+      <h3>حصيلة اليوم والمؤشرات المالية</h3>
+      <small className="text-muted">بيانات مثبتة من قاعدة البيانات</small>
+    </div>
+    <div className="stats">
+      <Stat icon="check" label="زيارات مكتملة اليوم" value={pad(m?.completed_today ?? 0)} sub={`ملغاة: ${m?.cancelled_today ?? 0}`}/>
+      <Stat icon="wallet" label="إجمالي قيمة الخدمات اليوم" value={`${n(m?.revenue_today ?? (x.extras?.revenueToday ?? 0))} ل.س`} sub="إجمالي قيمة الطلبات"/>
+      <Stat icon="cash" label="عمولة المنصة اليوم" value={`${n(m?.commission_today ?? 0)} ل.س`} sub="صافي دخل المنصة"/>
+      <Stat icon="alert" label="مستحقات نقدية معلقة" value={`${n(m?.dues_pending ?? 0)} ل.س`} sub="لدى الممرضين بانتظار التوريد"/>
     </div>
 
     <div className="grid2">
