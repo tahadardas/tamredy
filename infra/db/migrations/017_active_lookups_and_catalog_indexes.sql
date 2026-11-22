@@ -6,7 +6,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_active_recovery
   WHERE status IN ('REQUESTED', 'OFFERING', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE');
 
 CREATE INDEX IF NOT EXISTS idx_assignments_active_recovery
-  ON request_assignments(nurse_id, status, assigned_at DESC)
+  ON request_assignments(nurse_id, status, accepted_at DESC)
   WHERE status = 'ACTIVE';
 
 CREATE INDEX IF NOT EXISTS idx_services_catalog_public

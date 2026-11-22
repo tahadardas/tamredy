@@ -33,7 +33,7 @@ final AppEnvironment kAppEnvironment = resolveEnvironment();
 String defaultBaseUrlForEnv(AppEnvironment env) {
   switch (env) {
     case AppEnvironment.production:
-      return 'https://tamredy.dardus.com.sy/api';
+      return 'http://85.215.243.237:18300';
     case AppEnvironment.staging:
       return 'https://staging-api.tamreedy.com';
     case AppEnvironment.dev:

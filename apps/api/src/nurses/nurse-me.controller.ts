@@ -79,7 +79,7 @@ export class NurseMeController {
     if (!n.rowCount) missing();
     const nurse = n.rows[0];
     const q = await this.db.query(`
-      SELECT a.id AS assignment_id, a.status AS assignment_status, a.assigned_at,
+      SELECT a.id AS assignment_id, a.status AS assignment_status, a.accepted_at AS assigned_at,
         cr.id AS request_id, cr.status AS request_status, cr.address_text, cr.price_amount, cr.currency_code, cr.commission_bps,
         ST_Y(cr.location::geometry) AS patient_lat, ST_X(cr.location::geometry) AS patient_lng,
         s.id AS service_id, s.title_ar AS service_title, s.code AS service_code, s.requires_prescription,
@@ -92,7 +92,7 @@ export class NurseMeController {
       JOIN users u ON u.id = cr.requester_user_id
       WHERE a.nurse_id = $1 AND a.status = 'ACTIVE'
         AND cr.status IN ('ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
-      ORDER BY a.assigned_at DESC LIMIT 1
+      ORDER BY a.accepted_at DESC LIMIT 1
     `, [nurse.id]);
 
     if (!q.rowCount) {
