@@ -73,6 +73,89 @@ export class NurseMeController {
     return {verified: n.rows[0].verified, credentials: creds.rows, skills: skills.rows};
   }
 
+  @Get('readiness') async readiness(@Request() r: AuthRequest) {
+    requireRole(r.user!, 'NURSE');
+    const n = await this.db.query(`SELECT n.id, n.verified, n.availability_intent, n.work_status, n.last_heartbeat_at,
+        EXTRACT(EPOCH FROM (now() - n.last_heartbeat_at))::int AS heartbeat_age_s,
+        nl.accuracy_m, EXTRACT(EPOCH FROM (now() - nl.recorded_at))::int AS location_age_s
+      FROM nurses n
+      LEFT JOIN nurse_locations nl ON nl.nurse_id = n.id
+      WHERE n.user_id = $1`, [r.user!.id]);
+    if (!n.rowCount) missing();
+    const row = n.rows[0];
+    const nurseId = row.id;
+
+    // Check credentials
+    const creds = await this.db.query(`SELECT 1 FROM nurse_credentials WHERE nurse_id=$1 AND approved=true AND expires_at>now()`, [nurseId]);
+    const credentialsApproved = (creds.rowCount ?? 0) > 0;
+
+    // Check skills
+    const skills = await this.db.query(`SELECT s.id, s.title_ar FROM nurse_skills ns JOIN services s ON s.id=ns.service_id WHERE ns.nurse_id=$1 AND ns.approved=true AND s.active=true`, [nurseId]);
+    const skillsCount = skills.rowCount ?? 0;
+
+    // Check settlement dues
+    const dues = await this.dues.balance(this.db, nurseId);
+    const settlementBlocked = dues.blocked === true;
+
+    // Check active assignment
+    const active = await this.db.query(`SELECT 1 FROM request_assignments a JOIN care_requests cr ON cr.id=a.request_id WHERE a.nurse_id=$1 AND a.status='ACTIVE' AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')`, [nurseId]);
+    const hasActiveAssignment = (active.rowCount ?? 0) > 0;
+
+    const isHeartbeatFresh = row.heartbeat_age_s !== null && row.heartbeat_age_s <= 60;
+    const isLocationFresh = row.location_age_s !== null && row.location_age_s <= 120 && (row.accuracy_m ?? 999) <= 150;
+
+    const unmet: string[] = [];
+    let calculatedStatus = 'READY';
+
+    if (hasActiveAssignment || ['RESERVED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE'].includes(row.work_status)) {
+      calculatedStatus = 'BUSY';
+    } else if (row.availability_intent !== 'AVAILABLE') {
+      calculatedStatus = 'OFFLINE';
+    } else if (!row.verified) {
+      calculatedStatus = 'VERIFICATION_REQUIRED';
+      unmet.push('الحساب بانتظار الاعتماد الإداري النهائي');
+    } else if (!credentialsApproved) {
+      calculatedStatus = 'VERIFICATION_REQUIRED';
+      unmet.push('الترخيص المهني بحاجة إلى اعتماد أو منتهي الصلاحية');
+    } else if (skillsCount === 0) {
+      calculatedStatus = 'SKILLS_REQUIRED';
+      unmet.push('لم يتم اعتماد أي خدمات تمريضية مؤهل لتنفيذها');
+    } else if (settlementBlocked) {
+      calculatedStatus = 'SETTLEMENT_BLOCKED';
+      unmet.push('استقبال الطلبات موقوف لتجاوز سقف المستحقات النقدية');
+    } else if (row.location_age_s === null) {
+      calculatedStatus = 'LOCATION_REQUIRED';
+      unmet.push('يرجى تمكين أذونات وخدمة الموقع الجغرافي');
+    } else if (!isLocationFresh) {
+      calculatedStatus = 'LOCATION_STALE';
+      unmet.push(row.accuracy_m > 150 ? 'دقة الموقع الحالية منخفضة جداً (> 150م)' : 'إحداثيات الموقع قديمة وغير متزامنة');
+    } else if (!isHeartbeatFresh) {
+      calculatedStatus = 'CONNECTION_LOST';
+      unmet.push('الاتصال بالخادم غير مستقر أو انقطع نبض الاتصال');
+    }
+
+    const canReceiveOffers = calculatedStatus === 'READY';
+
+    return {
+      status: calculatedStatus,
+      canReceiveOffers,
+      availabilityIntent: row.availability_intent,
+      workStatus: row.work_status,
+      verified: row.verified,
+      credentialsApproved,
+      skillsCount,
+      approvedSkills: skills.rows.map(s => s.title_ar),
+      settlementBlocked,
+      hasActiveAssignment,
+      lastHeartbeatSecondsAgo: row.heartbeat_age_s,
+      lastLocationSecondsAgo: row.location_age_s,
+      locationAccuracyMeters: row.accuracy_m,
+      isLocationFresh,
+      isHeartbeatFresh,
+      unmetRequirements: unmet,
+    };
+  }
+
   @Get('active-assignment') async activeAssignment(@Request() r: AuthRequest) {
     requireRole(r.user!, 'NURSE');
     const n = await this.db.query('SELECT id,verified,availability_intent,work_status FROM nurses WHERE user_id=$1', [r.user!.id]);

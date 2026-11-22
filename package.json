@@ -8,6 +8,7 @@
     "dev:worker": "pnpm --filter @tamreedy/worker dev",
     "dev:admin": "pnpm --filter @tamreedy/admin dev",
     "test:domain": "node --test apps/api/tests/domain.test.mjs",
+    "test:dispatch": "node --test apps/api/tests/dispatch_diagnostics.test.mjs",
     "test:auth": "pnpm --filter @tamreedy/api build && node --test apps/api/tests/auth.test.mjs",
     "db:migrate": "node infra/db/migrate.mjs",
     "typecheck": "pnpm -r typecheck",

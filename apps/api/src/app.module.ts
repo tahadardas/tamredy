@@ -36,6 +36,7 @@ import { ReferralController } from './pricing/referral.controller.js';
 import { DuesService, FeesService } from './pricing/fees.service.js';
 import { ReferralService } from './pricing/referral.service.js';
 import { MarketingController } from './admin/marketing.controller.js';
+import { AdminDispatchController } from './admin/admin-dispatch.controller.js';
 import { MeController } from './auth/me.controller.js';
 import { AutoDiscountService } from './pricing/auto-discounts.service.js';
 import { AppController } from './app.controller.js';
@@ -48,7 +49,7 @@ import { LiveGateway } from './realtime/live.gateway.js';
       limit: 120,
     }]),
   ],
-  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,MarketingController,MeController,ReferralController,NurseMeController],
+  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,LiveGateway

@@ -27,7 +27,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         }
         const users=[...(evt.payload.recipientUserIds??[]),...(evt.payload.recipientUserId?[evt.payload.recipientUserId]:[])];
         // Never rely on a client-selected room or broadcast private patient data publicly.
-        for(const userId of new Set(users)) this.io?.to(`user:${userId}`).emit(evt.type,{requestId:evt.payload.requestId});
+        for(const userId of new Set(users)) this.io?.to(`user:${userId}`).emit(evt.type, evt.payload);
       }catch { /* malformed worker message ignored and logged upstream */ }
     });
   }
