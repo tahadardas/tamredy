@@ -12,6 +12,7 @@ import {Accounts, Credentials, Nurses} from './pages_people';
 import {Applications} from './pages_applications';
 import {AuditLog, SettingsPage} from './pages_settings';
 import {Dashboard, Finance, Live, LiveMap, Metrics, Page, Reports, RequestRow, Requests, Reviews, WalletRec} from './pages';
+import {DispatchMonitor} from './pages_dispatch';
 
 export type NavItem = {
   id: string;
@@ -32,6 +33,7 @@ export const navCategories: NavCategory[] = [
     title: 'غرفة العمليات المباشرة',
     items: [
       {id: 'dashboard', label: 'لوحة التحكم', icon: 'home', title: 'لوحة التحكم الرئيسية', desc: 'نظرة تشغيلية شاملة ومؤشرات حية'},
+      {id: 'dispatch', label: 'مراقبة التوزيع', icon: 'bell', title: 'مراقبة الطلبات والإشعارات — Dispatch Monitor', desc: 'تتبع لحظي لمحرك المطابقة الجغرافية وأسباب الاستبعاد وصحة الإشعارات'},
       {id: 'map', label: 'مراقبة ميدانية', icon: 'pin', title: 'المراقبة الميدانية المباشرة', desc: 'عرض توزيع الحالات والزيارات والممرضين'},
       {id: 'requests', label: 'إدارة الطلبات', icon: 'doc', title: 'إدارة ومتابعة الطلبات', desc: 'تصفية وبحث ومراقبة مراحل الإسناد والخدمة'},
     ],
@@ -316,6 +318,7 @@ function App() {
 
   const body: Record<string, React.ReactNode> = {
     dashboard: <Dashboard live={live} />,
+    dispatch: <DispatchMonitor live={live} />,
     map: <LiveMap live={live} />,
     requests: <Requests live={live} />,
     applications: <Applications live={live} />,
