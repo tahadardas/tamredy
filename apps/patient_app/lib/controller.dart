@@ -173,9 +173,8 @@ class PatientController extends ChangeNotifier {
 
   ServiceItem? service;
   String beneficiary = kDemoMode ? 'والدي - أحمد' : '';
-  String address = 'دمشق - المزة';
+  String address = '';
   String extraAddress = '';
-  String areaLabel = ''; // area the patient picked by name (e.g. «المزة، دمشق»)
   String notes = '';
   LatLng? position; // confirmed visit location
   double accuracy = 30;
@@ -211,16 +210,6 @@ class PatientController extends ChangeNotifier {
 
   ServiceLoadState serviceState = kDemoMode ? ServiceLoadState.loaded : ServiceLoadState.initial;
   String? serviceError;
-
-  PatientController() {
-    if (!kDemoMode) {
-      loadHistory();
-      loadServices();
-      loadBeneficiary();
-      loadReferral();
-      loadConsent();
-    }
-  }
 
   /// The visit is for the patient's own beneficiary (created at sign-up), never a sample name.
   Future<void> loadBeneficiary() async {
@@ -381,20 +370,24 @@ class PatientController extends ChangeNotifier {
   };
 
   // ---- bill ----
-  Future<void> loadBill() async {
-    if (requestId == null) return;
+  Future<bool> loadBill() async {
+    final id = requestId;
+    if (id == null) return false;
     if (kDemoMode) {
       bill ??= _demoBill();
     } else {
       try {
-        bill = BillInfo.fromJson(
-          await api.getMap('/v1/requests/$requestId/bill'),
+        final updated = BillInfo.fromJson(
+          await api.getMap('/v1/requests/$id/bill'),
         );
+        if (id != requestId) return false;
+        bill = updated;
       } catch (_) {
-        /* retried on the next poll/event */
+        return false;
       }
     }
     notifyListeners();
+    return true;
   }
 
   BillInfo _demoBill() {
@@ -578,9 +571,7 @@ class PatientController extends ChangeNotifier {
   Future<void> useCurrentLocation() async {
     error = null;
     if (kDemoMode) {
-      position = kDamascus;
-      address = 'دمشق - المزة';
-      notifyListeners();
+      selectVisitLocation(kDamascus, 'موقعي الحالي');
       return;
     }
     try {
@@ -610,9 +601,12 @@ class PatientController extends ChangeNotifier {
           timeLimit: Duration(seconds: 10),
         ),
       );
-      position = LatLng(fix.latitude, fix.longitude);
-      accuracy = fix.accuracy;
-      error = null;
+      selectVisitLocation(
+        LatLng(fix.latitude, fix.longitude),
+        'موقعي الحالي',
+        accuracyMeters: fix.accuracy,
+      );
+      return;
     } catch (_) {
       error = 'تعذر تحديد موقعك الحالي. تأكد من تفعيل الـ GPS أو اختر منطقتك من القائمة.';
     }
@@ -623,11 +617,30 @@ class PatientController extends ChangeNotifier {
     await Geolocator.openAppSettings();
   }
 
-  void setPicked(LatLng point, String addr) {
+  void selectVisitLocation(
+    LatLng point,
+    String label, {
+    double accuracyMeters = 0,
+  }) {
     position = point;
-    if (addr.isNotEmpty) address = addr;
+    address = label;
+    accuracy = accuracyMeters;
+    extraAddress = '';
     notifyListeners();
   }
+
+  void setPicked(LatLng point, String resolvedAddress) {
+    if (position != point) {
+      position = point;
+      address = 'الموقع المحدد على الخريطة';
+      accuracy = 0;
+    }
+    if (resolvedAddress.isNotEmpty) address = resolvedAddress;
+    notifyListeners();
+  }
+
+  String get visitAddress =>
+      [address, extraAddress.trim()].where((part) => part.isNotEmpty).join(' • ');
 
   /// Creates the request, then follows its lifecycle.
   Future<bool> submit() async {
@@ -671,7 +684,10 @@ class PatientController extends ChangeNotifier {
       notifyListeners();
       return true;
     }
-    if (position == null) {
+    final visitPoint = position;
+    final confirmedAddress = visitAddress;
+    final accuracyMeters = accuracy.round();
+    if (visitPoint == null) {
       busy = false;
       error = 'يلزم تأكيد الموقع قبل الإرسال';
       notifyListeners();
@@ -685,11 +701,11 @@ class PatientController extends ChangeNotifier {
         {
           'beneficiaryId': (benef.first as Map)['id'],
           'serviceId': service!.id,
-          'latitude': position!.latitude,
-          'longitude': position!.longitude,
-          'accuracyMeters': accuracy.round(),
+          'latitude': visitPoint.latitude,
+          'longitude': visitPoint.longitude,
+          'accuracyMeters': accuracyMeters,
           'locationSource': 'MANUAL_PIN',
-          'addressText': '${areaLabel.isNotEmpty ? areaLabel : address} $extraAddress'.trim(),
+          'addressText': confirmedAddress,
           'nonEmergencyConfirmed': true,
           if (service!.requiresPrescription) 'prescriptionConfirmed': true,
           if (promoCode.isNotEmpty) 'promoCode': promoCode,
@@ -697,6 +713,10 @@ class PatientController extends ChangeNotifier {
         {'Idempotency-Key': _idemKey!},
       );
       requestId = r['id'] as String?;
+      position = visitPoint;
+      address = confirmedAddress;
+      accuracy = accuracyMeters.toDouble();
+      extraAddress = '';
       _idemKey = null;
       stage = VisitStage.searching;
       _timer?.cancel();
@@ -720,9 +740,8 @@ class PatientController extends ChangeNotifier {
         final req = Map<String, dynamic>.from(res['request'] as Map);
         requestId = req['id']?.toString();
         final status = '${req['status']}';
-        if (req['address_text'] != null) {
-          address = '${req['address_text']}';
-        }
+        address = req['address_text']?.toString() ?? 'الموقع المحدد على الخريطة';
+        extraAddress = '';
         if (req['patient_lat'] != null && req['patient_lng'] != null) {
           position = LatLng(
             double.parse('${req['patient_lat']}'),
@@ -749,8 +768,8 @@ class PatientController extends ChangeNotifier {
         nursePos = (lat != null && lng != null) ? LatLng(lat.toDouble(), lng.toDouble()) : null;
 
         stage = switch (status) {
-          'REQUESTED' || 'OFFERING' => VisitStage.searching,
-          'ASSIGNED' || 'EN_ROUTE' => VisitStage.enRoute,
+          'REQUESTED' || 'OFFERING' || 'ASSIGNED' => VisitStage.searching,
+          'EN_ROUTE' => VisitStage.enRoute,
           'ARRIVED' => VisitStage.arrived,
           'IN_SERVICE' => VisitStage.inService,
           'COMPLETED' => VisitStage.completed,
@@ -780,8 +799,7 @@ class PatientController extends ChangeNotifier {
     }
   }
 
-  /// Reconcile with the server after a reconnect, app resume or push.
-  /// Everything the signed-in user sees. Called right after login (the data requested at app start had no token).
+  /// Loads the signed-in patient dashboard and restores their active request.
   Future<void> loadAll() async {
     if (kDemoMode) return;
     error = null;
@@ -797,9 +815,7 @@ class PatientController extends ChangeNotifier {
 
   Future<void> resync() async {
     if (kDemoMode) return;
-    await _poll();
-    await loadHistory();
-    await loadServices();
+    await Future.wait([_poll(), loadHistory(), loadServices()]);
   }
 
   void _startDemoMove() {
@@ -842,10 +858,12 @@ class PatientController extends ChangeNotifier {
     }
   }
 
-  Future<void> _poll() async {
-    if (requestId == null) return;
+  Future<String?> _poll() async {
+    final id = requestId;
+    if (id == null) return null;
     try {
-      final d = await api.getMap('/v1/requests/$requestId/tracking');
+      final d = await api.getMap('/v1/requests/$id/tracking');
+      if (id != requestId) return null;
       final status = '${d['status']}';
       stage = switch (status) {
         'EN_ROUTE' => VisitStage.enRoute,
@@ -877,8 +895,9 @@ class PatientController extends ChangeNotifier {
         if (bill?.status == 'PAID') _timer?.cancel();
       }
       notifyListeners();
+      return status;
     } catch (_) {
-      /* keep last known state */
+      return null;
     }
   }
 
@@ -918,10 +937,13 @@ class PatientController extends ChangeNotifier {
       }
       resetToHome();
       return true;
-    } catch (_) {
-      // Regardless of network state or if already cancelled on server, clean up locally
-      resetToHome();
-      return true;
+    } catch (e) {
+      if (await _poll() == 'CANCELLED') {
+        resetToHome();
+        return true;
+      }
+      error = explainError(e, fallback: 'تعذر تأكيد إلغاء الطلب. تحقق من حالته وحاول مجددًا.');
+      return false;
     } finally {
       busy = false;
       notifyListeners();

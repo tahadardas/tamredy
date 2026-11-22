@@ -49,12 +49,13 @@ test('migration indexes foreign keys and keyset paths without duplicating primar
  assert.ok(!/ON users\(id\)/i.test(sql));
 });
 test('worker dispatch inserts candidates and events set-wise, with no per-nurse SQL loop',()=>{
- const src=readFileSync(resolve(api,'../../../apps/worker/src/main.ts'),'utf8');
+ const src=readFileSync(resolve(api,'../../../apps/worker/src/dispatch.ts'),'utf8');
+ const worker=readFileSync(resolve(api,'../../../apps/worker/src/main.ts'),'utf8');
  assert.ok(src.includes('WITH candidates AS ('));
  assert.ok(src.includes('INSERT INTO request_offers'));
  assert.ok(src.includes('jsonb_build_object'));
  assert.ok(!src.includes('for(const n of nurses.rows)'));
- assert.ok(src.includes('WHERE id=ANY($1::bigint[])'));
+ assert.match(worker, /WHERE id\s*=\s*ANY\(\$1::bigint\[\]\)/);
 });
 test('patient/admin histories use joined reads and keyset ordering, no fixed LIMIT 100',()=>{
  const req=readFileSync(resolve(api,'requests/requests.service.ts'),'utf8');

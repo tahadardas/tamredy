@@ -42,7 +42,7 @@ export class DispatchService {
       const offer=oo.rows[0];
       if(!offer || offer.status!=='OPEN' || new Date(offer.expires_at).getTime()<=Date.now()) gone();
       if(!nurse?.verified || nurse.work_status !== 'AVAILABLE' || nurse.availability_intent!=='AVAILABLE'
-        || !nurse.last_heartbeat_at || Date.now()-new Date(nurse.last_heartbeat_at).getTime()>=60000) conflict('NURSE_NOT_AVAILABLE');
+        || !nurse.last_heartbeat_at || Date.now()-new Date(nurse.last_heartbeat_at).getTime()>=120000) conflict('NURSE_NOT_AVAILABLE');
       const qualified=await c.query(`SELECT 1 FROM nurse_skills sk
         WHERE sk.nurse_id=$1 AND sk.service_id=$2 AND sk.approved=true AND EXISTS(
           SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id=sk.nurse_id
@@ -126,7 +126,7 @@ export class DispatchService {
       await c.query(`UPDATE care_requests SET status=$2,version=version+1,updated_at=now() WHERE id=$1`,[requestId,target.to]);
       if(action==='complete') {
         await c.query(`UPDATE nurses SET work_status=CASE WHEN availability_intent='AVAILABLE'
-          AND last_heartbeat_at>now()-interval '60 seconds' THEN 'AVAILABLE'
+          AND last_heartbeat_at>now()-interval '120 seconds' THEN 'AVAILABLE'
           WHEN availability_intent='PAUSED' THEN 'PAUSED' ELSE 'OFFLINE' END,updated_at=now() WHERE id=$1`,[nurseId]);
       } else {
         await c.query('UPDATE nurses SET work_status=$2,updated_at=now() WHERE id=$1',[nurseId,target.nurse]);

@@ -17,115 +17,124 @@ Color _toneFg(Tone t) => switch (t) {
   Tone.danger => TamreedyColors.danger,
 };
 
-/// Page scaffold: header (logo, bell, title, subtitle) + body + bottom nav.
+/// Shared layout for Arabic screens, including optional persistent actions.
 class TamScaffold extends StatelessWidget {
   final String title;
   final String subtitle;
   final List<Widget> children;
   final TamBottomNav? nav;
+  final Widget? actions;
   final bool showBack;
   final Future<void> Function()? onRefresh;
+
   const TamScaffold({
     super.key,
     required this.title,
     required this.subtitle,
     required this.children,
     this.nav,
+    this.actions,
     this.showBack = false,
     this.onRefresh,
   });
 
   @override
   Widget build(BuildContext context) {
+    final refresh = onRefresh;
+    final visibleNav = MediaQuery.viewInsetsOf(context).bottom == 0 ? nav : null;
+    final content = ListView(
+      physics: refresh == null ? null : const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          ),
+        ),
+      ],
+    );
+
     return ScreenLogger(
       name: title,
       child: Scaffold(
-        backgroundColor: TamreedyColors.canvas,
-        bottomNavigationBar: nav,
+        extendBody: false,
+        bottomNavigationBar: visibleNav,
         body: SafeArea(
+          bottom: visibleNav == null,
           child: Column(
             children: [
-              Container(
+              Material(
                 color: Colors.white,
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Image.asset(
-                          'assets/images/logo_wordmark.png',
-                          package: kFontPackage,
-                          height: 46,
-                        ),
-                        const Spacer(),
-                        if (showBack)
-                          IconButton(
-                            onPressed: () => Navigator.of(context).maybePop(),
-                            icon: const Icon(
-                              Icons.arrow_forward_ios,
-                              size: 18,
-                              color: TamreedyColors.navy,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 712),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          if (showBack)
+                            IconButton(
+                              tooltip: 'رجوع',
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              icon: const Icon(Icons.arrow_back_rounded),
+                            )
+                          else
+                            Image.asset(
+                              'assets/images/logo_mark.png',
+                              package: kFontPackage,
+                              width: 52,
+                              height: 52,
+                              excludeFromSemantics: true,
+                            ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Semantics(
+                                  header: true,
+                                  child: Text(title, style: tamText(size: 20, weight: FontWeight.w800)),
+                                ),
+                                if (subtitle.isNotEmpty)
+                                  Text(subtitle, style: tamText(size: 12, color: TamreedyColors.subtext)),
+                              ],
                             ),
                           ),
-                        const BellButton(),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      title,
-                      style: tamText(
-                        size: 22,
-                        weight: FontWeight.w800,
-                        color: TamreedyColors.navy,
+                        ],
                       ),
                     ),
-                    Text(
-                      subtitle,
-                      style: tamText(size: 12, color: TamreedyColors.subtext),
-                    ),
-                  ],
+                  ),
                 ),
               ),
               const Divider(height: 1, color: TamreedyColors.border),
               Expanded(
-                child: onRefresh != null
-                    ? RefreshIndicator(
-                        color: TamreedyColors.teal,
-                        onRefresh: onRefresh!,
-                        child: ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-                          children: children,
-                        ),
-                      )
-                    : ListView(
-                        padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-                        children: children,
-                      ),
+                child: refresh == null
+                    ? content
+                    : RefreshIndicator(onRefresh: refresh, child: content),
               ),
+              if (actions != null)
+                Material(
+                  color: Colors.white,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 680),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                        child: actions!,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
   }
-}
-
-class BellButton extends StatelessWidget {
-  const BellButton({super.key});
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 46,
-    height: 52,
-    decoration: BoxDecoration(
-      color: TamreedyColors.tealTint,
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: const Icon(Icons.notifications_none, color: TamreedyColors.teal),
-  );
 }
 
 class SectionTitle extends StatelessWidget {
@@ -533,48 +542,26 @@ class TamBottomNav extends StatelessWidget {
     required this.onTap,
   });
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => DecoratedBox(
     decoration: const BoxDecoration(
-      color: Colors.white,
       border: Border(top: BorderSide(color: TamreedyColors.border)),
     ),
-    child: SafeArea(
-      child: SizedBox(
-        height: 64,
-        child: Row(
-          children: [
-            for (var i = 0; i < items.length; i++)
-              Expanded(
-                child: InkWell(
-                  onTap: () => onTap(i),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        items[i].icon,
-                        color: i == index
-                            ? TamreedyColors.teal
-                            : TamreedyColors.subtext,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        items[i].label,
-                        style: tamText(
-                          size: 11,
-                          weight: i == index
-                              ? FontWeight.w700
-                              : FontWeight.w400,
-                          color: i == index
-                              ? TamreedyColors.teal
-                              : TamreedyColors.subtext,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
+    child: Padding(
+      padding: const EdgeInsets.only(top: 1),
+      child: NavigationBar(
+        backgroundColor: Colors.white,
+        indicatorColor: TamreedyColors.tealTint,
+        height: 60,
+        selectedIndex: index,
+        onDestinationSelected: onTap,
+        destinations: [
+          for (final item in items)
+            NavigationDestination(
+              icon: Icon(item.icon, size: 22, color: TamreedyColors.subtext),
+              selectedIcon: Icon(item.icon, size: 22, color: TamreedyColors.teal),
+              label: item.label,
+            ),
+        ],
       ),
     ),
   );

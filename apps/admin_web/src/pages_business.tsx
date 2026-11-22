@@ -51,14 +51,14 @@ function useApi(live: Live, path: string) {
   const [err, setErr] = useState('');
   const load = async () => { if (!live) return; try { setData(await live.get(path)); setErr(''); } catch (e) { setErr(msgOf(e)); } };
   useEffect(() => { void load(); }, [live?.token]);
-  return {data, err, load};
+  return {data, setData, err, load};
 }
 const NeedLogin = ({title}: {title: string}) => <Panel title={title}><p className="hint">سجّل الدخول (أيقونة الاتصال أعلى الصفحة) بحساب إدارة لإدارة هذه البيانات.</p></Panel>;
 const send = (_live: unknown, method: string, path: string, body?: unknown) => sendJson(method, path, body);
 const Field = ({label, children}: {label: string; children: React.ReactNode}) => <label>{label}{children}</label>;
 
 export function ServicesPrices({live}: {live: Live}) {
-  const {data, err, load} = useApi(live, '/v1/admin/services');
+  const {data, setData, err, load} = useApi(live, '/v1/admin/services');
   const blank = {
     id: '', code: '', titleAr: '', descriptionAr: '', price: '',
     includedMinutes: '30', blockMinutes: '15', blockPrice: '0',
@@ -67,6 +67,7 @@ export function ServicesPrices({live}: {live: Live}) {
   };
   const [f, setF] = useState<any>(blank);
   const [msg, setMsg] = useState('');
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   if (!live) return <NeedLogin title="الخدمات والأسعار"/>;
   const set = (k: string) => (e: any) =>
     setF((p: any) => ({...p, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value}));
@@ -95,20 +96,28 @@ export function ServicesPrices({live}: {live: Live}) {
       setMsg('تم الحفظ — يظهر التغيير في التطبيقات فورًا.'); setF(blank); await load();
     } catch (e) { setMsg(`تعذر الحفظ: ${msgOf(e)}`); }
   }
-  async function toggle(s: Svc, field: 'active' | 'dispatchApproved') {
+  async function updateVisibility(s: Svc, changes: {active?: boolean; dispatchApproved?: boolean}) {
+    if (pendingIds.has(s.id)) return;
+    setPendingIds(ids => new Set(ids).add(s.id));
     try {
-      await send(live!, 'PATCH', `/v1/admin/services/${s.id}`, {
-        [field]: field === 'active' ? !s.active : !s.dispatch_approved,
+      const saved = await send(live, 'PATCH', `/v1/admin/services/${s.id}`, changes);
+      setData((previous: {items: Svc[]} | null) => previous && ({
+        ...previous,
+        items: previous.items.map(item => item.id === s.id ? {
+          ...item,
+          active: saved.active ?? changes.active ?? item.active,
+          dispatch_approved: saved.dispatch_approved ?? changes.dispatchApproved ?? item.dispatch_approved,
+        } : item),
+      }));
+    } catch (e) {
+      setMsg(`تعذر تحديث الخدمة: ${msgOf(e)}`);
+    } finally {
+      setPendingIds(ids => {
+        const next = new Set(ids);
+        next.delete(s.id);
+        return next;
       });
-      await load();
-    } catch (e) { setMsg(msgOf(e)); }
-  }
-  async function quickPublish(s: Svc) {
-    try {
-      await send(live!, 'PATCH', `/v1/admin/services/${s.id}`, { active: true, dispatchApproved: true });
-      setMsg(`تم نشر خدمة "${s.title_ar}" للمرضى بنجاح.`);
-      await load();
-    } catch (e) { setMsg(`تعذر نشر الخدمة: ${msgOf(e)}`); }
+    }
   }
   const rule = {base: num(f.price), inc: Math.max(1, num(f.includedMinutes)), block: Math.max(1, num(f.blockMinutes)), blockPrice: num(f.blockPrice)};
   const step = Math.max(1, num(f.roundingStep));
@@ -140,6 +149,7 @@ export function ServicesPrices({live}: {live: Live}) {
     <Panel title="إدارة الخدمات والأسعار وحالة النشر">
       <Table head={['الخدمة', 'السعر والمدة', 'الحالة السريرية والظهور', 'سبب حالة الظهور', 'الإجراءات']} rows={items.map(s => {
         const st = getServiceStatus(s);
+        const pending = pendingIds.has(s.id);
         return [
           <div key={s.id}>
             <b>{s.title_ar}</b>
@@ -150,10 +160,11 @@ export function ServicesPrices({live}: {live: Live}) {
           <span key={`st-${s.id}`} className={`chip ${st.tone}`}>{st.label}</span>,
           <small key={`re-${s.id}`} className="hint">{st.reason}</small>,
           <div key={`act-${s.id}`} style={{display: 'flex', gap: '0.35rem', flexWrap: 'wrap'}}>
-            {st.canPublish && <button className="pill on" title="تفعيل واعتماد ونشر الخدمة للمرضى فورًا" onClick={() => void quickPublish(s)}>نشر فوري</button>}
-            <button className={'pill ' + (s.active ? 'on' : '')} onClick={() => void toggle(s, 'active')}>{s.active ? 'مفعلة' : 'معطلة'}</button>
-            <button className={'pill ' + (s.dispatch_approved ? 'on' : '')} onClick={() => void toggle(s, 'dispatchApproved')}>{s.dispatch_approved ? 'معتمدة' : 'غير معتمدة'}</button>
-            <button className="pill" onClick={() => edit(s)}>تعديل</button>
+            {st.canPublish && <button className="pill on" disabled={pending} title="تفعيل واعتماد ونشر الخدمة للمرضى" onClick={() => void updateVisibility(s, {active: true, dispatchApproved: true})}>نشر فوري</button>}
+            <button className={'pill ' + (s.active ? 'on' : '')} disabled={pending} onClick={() => void updateVisibility(s, {active: !s.active})}>{s.active ? 'إيقاف الخدمة' : 'تفعيل الخدمة'}</button>
+            <button className={'pill ' + (s.dispatch_approved ? 'on' : '')} disabled={pending} onClick={() => void updateVisibility(s, {dispatchApproved: !s.dispatch_approved})}>{s.dispatch_approved ? 'إلغاء الاعتماد' : 'اعتماد الخدمة'}</button>
+            <button className="pill" disabled={pending} onClick={() => edit(s)}>تعديل</button>
+            {pending && <small className="hint" role="status">جارٍ الحفظ…</small>}
           </div>
         ];
       })}/>

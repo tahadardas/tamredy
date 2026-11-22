@@ -359,48 +359,54 @@ class _OfferScreenState extends State<OfferScreen> {
     final left = o.expiresAt.difference(DateTime.now());
     return TamScaffold(
       title: 'طلب جديد قريب منك',
-      subtitle: 'عرض محدود المدة للممرض المؤهل',
+      subtitle: 'راجع تفاصيل الزيارة قبل القبول',
       nav: widget.nav,
+      actions: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: PrimaryButton(
+              'قبول الطلب',
+              onPressed: widget.c.busy || left <= Duration.zero
+                  ? null
+                  : widget.c.accept,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SoftButton(
+              'رفض الطلب',
+              onPressed: widget.c.busy ? null : widget.c.decline,
+            ),
+          ),
+        ],
+      ),
       children: [
         HeroCard(
-          caption: 'الوقت المتبقي لقبول العرض',
-          title: 'طلب تمريضي جديد',
+          caption: 'الوقت المتبقي للقبول',
+          title: o.service,
           trailing: Text(
             formatCountdown(left),
-            style: tamText(
-              size: 32,
-              weight: FontWeight.w800,
-              color: Colors.white,
-            ),
+            textDirection: TextDirection.ltr,
+            style: tamText(size: 26, weight: FontWeight.w800, color: Colors.white),
           ),
         ),
         TamCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                o.service,
-                style: tamText(
-                  size: 26,
-                  weight: FontWeight.w800,
-                  color: TamreedyColors.navy,
-                ),
+              ListRow(
+                icon: Icons.location_on_outlined,
+                title: o.area,
+                subtitle: '${o.km} كم تقريبًا',
               ),
-              const SizedBox(height: 10),
-              KeyValueRow('المنطقة', o.area),
-              KeyValueRow('المسافة', '${o.km} كم تقريبًا'),
-              KeyValueRow('السعر المعروض', formatMoney(o.price)),
-              KeyValueRow('حصة الممرض', formatMoney(o.nurseShare)),
+              KeyValueRow('سعر الزيارة', formatMoney(o.price)),
+              KeyValueRow('حصتك من الزيارة', formatMoney(o.nurseShare)),
             ],
           ),
         ),
-        const TamMap(height: 130),
-        const SizedBox(height: 12),
-        PrimaryButton(
-          'قبول الطلب',
-          onPressed: widget.c.busy ? null : widget.c.accept,
-        ),
-        SoftButton('رفض الطلب', onPressed: widget.c.decline),
+        if (widget.c.error != null)
+          NoticeBox(widget.c.error!),
       ],
     );
   }

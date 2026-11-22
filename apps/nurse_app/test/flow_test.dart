@@ -7,7 +7,7 @@ import 'package:tamreedy_nurse_app/main.dart';
 void main() {
   moneyTests();
   testWidgets('availability -> offer -> accept -> complete', (tester) async {
-    tester.view.physicalSize = const Size(430, 1600);
+    tester.view.physicalSize = const Size(360, 740);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     mapsEnabled = false; // no network tiles in tests
@@ -18,8 +18,10 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
     expect(c.stage, NurseStage.offer);
     await tester.pump();
-    expect(find.text('قبول الطلب'), findsOneWidget);
-    await c.accept();
+    final accept = find.text('قبول الطلب');
+    expect(accept.hitTestable(), findsOneWidget);
+    expect(find.text('رفض الطلب').hitTestable(), findsOneWidget);
+    await tester.tap(accept);
     await c.arrive();
     await c.start();
     await c.complete();

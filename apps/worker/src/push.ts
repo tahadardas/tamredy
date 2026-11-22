@@ -44,6 +44,7 @@ type Fetch = typeof fetch;
 /** Minimal FCM HTTP v1 client (service-account JWT -> OAuth token -> messages:send). */
 export class FcmClient {
   private token?: { value: string; exp: number };
+  private tokenRequest?: Promise<string>;
   private readonly sa: ServiceAccount;
   private readonly fetchImpl: Fetch;
   constructor(sa: ServiceAccount, fetchImpl: Fetch = fetch) { this.sa = sa; this.fetchImpl = fetchImpl; }
@@ -51,11 +52,18 @@ export class FcmClient {
   async accessToken(): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     if (this.token && this.token.exp - 60 > now) return this.token.value;
+    this.tokenRequest ??= this.fetchAccessToken(now).finally(() => {
+      this.tokenRequest = undefined;
+    });
+    return this.tokenRequest;
+  }
+
+  private async fetchAccessToken(now: number): Promise<string> {
     const assertion = jwt.sign({ scope: 'https://www.googleapis.com/auth/firebase.messaging' }, this.sa.private_key, {
       algorithm: 'RS256', issuer: this.sa.client_email, audience: 'https://oauth2.googleapis.com/token', expiresIn: 3600,
     });
     const r = await this.fetchImpl('https://oauth2.googleapis.com/token', {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: 'POST', signal: AbortSignal.timeout(4000), headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
     });
     if (!r.ok) throw new Error(`fcm oauth ${r.status}`);
@@ -86,7 +94,7 @@ export class FcmClient {
     try {
       const token = await this.accessToken();
       const r = await this.fetchImpl(`https://fcm.googleapis.com/v1/projects/${this.sa.project_id}/messages:send`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        method: 'POST', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (r.ok) return { result: 'ok' };
@@ -119,28 +127,39 @@ export interface OutboxEvent {
 }
 export interface Db { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number | null }>; }
 
+async function openOfferIds(db: Db, offerIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(offerIds.filter(id => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)))];
+  if (!ids.length) return new Set();
+  const result = await db.query(`
+    SELECT o.id FROM request_offers o JOIN care_requests r ON r.id=o.request_id
+    WHERE o.id=ANY($1::uuid[]) AND o.status='OPEN' AND o.expires_at>now() AND r.status='OFFERING'
+  `, [ids]);
+  return new Set(result.rows.map(row => String(row.id)));
+}
+
 /** Sends pushes for a batch of events with decoupled ledger logging in notification_deliveries. */
 export async function pushDeliverBatch(
   db: Db,
   fcm: FcmClient,
   events: OutboxEvent[]
 ): Promise<{ sent: number; failed: number; pruned: number }> {
-  const alarmOn = events.some(e => e.event_type === 'offer.created') ? await alarmEnabled(db) : false;
+  const offers = events.filter(e => e.event_type === 'offer.created');
+  const open = await openOfferIds(db, offers.map(e => e.payload.offerId ?? ''));
+  const alarmOn = open.size > 0 && await alarmEnabled(db);
 
   const planned = events.flatMap(e => {
+    if (e.event_type === 'offer.created' && !open.has(e.payload.offerId ?? '')) return [];
     const copy = pushCopy(e.event_type, e.payload);
     if (!copy) return [];
     const users = [...(e.payload.recipientUserIds ?? []), ...(e.payload.recipientUserId ? [e.payload.recipientUserId] : [])];
     const alarm = alarmOn && e.event_type === 'offer.created';
     const expiresAt = e.payload.expiresAt ? new Date(e.payload.expiresAt) : null;
-    const ttl = expiresAt ? (expiresAt.getTime() - Date.now()) / 1000 : 20;
 
     return users.map(u => ({
       eventId: e.id,
       user: u,
       copy,
       alarm,
-      ttl,
       expiresAt,
       data: {
         type: e.event_type,
@@ -170,7 +189,7 @@ export async function pushDeliverBatch(
   let sentCount = 0;
   let failedCount = 0;
 
-  for (const item of planned) {
+  const deliver = async (item: typeof planned[number]) => {
     const devices = byUser.get(item.user) ?? [];
     if (!devices.length) {
       // Record token missing in delivery ledger
@@ -181,7 +200,7 @@ export async function pushDeliverBatch(
         [item.eventId, item.user, JSON.stringify(item.data), item.expiresAt]
       );
       failedCount++;
-      continue;
+      return;
     }
 
     for (const dev of devices) {
@@ -197,8 +216,9 @@ export async function pushDeliverBatch(
         continue;
       }
 
+      const ttl = item.expiresAt ? (item.expiresAt.getTime() - Date.now()) / 1000 : 20;
       const res = item.alarm
-        ? await fcm.sendAlarmDetailed(dev.token, item.data, item.ttl, item.copy)
+        ? await fcm.sendAlarmDetailed(dev.token, item.data, ttl, item.copy)
         : await fcm.sendDetailed(dev.token, item.copy, item.data);
 
       if (res.result === 'ok') {
@@ -228,6 +248,14 @@ export async function pushDeliverBatch(
         );
       }
     }
+  };
+
+  // Keep notifications for a wave from waiting on one network round trip per nurse.
+  const concurrency = 10;
+  for (let offset = 0; offset < planned.length; offset += concurrency) {
+    const results = await Promise.allSettled(planned.slice(offset, offset + concurrency).map(deliver));
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
   }
 
   if (deadTokens.length) {
@@ -253,6 +281,10 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
 
   if (!pending.rowCount) return 0;
 
+  const open = await openOfferIds(db, pending.rows
+    .filter(row => row.payload?.type === 'offer.created')
+    .map(row => row.payload.offerId ?? ''));
+  const alarmOn = open.size > 0 && await alarmEnabled(db);
   let retriedCount = 0;
   for (const row of pending.rows) {
     if (!row.device_token) {
@@ -262,12 +294,13 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
 
     const payload = typeof row.payload === 'object' ? row.payload : {};
     const copy = pushCopy(payload.type, payload);
-    if (!copy) {
+    const isOffer = payload.type === 'offer.created';
+    if (!copy || (isOffer && !open.has(payload.offerId))) {
       await db.query(`UPDATE notification_deliveries SET status='ABANDONED' WHERE id=$1`, [row.id]);
       continue;
     }
 
-    const isAlarm = payload.type === 'offer.created';
+    const isAlarm = isOffer && alarmOn;
     const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
     const ttl = expiresAt ? Math.max(2, (expiresAt.getTime() - Date.now()) / 1000) : 20;
 

@@ -104,36 +104,45 @@ class NurseController extends ChangeNotifier {
     );
     availabilityManager.addListener(notifyListeners);
     OfferAlarm.onTap = resync;
-    if (!kDemoMode) loadLive();
   }
 
-  /// Replaces demo figures with server values (summary + earnings) and restores active state.
+  /// Replaces demo figures with server values and restores the active assignment.
   Future<void> loadLive() async {
     try {
-      await restoreActiveAssignment();
-      final s = await api.getMap('/v1/nurse/me/summary');
-      todayRequests = (s['requests_today'] as num?)?.toInt() ?? 0;
-      completedVisits = (s['completed_today'] as num?)?.toInt() ?? 0;
-      await loadDues();
-      await loadProfile();
-      final e = await api.getMap('/v1/nurse/me/earnings');
-      final m = Map<String, dynamic>.from(e['month'] as Map);
-      monthVisits = (m['visits'] as num?)?.toInt() ?? 0;
-      netDue = (num.tryParse('${m['net_due']}') ?? 0).round();
-      commission = (num.tryParse('${m['commission']}') ?? 0).round();
-      history = [
-        for (final r in (e['recent'] as List))
-          VisitRecord(
-            '${(r as Map)['title']}',
-            '${r['completed_at']}'.split('T').first,
-            (num.tryParse('${r['nurse_share']}') ?? 0).round(),
-          ),
-      ];
-      notifyListeners();
+      await Future.wait([
+        restoreActiveAssignment(),
+        _loadSummary(),
+        _loadEarnings(),
+        loadDues(),
+        loadProfile(),
+      ]);
     } catch (_) {
       error = 'تعذر تحميل ملخص الأرباح من الخادم';
+    } finally {
       notifyListeners();
     }
+  }
+
+  Future<void> _loadSummary() async {
+    final summary = await api.getMap('/v1/nurse/me/summary');
+    todayRequests = (summary['requests_today'] as num?)?.toInt() ?? 0;
+    completedVisits = (summary['completed_today'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<void> _loadEarnings() async {
+    final earnings = await api.getMap('/v1/nurse/me/earnings');
+    final month = Map<String, dynamic>.from(earnings['month'] as Map);
+    monthVisits = (month['visits'] as num?)?.toInt() ?? 0;
+    netDue = (num.tryParse('${month['net_due']}') ?? 0).round();
+    commission = (num.tryParse('${month['commission']}') ?? 0).round();
+    history = [
+      for (final row in (earnings['recent'] as List))
+        VisitRecord(
+          '${(row as Map)['title']}',
+          '${row['completed_at']}'.split('T').first,
+          (num.tryParse('${row['nurse_share']}') ?? 0).round(),
+        ),
+    ];
   }
 
   /// Restores active assignment and true server status on app launch or reconnect.
@@ -164,6 +173,9 @@ class NurseController extends ChangeNotifier {
         switch (reqStatus) {
           case 'ASSIGNED':
           case 'EN_ROUTE':
+            if (reqStatus == 'ASSIGNED') {
+              await api.post('/v1/nurse/assignments/$assignmentId/depart');
+            }
             stage = NurseStage.enRoute;
             _startNavigation();
             break;
@@ -280,7 +292,7 @@ class NurseController extends ChangeNotifier {
     if (kDemoMode || stage != NurseStage.idle) return;
     try {
       final list = await api.getList('/v1/nurse/me/offers');
-      if (list.isNotEmpty) {
+      if (stage == NurseStage.idle && list.isNotEmpty) {
         _showOffer(Map<String, dynamic>.from(list.first as Map));
       }
     } catch (_) {
@@ -309,11 +321,16 @@ class NurseController extends ChangeNotifier {
   }
 
   void _showOffer(Map<String, dynamic> o) {
+    final expiresAt = DateTime.tryParse('${o['expires_at']}');
+    if (!kDemoMode &&
+        (expiresAt == null || !expiresAt.isAfter(DateTime.now()))) {
+      return;
+    }
     final title = (o['title_ar'] ?? 'زيارة تمريضية').toString();
     final area = (o['area'] ?? '—').toString();
     patientAddress = area;
     serviceTitle = title;
-    final exp = DateTime.tryParse('${o['expires_at']}') ??
+    final exp = expiresAt ??
         DateTime.now().add(const Duration(seconds: 30));
     final netShare = ((num.tryParse('${o['price_amount'] ?? 0}') ?? 0) *
             (10000 -
@@ -370,11 +387,11 @@ class NurseController extends ChangeNotifier {
       await _startNavigation();
     } catch (e) {
       error = explainError(e, fallback: 'لم يعد العرض متاحًا أو حصل عليه ممرض آخر');
-      if (assignmentId != null) {
-        await restoreActiveAssignment();
-      } else {
+      await restoreActiveAssignment();
+      if (assignmentId == null) {
         stage = NurseStage.idle;
         offer = null;
+        await _fetchOffers();
       }
     } finally {
       busy = false;
@@ -383,9 +400,10 @@ class NurseController extends ChangeNotifier {
   }
 
   Future<void> decline({bool expired = false}) async {
+    if (busy || stage != NurseStage.offer) return;
     OfferAlarm.cancelAll();
     Analytics.log(expired ? 'offer_expired' : 'offer_declined');
-    if (!kDemoMode && offer != null) {
+    if (!kDemoMode && !expired && offer != null) {
       try {
         await api.post('/v1/nurse/offers/${offer!.id}/decline');
       } catch (_) {}

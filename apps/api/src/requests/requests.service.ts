@@ -84,17 +84,19 @@ export class RequestsService {
       if(req.status === 'CANCELLED') return {requestId, status: 'CANCELLED'};
       if(!['REQUESTED','OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(req.status)) conflict('REQUEST_CANNOT_BE_CANCELLED');
       const aa=await c.query(`SELECT * FROM request_assignments WHERE request_id=$1 AND status='ACTIVE'`,[requestId]);
+      const recipients = [userId];
       if(aa.rowCount) {
         const assignment=aa.rows[0];
-        await c.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE',[assignment.nurse_id]);
+        const nurse = await c.query('SELECT user_id FROM nurses WHERE id=$1 FOR UPDATE',[assignment.nurse_id]);
+        if (nurse.rowCount) recipients.push(nurse.rows[0].user_id);
         await c.query(`UPDATE request_assignments SET status='RELEASED',released_at=now(),reason='PATIENT_CANCELLED' WHERE id=$1`,[assignment.id]);
-        await c.query(`UPDATE nurses SET work_status=CASE WHEN availability_intent='AVAILABLE' AND last_heartbeat_at > now()-interval '60 seconds' THEN 'AVAILABLE' ELSE 'OFFLINE' END WHERE id=$1`,[assignment.nurse_id]);
+        await c.query(`UPDATE nurses SET work_status=CASE WHEN availability_intent='AVAILABLE' AND last_heartbeat_at > now()-interval '120 seconds' THEN 'AVAILABLE' ELSE 'OFFLINE' END WHERE id=$1`,[assignment.nurse_id]);
       }
       await c.query(`UPDATE request_offers SET status='CLOSED' WHERE request_id=$1 AND status='OPEN'`,[requestId]);
       await c.query(`UPDATE care_requests SET status='CANCELLED',version=version+1,updated_at=now() WHERE id=$1`,[requestId]);
       await c.query(`DELETE FROM dispatch_jobs WHERE request_id=$1`,[requestId]);
       await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,'request.cancelled')`,[requestId,userId]);
-      await c.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.cancelled',$1,$2::jsonb)`,[requestId,JSON.stringify({requestId,recipientUserId:userId})]);
+      await c.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.cancelled',$1,$2::jsonb)`,[requestId,JSON.stringify({requestId,recipientUserIds:recipients})]);
       return {requestId,status:'CANCELLED'};
     });
   }

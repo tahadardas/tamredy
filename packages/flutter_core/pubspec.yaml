@@ -27,6 +27,7 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/logo_wordmark.png
+    - assets/images/logo_mark.png
   fonts:
     - family: NotoSansArabic
       fonts:

@@ -23,17 +23,13 @@ class HomeScreen extends StatelessWidget {
     final last = c.history.isEmpty ? null : c.history.first;
     return TamScaffold(
       title: 'طلب تمريض منزلي',
-      subtitle: 'رعاية مهنية موثوقة للعائلة',
+      subtitle: 'اختر الخدمة لعرض تفاصيل الزيارة وتكلفتها',
       nav: nav,
       onRefresh: () => c.loadServices(),
       children: [
         if (c.stage != VisitStage.none)
           ActiveOrderBanner(c: c),
-        const HeroCard(
-          title: 'رعايتكم مسؤوليتنا',
-          body: 'احجز ممرضًا مؤهلًا ليصل إلى عنوانك في دمشق وريف دمشق.',
-        ),
-        const SectionTitle('اختر الخدمة المطلوبة'),
+        const SectionTitle('الخدمات المنزلية'),
         if (c.serviceState == ServiceLoadState.loading)
           const ServiceSkeletonGrid()
         else if (c.serviceState == ServiceLoadState.networkError || c.serviceState == ServiceLoadState.serverError)
@@ -44,86 +40,31 @@ class HomeScreen extends StatelessWidget {
         else if (c.serviceState == ServiceLoadState.empty)
           const NoticeBox('لا توجد خدمات منشورة حاليًا في منطقتك. تواصل مع الدعم للمساعدة.')
         else
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 0.95,
-            children: [
-              for (var i = 0; i < c.services.length; i++)
-                TamCard(
-                  onTap: () {
-                    c.pick(c.services[i]);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => ServiceScreen(c: c)),
-                    );
-                  },
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            IconBox(
-                              _serviceIcons[c.services[i].iconCode],
-                              tone: _serviceTones[c.services[i].iconCode],
-                              size: 46,
-                            ),
-                            const Spacer(),
-                            if (c.services[i].requiresPrescription)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFFBEB),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: const Color(0xFFFDE68A)),
-                                ),
-                                child: Text(
-                                  'وصفة',
-                                  style: tamText(size: 10, weight: FontWeight.w700, color: const Color(0xFFB45309)),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          c.services[i].title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: tamText(
-                            size: 14.5,
-                            weight: FontWeight.w800,
-                            color: TamreedyColors.navy,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          c.services[i].subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: tamText(
-                            size: 11,
-                            color: TamreedyColors.subtext,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          'من ${formatMoney(c.services[i].price)}',
-                          style: tamText(
-                            size: 12,
-                            weight: FontWeight.w800,
-                            color: TamreedyColors.teal,
-                          ),
-                        ),
-                      ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const gap = 12.0;
+              final width = constraints.maxWidth >= 400
+                  ? (constraints.maxWidth - gap) / 2
+                  : constraints.maxWidth;
+              return Wrap(
+                spacing: gap,
+                children: [
+                  for (final service in c.services)
+                    SizedBox(
+                      width: width,
+                      child: _ServiceOption(
+                        service: service,
+                        onTap: () {
+                          c.pick(service);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => ServiceScreen(c: c)),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ),
-            ],
+                ],
+              );
+            },
           ),
         ClaimCodeCard(c: c),
         const SectionTitle('حجوزاتي الأخيرة'),
@@ -143,6 +84,48 @@ class HomeScreen extends StatelessWidget {
       ],
     );
   }
+}
+
+class _ServiceOption extends StatelessWidget {
+  final ServiceItem service;
+  final VoidCallback onTap;
+  const _ServiceOption({required this.service, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => TamCard(
+    onTap: onTap,
+    padding: const EdgeInsets.all(14),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        IconBox(
+          _serviceIcons[service.iconCode],
+          tone: _serviceTones[service.iconCode],
+          size: 36,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(service.title, style: tamText(size: 14, weight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text(
+                'من ${formatMoney(service.price)}',
+                style: tamText(size: 12, weight: FontWeight.w700, color: TamreedyColors.teal),
+              ),
+              if (service.requiresPrescription)
+                Text(
+                  'تتطلب وصفة',
+                  style: tamText(size: 11, color: TamreedyColors.subtext),
+                ),
+            ],
+          ),
+        ),
+        const Icon(Icons.chevron_left_rounded, size: 20, color: TamreedyColors.teal),
+      ],
+    ),
+  );
 }
 
 class ActiveOrderBanner extends StatelessWidget {

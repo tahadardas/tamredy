@@ -1,7 +1,7 @@
 name: tamreedy_nurse_app
 description: Tamreedy nurse app (Flutter, RTL) implementing the approved N01-N09 screens.
 publish_to: none
-version: 0.2.0+1
+version: 0.2.0+3
 environment:
   sdk: '>=3.8.0 <4.0.0'
 dependencies:
@@ -34,4 +34,5 @@ flutter_launcher_icons:
   image_path: assets/icon/icon.png
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: assets/icon/icon_foreground.png
+  adaptive_icon_foreground_inset: 0
   min_sdk_android: 23

@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
-/// Design tokens, mirrored from `reference_design/design_tokens.json`.
+/// Shared design tokens for the patient and nurse apps.
 class TamreedyColors {
-  static const navy = Color(0xFF074577);
-  static const deepNavy = Color(0xFF073F6C);
-  static const teal = Color(0xFF079D90);
-  static const tealAlt = Color(0xFF08A996);
+  static const navy = Color(0xFF173D44);
+  static const deepNavy = Color(0xFF123139);
+  static const teal = Color(0xFF08796D);
+  static const tealAlt = Color(0xFF098273);
   static const background = Color(0xFFFFFFFF);
-  static const canvas = Color(0xFFF7FAFC);
-  static const text = Color(0xFF11395C);
-  static const subtext = Color(0xFF7891A3);
-  static const border = Color(0xFFE4EDF2);
+  static const canvas = Color(0xFFF3F7F6);
+  static const text = Color(0xFF17363D);
+  static const subtext = Color(0xFF506870);
+  static const border = Color(0xFFDCE7E4);
   static const success = Color(0xFF05866B);
   static const warning = Color(0xFFB97824);
   static const danger = Color(0xFFCF5361);
@@ -25,8 +25,8 @@ class TamreedyColors {
 }
 
 class TamreedyRadii {
-  static const double card = 16;
-  static const double button = 13;
+  static const double card = 20;
+  static const double button = 16;
 }
 
 const String kFontFamily = 'NotoSansArabic';

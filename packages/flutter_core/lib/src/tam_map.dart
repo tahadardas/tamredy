@@ -303,15 +303,16 @@ class _TamLocationPickerState extends State<TamLocationPicker> {
   Timer? _debounce;
   bool _moving = false;
 
-  @override
-  void didUpdateWidget(TamLocationPicker old) {
-    super.didUpdateWidget(old);
-    // Device fix arrived after the screen opened: recentre once.
-    if (old.initial != widget.initial &&
-        !_moving &&
-        (_center.latitude - widget.initial.latitude).abs() > 1e-4) {
-      _ctl.move(widget.initial, 16);
-    }
+  int _lookupVersion = 0;
+
+  void _scheduleAddressLookup() {
+    _debounce?.cancel();
+    final version = ++_lookupVersion;
+    final point = _center;
+    _debounce = Timer(
+      const Duration(milliseconds: 400),
+      () => _resolveAddress(point, version),
+    );
   }
 
   @override
@@ -321,23 +322,29 @@ class _TamLocationPickerState extends State<TamLocationPicker> {
     super.dispose();
   }
 
-  Future<void> _settled() async {
-    String address = '';
+  Future<void> _resolveAddress(LatLng point, int version) async {
     try {
       await geo.setLocaleIdentifier('ar');
-      final p = (await geo.placemarkFromCoordinates(
-        _center.latitude,
-        _center.longitude,
-      )).firstOrNull;
-      if (p != null)
-        address = [
-          p.subLocality,
-          p.locality,
-        ].where((e) => e != null && e.isNotEmpty).join(' - ');
+      final places = await geo.placemarkFromCoordinates(
+        point.latitude,
+        point.longitude,
+      );
+      if (!mounted || version != _lookupVersion) return;
+      final place = places.firstOrNull;
+      if (place == null) return;
+      final parts = {
+        place.subLocality,
+        place.locality,
+        if ((place.locality ?? '').isEmpty) place.administrativeArea,
+      };
+      final address = parts
+          .whereType<String>()
+          .where((part) => part.trim().isNotEmpty)
+          .join(' - ');
+      if (address.isNotEmpty) widget.onChanged(point, address);
     } catch (_) {
-      /* offline geocoder: keep coordinates only */
+      // The selected coordinates and fallback label are already available.
     }
-    if (mounted) widget.onChanged(_center, address);
   }
 
   @override
@@ -358,8 +365,12 @@ class _TamLocationPickerState extends State<TamLocationPicker> {
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                 ),
+                onMapReady: _scheduleAddressLookup,
                 onPositionChanged: (cam, _) {
+                  if (cam.center == _center) return;
                   _center = cam.center;
+                  widget.onChanged(_center, '');
+                  _scheduleAddressLookup();
                   if (!_moving) setState(() => _moving = true);
                 },
                 onMapEvent: (e) {
@@ -368,11 +379,6 @@ class _TamLocationPickerState extends State<TamLocationPicker> {
                       e is MapEventScrollWheelZoom ||
                       e is MapEventDoubleTapZoomEnd) {
                     setState(() => _moving = false);
-                    _debounce?.cancel();
-                    _debounce = Timer(
-                      const Duration(milliseconds: 400),
-                      _settled,
-                    );
                   }
                 },
               ),

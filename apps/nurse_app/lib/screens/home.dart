@@ -425,63 +425,56 @@ class _AvailabilityCard extends StatelessWidget {
     final active = c.available;
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: active ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: active ? const Color(0xFF86EFAC) : const Color(0xFFE2E8F0),
-          width: 1.5,
-        ),
+        color: TamreedyColors.deepNavy,
+        borderRadius: BorderRadius.circular(TamreedyRadii.card),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: active ? const Color(0xFF22C55E).withValues(alpha: 0.15) : const Color(0xFF94A3B8).withValues(alpha: 0.15),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              active ? Icons.check_circle_outline : Icons.power_settings_new_rounded,
-              color: active ? const Color(0xFF16A34A) : const Color(0xFF64748B),
-              size: 28,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  active ? 'أنت متاح لاستقبال الطلبات ●' : 'أنت غير متاح حالياً',
-                  style: tamText(
-                    size: 16,
-                    weight: FontWeight.w800,
-                    color: active ? const Color(0xFF14532D) : const Color(0xFF334155),
-                  ),
+          Row(
+            children: [
+              Icon(
+                active ? Icons.notifications_active_outlined : Icons.notifications_off_outlined,
+                color: active ? const Color(0xFF83E8D0) : Colors.white70,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'استقبال الطلبات',
+                  style: tamText(size: 14, weight: FontWeight.w700, color: Colors.white),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  active
-                      ? 'تصلك الطلبات المتوافقة مع تخصصك والقريبة من موقعك'
-                      : 'فعّل المفتاح للبدء في استقبال إشعارات الطلبات القريبة',
-                  style: tamText(
-                    size: 12,
-                    color: active ? const Color(0xFF166534) : const Color(0xFF64748B),
-                    height: 1.4,
-                  ),
+              ),
+              Semantics(
+                label: 'استقبال طلبات الزيارة',
+                child: Switch(
+                  value: active,
+                  onChanged: disabled ? null : c.setAvailable,
+                  activeThumbColor: TamreedyColors.deepNavy,
+                  activeTrackColor: const Color(0xFF83E8D0),
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            disabled
+                ? 'التوفر مقيد حاليًا'
+                : active
+                    ? 'متاح للطلبات القريبة'
+                    : 'غير متاح حاليًا',
+            style: tamText(size: 21, weight: FontWeight.w800, color: Colors.white),
+          ),
+          if (!disabled) ...[
+            const SizedBox(height: 4),
+            Text(
+              active
+                  ? 'راجع حالة الجاهزية أدناه إذا لم تصلك العروض.'
+                  : 'يمكنك تشغيل الاستقبال عندما تكون مستعدًا للزيارة.',
+              style: tamText(size: 12, color: Colors.white70, height: 1.5),
             ),
-          ),
-          const SizedBox(width: 8),
-          Switch(
-            value: active,
-            onChanged: disabled ? null : c.setAvailable,
-            activeThumbColor: Colors.white,
-            activeTrackColor: const Color(0xFF22C55E),
-          ),
+          ],
         ],
       ),
     );

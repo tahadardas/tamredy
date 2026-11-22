@@ -76,13 +76,13 @@ export function SettingsPage({live}: {live: Live}) {
         <label className="check"><input type="checkbox" checked={v.patients} onChange={e => set({patients: e.target.checked})}/> تسجيل المرضى مفتوح</label>
         <label className="check"><input type="checkbox" checked={v.nurses} onChange={e => set({nurses: e.target.checked})}/> تسجيل الممرضين مفتوح</label></div>}
     </Section>
-    <Section k="dispatch" title="موجات البحث عن ممرض" desc="كل موجة توسّع نصف البحث وتمنح الممرضين مهلة للقبول. تنتهي الطلبات «غير ملبّاة» بعد آخر موجة." value={s.dispatch} reload={load}>
+    <Section k="dispatch" title="موجات البحث عن ممرض" desc="كل موجة تعرض الطلب لجميع الممرضين المؤهلين ضمن نطاقها ممن لم يتلقوا العرض سابقًا. يتوقف البحث عند أول قبول. تنتهي الطلبات «غير ملبّاة» بعد آخر موجة." value={s.dispatch} reload={load}>
       {(v, set) => <>{v.waves.map((w: any, i: number) => <div className="form" key={i}>
-        {(['radiusM', 'seconds', 'limit'] as const).map(key => <label key={key}>{{radiusM: `نصف القطر (م) — موجة ${i + 1}`, seconds: 'المهلة (ثانية)', limit: 'أقصى عدد ممرضين'}[key]}
+        {(['radiusM', 'seconds'] as const).map(key => <label key={key}>{{radiusM: `نصف القطر (م) — موجة ${i + 1}`, seconds: 'المهلة (ثانية)'}[key]}
           <input type="number" value={w[key]} onChange={e => set({waves: v.waves.map((x: any, j: number) => j === i ? {...x, [key]: Number(e.target.value)} : x)})}/></label>)}</div>)}
-        <div className="actions">{v.waves.length < 5 && <button className="pill" onClick={() => set({waves: [...v.waves, {radiusM: v.waves.at(-1).radiusM + 5000, seconds: 20, limit: 20}]})}>+ موجة</button>}
+        <div className="actions">{v.waves.length < 5 && <button className="pill" onClick={() => set({waves: [...v.waves, {radiusM: v.waves.at(-1).radiusM + 5000, seconds: 20}]})}>+ موجة</button>}
           {v.waves.length > 1 && <button className="pill" onClick={() => set({waves: v.waves.slice(0, -1)})}>− حذف الأخيرة</button>}</div>
-        <Notice>يطبّق العامل التغيير خلال ثوانٍ على الطلبات الجديدة.</Notice></>}
+        <Notice>تُقرأ الإعدادات عند بدء كل موجة.</Notice></>}
     </Section>
     <Section k="security" title="الأمان" desc="تسجيل الخروج التلقائي عند الخمول، والحد الأدنى لطول كلمة المرور." value={s.security} reload={load}>
       {(v, set) => <div className="form"><label>الخروج التلقائي بعد (دقيقة)<input type="number" value={v.idleMinutes} onChange={e => set({idleMinutes: Number(e.target.value)})}/></label>

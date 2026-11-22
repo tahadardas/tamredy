@@ -35,7 +35,8 @@ class _LocationScreenState extends State<LocationScreen> {
   List<String> _govs = [];
   String _gov = '', _query = '';
   bool _loading = true, _onMap = false, _locating = false;
-  String? _areaLabel;
+  LatLng? _mapStart;
+  bool _needsMapSelection = false;
 
   @override
   void initState() {
@@ -66,11 +67,15 @@ class _LocationScreenState extends State<LocationScreen> {
   }
 
   void _pickArea(_Area a) {
-    final point = (a.lat != null && a.lng != null) ? LatLng(a.lat!, a.lng!) : (c.position ?? kDamascus);
-    c.areaLabel = '${a.name}، ${a.gov}';
-    c.setPicked(point, '');
+    final hasCoordinates = a.lat != null && a.lng != null;
+    final point = hasCoordinates ? LatLng(a.lat!, a.lng!) : kDamascus;
+    c.selectVisitLocation(
+      point,
+      hasCoordinates ? '${a.name}، ${a.gov}' : 'حدّد موقع الزيارة على الخريطة',
+    );
     setState(() {
-      _areaLabel = c.areaLabel;
+      _mapStart = point;
+      _needsMapSelection = !hasCoordinates;
       _onMap = true;
     });
   }
@@ -82,9 +87,9 @@ class _LocationScreenState extends State<LocationScreen> {
     if (!mounted) return;
     setState(() => _locating = false);
     if (c.position != null && c.error == null) {
-      c.areaLabel = '';
       setState(() {
-        _areaLabel = 'موقعي الحالي';
+        _mapStart = c.position;
+        _needsMapSelection = false;
         _onMap = true;
       });
     }
@@ -240,7 +245,7 @@ class _LocationScreenState extends State<LocationScreen> {
               children: [
                 const Icon(Icons.location_on, color: TamreedyColors.teal, size: 28),
                 const SizedBox(width: 8),
-                Expanded(child: Text(_areaLabel ?? '', style: tamText(size: 19, weight: FontWeight.w800, color: TamreedyColors.navy))),
+                Expanded(child: Text(c.address, style: tamText(size: 19, weight: FontWeight.w800, color: TamreedyColors.navy))),
                 TextButton(
                   onPressed: () => setState(() => _onMap = false),
                   child: Text('تغيير', style: tamText(size: 16, weight: FontWeight.w800, color: TamreedyColors.teal)),
@@ -251,7 +256,15 @@ class _LocationScreenState extends State<LocationScreen> {
           ],
         ),
       ),
-      TamLocationPicker(initial: c.position ?? kDamascus, onChanged: c.setPicked, height: 250),
+      TamLocationPicker(
+        initial: _mapStart!,
+        height: 250,
+        onChanged: (point, address) {
+          if (c.busy || (_needsMapSelection && point == _mapStart)) return;
+          _needsMapSelection = false;
+          c.setPicked(point, address);
+        },
+      ),
       const SizedBox(height: 10),
       TamCard(
         child: TextField(
@@ -266,7 +279,7 @@ class _LocationScreenState extends State<LocationScreen> {
       ),
       if (c.error != null)
         Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(c.error!, style: tamText(size: 14, color: TamreedyColors.danger))),
-      _bigButton('هذا بيتي — أرسل الطلب', Icons.check_circle_outline, c.busy
+      _bigButton('هذا بيتي — أرسل الطلب', Icons.check_circle_outline, c.busy || _needsMapSelection
           ? null
           : () async {
               final nav = Navigator.of(context);

@@ -422,8 +422,8 @@ class AvailabilityManager extends ChangeNotifier {
     final now = DateTime.now();
     final hbAge = _lastHeartbeat != null ? now.difference(_lastHeartbeat!).inSeconds : 999;
 
-    // Heartbeat cutoff relaxed to 120 seconds. Location presence is sufficient.
-    if (hbAge > 120) {
+    // Match the server cutoff for accepting an offer.
+    if (hbAge >= 120) {
       _state = NurseReadinessState.connectionLost;
     } else {
       _state = NurseReadinessState.ready;

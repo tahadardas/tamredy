@@ -17,7 +17,7 @@ const VALIDATORS: Record<string, (v: any) => unknown> = {
     return { waves: v.waves.map((w: any) => {
       const radiusM = num(w?.radiusM, 500, 50_000, 'BAD_RADIUS');
       if (radiusM <= prev) bad('WAVES_MUST_GROW'); prev = radiusM;
-      return { radiusM, seconds: num(w?.seconds, 5, 120, 'BAD_SECONDS'), limit: Math.trunc(num(w?.limit, 1, 100, 'BAD_LIMIT')) };
+      return { radiusM, seconds: Math.trunc(num(w?.seconds, 5, 120, 'BAD_SECONDS')) };
     }) };
   },
   orders: v => ({ accepting: v?.accepting === true, pausedMessage: str(v?.pausedMessage ?? '', 200, 'BAD_MESSAGE') }),

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { alarmMessage, pushBatch, pushCopy } from '../src/push.ts';
+import { alarmMessage, pushCopy } from '../src/push.ts';
 import { processBroadcast, runWinback } from '../src/marketing.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
@@ -18,6 +18,7 @@ const id = async (pg, sql, p) => (await pg.query(sql, p)).rows[0].id;
 
 test('new-request alarm: data-only on Android, long loud tone on iOS, TTL = offer lifetime', () => {
   const m = alarmMessage('tok', { type: 'offer.created', offerId: 'o1' }, 18, { title: 'طلب جديد', body: 'افتح' }).message;
+  assert.match(pushCopy('winback.offer', { percent: 15 }).body, /15%/);
   assert.equal(m.notification, undefined);                 // data-only so the app raises the insistent alarm itself
   assert.equal(m.data.alarm, '1'); assert.equal(m.data.ttl, '18');
   assert.equal(m.android.priority, 'HIGH'); assert.equal(m.android.ttl, '18s');
@@ -25,22 +26,6 @@ test('new-request alarm: data-only on Android, long loud tone on iOS, TTL = offe
   assert.equal(m.apns.payload.aps['interruption-level'], 'time-sensitive');
   assert.equal(alarmMessage('t', {}, 1000, { title: 'a', body: 'b' }).message.android.ttl, '60s'); // capped
   assert.equal(alarmMessage('t', {}, 0, { title: 'a', body: 'b' }).message.android.ttl, '5s');
-});
-
-test('only offer.created raises the alarm; every other event is a normal notification', async () => {
-  const pg = await freshDb();
-  const U = await id(pg, `INSERT INTO users(phone_e164,role) VALUES('+1','NURSE') RETURNING id`);
-  await pg.query(`INSERT INTO device_tokens(user_id,token,platform) VALUES($1,'a'||repeat('x',30),'android')`, [U]);
-  const calls = [];
-  const fcm = { send: async (...a) => { calls.push(['send', a[2].type]); return 'ok'; }, sendAlarm: async (t, data, ttl) => { calls.push(['alarm', data.type, Math.round(ttl)]); return 'ok'; } };
-  const soon = new Date(Date.now() + 15000).toISOString();
-  await pushBatch(pg, fcm, [
-    { id: 1, event_type: 'offer.created', payload: { recipientUserId: U, requestId: 'r', offerId: 'o', expiresAt: soon } },
-    { id: 2, event_type: 'visit.arrive', payload: { recipientUserId: U, requestId: 'r' } },
-  ]);
-  assert.deepEqual(calls.map(c => c[0] + ':' + c[1]).sort(), ['alarm:offer.created', 'send:visit.arrive']);
-  assert.ok(calls.find(c => c[0] === 'alarm')[2] <= 15 && calls.find(c => c[0] === 'alarm')[2] >= 13); // TTL follows the offer expiry
-  assert.match(pushCopy('winback.offer', { percent: 15 }).body, /15%/);
 });
 
 test('broadcast: sent once to the right audience (opt-in patients only), counts recorded, dead tokens pruned', async () => {

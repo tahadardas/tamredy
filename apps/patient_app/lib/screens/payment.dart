@@ -6,9 +6,36 @@ import 'track.dart' show BillCard;
 
 /// P07 — payment. The patient pays the nurse in cash; the nurse records the amount received,
 /// and this screen follows that status live (partial payments show the remaining amount).
-class PaymentScreen extends StatelessWidget {
+class PaymentScreen extends StatefulWidget {
   final PatientController c;
   const PaymentScreen({super.key, required this.c});
+
+  @override
+  State<PaymentScreen> createState() => _PaymentScreenState();
+}
+
+class _PaymentScreenState extends State<PaymentScreen> {
+  PatientController get c => widget.c;
+  bool _refreshing = false;
+
+  Future<void> _refreshPayment() async {
+    setState(() => _refreshing = true);
+    final refreshed = await c.loadBill();
+    if (!mounted) return;
+
+    setState(() => _refreshing = false);
+    final bill = c.bill;
+    final message = !refreshed || bill == null
+        ? 'تعذر تحديث الفاتورة. حاول مجددًا.'
+        : switch (bill.status) {
+            'PAID' => 'تم تأكيد الدفع بالكامل.',
+            'PARTIAL' => 'تم تسجيل دفعة جزئية. المتبقي ${formatMoney(bill.remaining)}.',
+            _ => 'لم يسجّل الممرض استلام المبلغ بعد.',
+          };
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -47,7 +74,7 @@ class PaymentScreen extends StatelessWidget {
           if (bill != null)
             BillCard(bill: bill)
           else
-            const TamCard(child: Text('جارٍ تحميل الفاتورة...')),
+            const TamCard(child: Text('حدّث حالة الدفع لعرض الفاتورة.')),
           const SectionTitle('طريقة الدفع'),
           TamCard(
             child: Column(
@@ -109,21 +136,21 @@ class PaymentScreen extends StatelessWidget {
           if (paid) const StatusChip('تم الدفع بالكامل'),
           const SizedBox(height: 10),
           PrimaryButton(
-            paid || (kDemoMode && bill != null)
+            _refreshing
+                ? 'جارٍ تحديث حالة الدفع…'
+                : paid || (kDemoMode && bill != null)
                 ? 'متابعة إلى التقييم'
                 : 'تحديث حالة الدفع',
-            onPressed: bill == null
+            onPressed: _refreshing
                 ? null
-                : () {
-                    if (paid || kDemoMode) {
-                      c.finishPayment();
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => RatingScreen(c: c)),
-                      );
-                    } else {
-                      c.resync();
-                    }
-                  },
+                : paid || (kDemoMode && bill != null)
+                ? () {
+                    c.finishPayment();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => RatingScreen(c: c)),
+                    );
+                  }
+                : _refreshPayment,
           ),
         ],
       );
