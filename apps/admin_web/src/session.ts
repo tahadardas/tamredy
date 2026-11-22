@@ -125,7 +125,7 @@ const fields: Record<string, string> = {
 };
 const byStatus: Record<number, string> = {
   400: 'البيانات المدخلة غير صالحة', 401: 'انتهت الجلسة، سجّل الدخول من جديد', 403: 'ليست لديك صلاحية لهذه العملية', 404: 'العنصر أو الخدمة غير موجودة على الخادم (قد يحتاج الخادم إلى تحديث)',
-  409: 'تعارض: العملية لا تتوافق مع الحالة الحالية، حدّث الصفحة وأعد المحاولة', 413: 'الملف كبير جدًا', 429: 'محاولات كثيرة، انتظر قليلًا ثم أعد المحاولة', 500: 'خطأ داخلي في الخادم، حاول لاحقًا وأبلغ المسؤول إن تكرر',
+  409: 'تعارض: العملية لا تتوافق مع الحالة الحالية، حدّث الصفحة وأعد المحاولة', 413: 'الملف كبير جدًا', 422: 'بيانات غير قابلة للمعالجة، تحقق من صحة المدخلات', 429: 'محاولات كثيرة، انتظر قليلًا ثم أعد المحاولة', 500: 'خطأ داخلي في الخادم، حاول لاحقًا وأبلغ المسؤول إن تكرر',
   502: 'الخادم غير متاح حاليًا', 503: 'الخدمة غير متاحة مؤقتًا', 504: 'انتهت مهلة الخادم، حاول لاحقًا',
 };
 export function errorAr(d: any, status: number) {
@@ -139,6 +139,15 @@ export function errorAr(d: any, status: number) {
   const msg = typeof d?.message === 'string' ? d.message : '';
   if (/^Cannot (GET|POST|PUT|PATCH|DELETE)/.test(msg)) return byStatus[404]!;
   return byStatus[status] ?? (status >= 500 ? byStatus[500]! : `تعذر تنفيذ العملية (رمز ${status})`);
+}
+
+export async function checkServerConnection(): Promise<boolean> {
+  try {
+    const r = await fetch(`${apiBase}/health`, { method: 'GET', signal: AbortSignal.timeout(5000) });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Idle logout: any user activity resets the timer. */

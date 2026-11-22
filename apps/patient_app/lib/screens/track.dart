@@ -91,7 +91,10 @@ class TrackScreen extends StatelessWidget {
               ],
             ),
           ),
-          SoftButton('إلغاء الطلب', onPressed: c.cancel),
+          SoftButton(
+            'إلغاء الطلب',
+            onPressed: c.busy ? null : () => _confirmCancel(context, c),
+          ),
         ],
       );
     }
@@ -170,7 +173,7 @@ class TrackScreen extends StatelessWidget {
               context,
             ).push(MaterialPageRoute(builder: (_) => PaymentScreen(c: c))),
           )
-        else
+        else ...[
           PrimaryButton(
             'الاتصال بالممرض',
             onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
@@ -181,8 +184,45 @@ class TrackScreen extends StatelessWidget {
               ),
             ),
           ),
+          if (c.stage == VisitStage.enRoute)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: SoftButton(
+                'إلغاء الطلب',
+                onPressed: c.busy ? null : () => _confirmCancel(context, c),
+              ),
+            ),
+        ],
       ],
     );
+  }
+
+  static Future<void> _confirmCancel(BuildContext context, PatientController c) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد إلغاء الطلب'),
+        content: const Text('هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('تراجع'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('نعم، إلغاء الطلب', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      final success = await c.cancel();
+      if (!success && context.mounted && c.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(c.error!), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Widget _tile(String a, String b, String sub) => Container(

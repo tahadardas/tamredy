@@ -20,6 +20,7 @@ class ServiceDto {
   @IsOptional() @IsBoolean() active?: boolean;
   /** Clinical/legal approval for dispatch. Only enable for services your clinical lead approved. */
   @IsOptional() @IsBoolean() dispatchApproved?: boolean;
+  @IsOptional() @IsBoolean() requiresPrescription?: boolean;
 }
 
 class PromoDto {
@@ -49,7 +50,7 @@ class RewardDto {
 const SERVICE_COLS: Record<string, string> = {
   titleAr: 'title_ar', descriptionAr: 'description_ar', price: 'price_amount', includedMinutes: 'included_minutes', blockMinutes: 'block_minutes',
   blockPrice: 'block_price', expectedMinutes: 'expected_minutes', roundingStep: 'rounding_step', commissionBps: 'commission_bps',
-  sortOrder: 'sort_order', active: 'active', dispatchApproved: 'dispatch_approved',
+  sortOrder: 'sort_order', active: 'active', dispatchApproved: 'dispatch_approved', requiresPrescription: 'requires_prescription',
 };
 const PROMO_COLS: Record<string, string> = {
   description: 'description', type: 'type', value: 'value', maxDiscount: 'max_discount', minAmount: 'min_amount', validFrom: 'valid_from', validTo: 'valid_to',
@@ -74,10 +75,10 @@ export class AdminBusinessController {
     return this.db.transaction(async c => {
       if ((await c.query('SELECT 1 FROM services WHERE code=$1', [d.code])).rowCount) conflict('SERVICE_CODE_EXISTS');
       // New services stay hidden until active AND clinically approved are both switched on.
-      const s = (await c.query(`INSERT INTO services(code,title_ar,description_ar,price_amount,included_minutes,block_minutes,block_price,expected_minutes,rounding_step,commission_bps,sort_order,active,dispatch_approved)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      const s = (await c.query(`INSERT INTO services(code,title_ar,description_ar,price_amount,included_minutes,block_minutes,block_price,expected_minutes,rounding_step,commission_bps,sort_order,active,dispatch_approved,requires_prescription)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
         [d.code, d.titleAr, d.descriptionAr ?? null, d.price, d.includedMinutes ?? 30, d.blockMinutes ?? 15, d.blockPrice ?? 0, d.expectedMinutes ?? 30,
-         d.roundingStep ?? 1, d.commissionBps ?? 2000, d.sortOrder ?? 0, d.active ?? false, d.dispatchApproved ?? false])).rows[0];
+         d.roundingStep ?? 1, d.commissionBps ?? 2000, d.sortOrder ?? 0, d.active ?? false, d.dispatchApproved ?? false, d.requiresPrescription ?? false])).rows[0];
       await this.after(c, r.user!.id, 'service.created', s.id, { code: d.code, price: d.price });
       return { id: s.id };
     }).finally(() => this.cache.invalidate('services:public'));

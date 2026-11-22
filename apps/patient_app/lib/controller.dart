@@ -1,15 +1,20 @@
 import 'dart:async';
-import 'package:dio/dio.dart' show DioException;
+import 'package:dio/dio.dart' show DioException, DioExceptionType;
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:uuid/uuid.dart';
 
+enum ServiceLoadState { initial, loading, loaded, empty, networkError, serverError }
+
 class ServiceItem {
   final String id, title, subtitle, note;
   final int price;
-  final int iconCode; // resolved in UI
+  final int iconCode; // 0: injection, 1: wound care, 2: vitals, 3: elderly/home
   final bool needsConfirmation;
+  final bool requiresPrescription;
+  final String code;
+  final int expectedMinutes;
   final PricingRule rule;
   const ServiceItem(
     this.id,
@@ -19,6 +24,9 @@ class ServiceItem {
     this.price,
     this.iconCode, {
     this.needsConfirmation = false,
+    this.requiresPrescription = false,
+    this.code = '',
+    this.expectedMinutes = 30,
     this.rule = const PricingRule(basePrice: 0),
   });
 
@@ -26,13 +34,35 @@ class ServiceItem {
   factory ServiceItem.fromApi(Map<String, dynamic> j, int index) {
     final rule = PricingRule.fromService(j);
     final desc = (j['description_ar'] ?? '').toString();
+    final code = (j['code'] ?? '').toString().toUpperCase();
+    final reqPrescription = j['requires_prescription'] == true;
+    final expMin = (num.tryParse('${j['expected_minutes']}') ?? 30).toInt();
+
+    // Explicit icon mapping based on service code instead of arbitrary array order
+    int iconIdx = 0;
+    if (code.contains('INJ') || code.contains('MED') || code.contains('VACC')) {
+      iconIdx = 0;
+    } else if (code.contains('WOUND') || code.contains('DRESS') || code.contains('SUTURE')) {
+      iconIdx = 1;
+    } else if (code.contains('VITAL') || code.contains('MONITOR') || code.contains('PRESSURE')) {
+      iconIdx = 2;
+    } else if (code.contains('ELDER') || code.contains('HOME') || code.contains('CARE')) {
+      iconIdx = 3;
+    } else {
+      iconIdx = index % 4;
+    }
+
     return ServiceItem(
       '${j['id']}',
       '${j['title_ar']}',
-      desc.isEmpty ? 'خدمة تمريضية' : desc,
-      desc.isEmpty ? 'تُنفذها كوادر تمريضية معتمدة.' : desc,
+      desc.isEmpty ? (reqPrescription ? 'بوصفة طبية' : 'خدمة تمريضية') : desc,
+      desc.isEmpty ? 'تُنفذها كوادر تمريضية معتمدة وفق أعلى معايير الجودة والسلامة.' : desc,
       rule.basePrice,
-      index % 4,
+      iconIdx,
+      needsConfirmation: reqPrescription,
+      requiresPrescription: reqPrescription,
+      code: code,
+      expectedMinutes: expMin,
       rule: rule,
     );
   }
@@ -177,6 +207,9 @@ class PatientController extends ChangeNotifier {
   bool busy = false;
   String? error;
 
+  ServiceLoadState serviceState = kDemoMode ? ServiceLoadState.loaded : ServiceLoadState.initial;
+  String? serviceError;
+
   PatientController() {
     if (!kDemoMode) {
       loadHistory();
@@ -200,23 +233,46 @@ class PatientController extends ChangeNotifier {
 
   /// Live catalogue: services and prices the admin edits appear/disappear here without an app update.
   Future<void> loadServices() async {
+    serviceState = ServiceLoadState.loading;
+    serviceError = null;
+    notifyListeners();
     try {
       final list = await api.getList('/v1/services');
       services = [
         for (var i = 0; i < list.length; i++)
           ServiceItem.fromApi(Map<String, dynamic>.from(list[i] as Map), i),
       ];
-      if (service != null && !services.any((s) => s.id == service!.id))
+      if (service != null && !services.any((s) => s.id == service!.id)) {
         service = null; // removed by admin
+      }
+      serviceState = services.isEmpty ? ServiceLoadState.empty : ServiceLoadState.loaded;
       notifyListeners();
-    } catch (_) {
-      /* keep the last known catalogue */
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.connectionError) {
+        serviceState = ServiceLoadState.networkError;
+        serviceError = 'تعذر الاتصال بالخادم. تأكد من اتصال الإنترنت ثم أعد المحاولة.';
+      } else {
+        serviceState = ServiceLoadState.serverError;
+        serviceError = 'حدث خطأ أثناء تحميل الخدمات (${e.response?.statusCode ?? 'شبكة'}).';
+      }
+      notifyListeners();
+    } catch (e) {
+      serviceState = ServiceLoadState.serverError;
+      serviceError = 'حدث خطأ غير متوقع أثناء استرجاع الخدمات: $e';
+      notifyListeners();
     }
   }
 
-  /// Realtime hook: the server tells every app when the catalogue or a payment changed.
+  /// Realtime hook: the server tells every app when the catalogue, request, or payment changed.
   void onLive(String type) {
-    if (type == 'catalog.changed') loadServices();
+    if (type == 'catalog.changed') {
+      loadServices();
+    } else {
+      resync();
+    }
   }
 
   // ---- promo codes ----
@@ -632,6 +688,7 @@ class PatientController extends ChangeNotifier {
           'locationSource': 'MANUAL_PIN',
           'addressText': '${areaLabel.isNotEmpty ? areaLabel : address} $extraAddress'.trim(),
           'nonEmergencyConfirmed': true,
+          if (service!.requiresPrescription) 'prescriptionConfirmed': true,
           if (promoCode.isNotEmpty) 'promoCode': promoCode,
         },
         {'Idempotency-Key': _idemKey!},
@@ -651,12 +708,88 @@ class PatientController extends ChangeNotifier {
     }
   }
 
+  /// Restores active care request from server on app startup or reconnect.
+  Future<void> restoreActiveRequest() async {
+    if (kDemoMode) return;
+    try {
+      final res = await api.getMap('/v1/me/active-request');
+      if (res['hasActive'] == true && res['request'] != null) {
+        final req = Map<String, dynamic>.from(res['request'] as Map);
+        requestId = req['id']?.toString();
+        final status = '${req['status']}';
+        if (req['address_text'] != null) {
+          address = '${req['address_text']}';
+        }
+        if (req['patient_lat'] != null && req['patient_lng'] != null) {
+          position = LatLng(
+            double.parse('${req['patient_lat']}'),
+            double.parse('${req['patient_lng']}'),
+          );
+        }
+        if (req['service_title'] != null) {
+          final sId = '${req['service_id']}';
+          service = services.firstWhere(
+            (s) => s.id == sId,
+            orElse: () => ServiceItem(
+              sId,
+              '${req['service_title']}',
+              'خدمة تمريضية',
+              'خدمة تمريضية معتمدة',
+              (num.tryParse('${req['price_amount']}') ?? 0).round(),
+              0,
+              requiresPrescription: req['requires_prescription'] == true,
+            ),
+          );
+        }
+        final lat = num.tryParse('${req['nurse_lat']}');
+        final lng = num.tryParse('${req['nurse_lng']}');
+        nursePos = (lat != null && lng != null) ? LatLng(lat.toDouble(), lng.toDouble()) : null;
+
+        stage = switch (status) {
+          'REQUESTED' || 'OFFERING' => VisitStage.searching,
+          'ASSIGNED' || 'EN_ROUTE' => VisitStage.enRoute,
+          'ARRIVED' => VisitStage.arrived,
+          'IN_SERVICE' => VisitStage.inService,
+          'COMPLETED' => VisitStage.completed,
+          _ => VisitStage.none,
+        };
+
+        if (stage != VisitStage.none) {
+          _timer?.cancel();
+          _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+          if (stage == VisitStage.enRoute) {
+            _loadRoute();
+          }
+          if (stage == VisitStage.completed) {
+            loadBill();
+          }
+        }
+      } else {
+        if (stage != VisitStage.none) {
+          stage = VisitStage.none;
+          requestId = null;
+          _timer?.cancel();
+        }
+      }
+      notifyListeners();
+    } catch (_) {
+      // transient network error; keep state
+    }
+  }
+
   /// Reconcile with the server after a reconnect, app resume or push.
   /// Everything the signed-in user sees. Called right after login (the data requested at app start had no token).
   Future<void> loadAll() async {
     if (kDemoMode) return;
     error = null;
-    await Future.wait([loadHistory(), loadServices(), loadBeneficiary(), loadReferral(), loadConsent()]);
+    await Future.wait([
+      loadHistory(),
+      loadServices(),
+      loadBeneficiary(),
+      loadReferral(),
+      loadConsent(),
+      restoreActiveRequest(),
+    ]);
   }
 
   Future<void> resync() async {
@@ -739,18 +872,34 @@ class PatientController extends ChangeNotifier {
     }
   }
 
-  Future<void> cancel() async {
-    _timer?.cancel();
-    _demoMove?.cancel();
-    Analytics.log('request_cancelled', {'stage': stage.name});
-    if (!kDemoMode && requestId != null) {
-      try {
-        await api.post('/v1/requests/$requestId/cancel');
-      } catch (_) {}
+  Future<bool> cancel() async {
+    if (requestId == null) {
+      stage = VisitStage.none;
+      notifyListeners();
+      return true;
     }
-    stage = VisitStage.none;
-    requestId = null;
+    busy = true;
+    error = null;
     notifyListeners();
+    try {
+      if (!kDemoMode) {
+        await api.post('/v1/requests/$requestId/cancel');
+      }
+      _timer?.cancel();
+      _demoMove?.cancel();
+      Analytics.log('request_cancelled', {'stage': stage.name});
+      stage = VisitStage.none;
+      requestId = null;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر إلغاء الطلب من الخادم. يرجى المحاولة لاحقًا أو التواصل مع الممرض.');
+      notifyListeners();
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
   }
 
   void finishPayment() {

@@ -7,7 +7,40 @@ import {PromoAbuse} from './pages_fees';
 
 const n = (v: number | string) => Number(v).toLocaleString('en-US');
 type Svc = {id: string; code: string; title_ar: string; description_ar: string | null; price_amount: string; included_minutes: number; block_minutes: number; block_price: string;
-  expected_minutes: number; rounding_step: number; commission_bps: number; sort_order: number; active: boolean; dispatch_approved: boolean};
+  expected_minutes: number; rounding_step: number; commission_bps: number; sort_order: number; active: boolean; dispatch_approved: boolean; requires_prescription: boolean};
+
+function getServiceStatus(s: Svc): { label: string; tone: string; reason: string; canPublish: boolean } {
+  if (s.active && s.dispatch_approved) {
+    return {
+      label: 'منشورة للمرضى',
+      tone: 'chip-success',
+      reason: s.requires_prescription ? 'منشورة وتتطلب وصفة طبية' : 'منشورة ومتاحة للحجز الفوري',
+      canPublish: false,
+    };
+  }
+  if (!s.active && s.dispatch_approved) {
+    return {
+      label: 'موقوفة مؤقتًا',
+      tone: 'chip-warn',
+      reason: 'معتمدة سريريًا ولكنها موقوفة بقرار الإدارة',
+      canPublish: true,
+    };
+  }
+  if (s.active && !s.dispatch_approved) {
+    return {
+      label: 'بانتظار الاعتماد السريري',
+      tone: 'chip-purple',
+      reason: 'مفعلة من الإدارة وبانتظار اعتماد المسؤول الطبي',
+      canPublish: true,
+    };
+  }
+  return {
+    label: 'مسودة',
+    tone: 'chip-default',
+    reason: 'مسودة غير مفعلة وغير معتمدة سريريًا (مخفية)',
+    canPublish: true,
+  };
+}
 
 /** Same formula as the server (apps/api/src/pricing/pricing.ts) — preview only; the server is the source of truth. */
 const gross = (s: {base: number; inc: number; block: number; blockPrice: number}, minutes: number) =>
@@ -26,26 +59,56 @@ const Field = ({label, children}: {label: string; children: React.ReactNode}) =>
 
 export function ServicesPrices({live}: {live: Live}) {
   const {data, err, load} = useApi(live, '/v1/admin/services');
-  const blank = {id: '', code: '', titleAr: '', descriptionAr: '', price: '', includedMinutes: '30', blockMinutes: '15', blockPrice: '0', expectedMinutes: '30', roundingStep: '1', commissionBps: '2000', sortOrder: '0'};
+  const blank = {
+    id: '', code: '', titleAr: '', descriptionAr: '', price: '',
+    includedMinutes: '30', blockMinutes: '15', blockPrice: '0',
+    expectedMinutes: '30', roundingStep: '1', commissionBps: '2000',
+    sortOrder: '0', requiresPrescription: false,
+  };
   const [f, setF] = useState<any>(blank);
   const [msg, setMsg] = useState('');
   if (!live) return <NeedLogin title="الخدمات والأسعار"/>;
-  const set = (k: string) => (e: any) => setF((p: any) => ({...p, [k]: e.target.value}));
+  const set = (k: string) => (e: any) =>
+    setF((p: any) => ({...p, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value}));
   const num = (v: string) => Number(v || 0);
-  const edit = (s: Svc) => setF({id: s.id, code: s.code, titleAr: s.title_ar, descriptionAr: s.description_ar ?? '', price: String(Number(s.price_amount)), includedMinutes: String(s.included_minutes),
-    blockMinutes: String(s.block_minutes), blockPrice: String(Number(s.block_price)), expectedMinutes: String(s.expected_minutes), roundingStep: String(s.rounding_step), commissionBps: String(s.commission_bps), sortOrder: String(s.sort_order)});
+  const edit = (s: Svc) => setF({
+    id: s.id, code: s.code, titleAr: s.title_ar, descriptionAr: s.description_ar ?? '',
+    price: String(Number(s.price_amount)), includedMinutes: String(s.included_minutes),
+    blockMinutes: String(s.block_minutes), blockPrice: String(Number(s.block_price)),
+    expectedMinutes: String(s.expected_minutes), roundingStep: String(s.rounding_step),
+    commissionBps: String(s.commission_bps), sortOrder: String(s.sort_order),
+    requiresPrescription: Boolean(s.requires_prescription),
+  });
   async function save() {
     setMsg('');
     try {
-      const body: any = {titleAr: f.titleAr, descriptionAr: f.descriptionAr || undefined, price: num(f.price), includedMinutes: num(f.includedMinutes), blockMinutes: num(f.blockMinutes), blockPrice: num(f.blockPrice),
-        expectedMinutes: num(f.expectedMinutes), roundingStep: num(f.roundingStep), commissionBps: num(f.commissionBps), sortOrder: num(f.sortOrder)};
+      const body: any = {
+        titleAr: f.titleAr, descriptionAr: f.descriptionAr || undefined,
+        price: num(f.price), includedMinutes: num(f.includedMinutes),
+        blockMinutes: num(f.blockMinutes), blockPrice: num(f.blockPrice),
+        expectedMinutes: num(f.expectedMinutes), roundingStep: num(f.roundingStep),
+        commissionBps: num(f.commissionBps), sortOrder: num(f.sortOrder),
+        requiresPrescription: Boolean(f.requiresPrescription),
+      };
       if (f.id) await send(live!, 'PATCH', `/v1/admin/services/${f.id}`, body);
       else await send(live!, 'POST', '/v1/admin/services', {...body, code: f.code});
       setMsg('تم الحفظ — يظهر التغيير في التطبيقات فورًا.'); setF(blank); await load();
     } catch (e) { setMsg(`تعذر الحفظ: ${msgOf(e)}`); }
   }
   async function toggle(s: Svc, field: 'active' | 'dispatchApproved') {
-    try { await send(live!, 'PATCH', `/v1/admin/services/${s.id}`, {[field]: field === 'active' ? !s.active : !s.dispatch_approved}); await load(); } catch (e) { setMsg(msgOf(e)); }
+    try {
+      await send(live!, 'PATCH', `/v1/admin/services/${s.id}`, {
+        [field]: field === 'active' ? !s.active : !s.dispatch_approved,
+      });
+      await load();
+    } catch (e) { setMsg(msgOf(e)); }
+  }
+  async function quickPublish(s: Svc) {
+    try {
+      await send(live!, 'PATCH', `/v1/admin/services/${s.id}`, { active: true, dispatchApproved: true });
+      setMsg(`تم نشر خدمة "${s.title_ar}" للمرضى بنجاح.`);
+      await load();
+    } catch (e) { setMsg(`تعذر نشر الخدمة: ${msgOf(e)}`); }
   }
   const rule = {base: num(f.price), inc: Math.max(1, num(f.includedMinutes)), block: Math.max(1, num(f.blockMinutes)), blockPrice: num(f.blockPrice)};
   const step = Math.max(1, num(f.roundingStep));
@@ -66,19 +129,36 @@ export function ServicesPrices({live}: {live: Live}) {
         <Field label="عمولة المنصة (نقطة أساس: 2000 = 20%)"><input type="number" value={f.commissionBps} onChange={set('commissionBps')}/></Field>
         <Field label="ترتيب العرض"><input type="number" value={f.sortOrder} onChange={set('sortOrder')}/></Field>
       </div>
+      <label className="check" style={{marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+        <input type="checkbox" checked={f.requiresPrescription} onChange={set('requiresPrescription')}/>
+        <span><b>تتطلب وصفة طبية صالحة</b> (الخدمة تظهر للمريض مع تنبيه بضرورة إرفاق وصفة طبية معتمدة قبل إتمام الحجز)</span>
+      </label>
       <div className="preview"><b>معاينة الحساب:</b> {[20, 30, 45, 60, 90].map(m => <span key={m}>{m} د ← {n(rounded(m))} ل.س</span>)}</div>
       <div className="actions"><button className="pill on" onClick={() => void save()}>{f.id ? 'حفظ التعديل' : 'إضافة الخدمة'}</button>{f.id && <button className="pill" onClick={() => setF(blank)}>إلغاء التعديل</button>}</div>
       {msg && <p className={'hint ' + (msg.startsWith('تعذر') ? 'err' : '')}>{msg}</p>}{err && <p className="hint err">{err}</p>}
     </Panel>
-    <Panel title="الخدمات المعروضة">
-      <Table head={['الخدمة', 'السعر الأساسي', 'الشريحة الإضافية', 'ظاهرة للمرضى', 'معتمدة سريريًا', '']} rows={items.map(s => [
-        <><b>{s.title_ar}</b><br/><small className="hint" dir="ltr">{s.code}</small></>,
-        `${n(s.price_amount)} / ${s.included_minutes} د`, `${n(s.block_price)} / ${s.block_minutes} د`,
-        <button className={'pill ' + (s.active ? 'on' : '')} onClick={() => void toggle(s, 'active')}>{s.active ? 'ظاهرة' : 'مخفية'}</button>,
-        <button className={'pill ' + (s.dispatch_approved ? 'on' : '')} onClick={() => void toggle(s, 'dispatchApproved')}>{s.dispatch_approved ? 'معتمدة' : 'غير معتمدة'}</button>,
-        <button className="pill" onClick={() => edit(s)}>تعديل</button>])}/>
+    <Panel title="إدارة الخدمات والأسعار وحالة النشر">
+      <Table head={['الخدمة', 'السعر والمدة', 'الحالة السريرية والظهور', 'سبب حالة الظهور', 'الإجراءات']} rows={items.map(s => {
+        const st = getServiceStatus(s);
+        return [
+          <div key={s.id}>
+            <b>{s.title_ar}</b>
+            {s.requires_prescription && <span className="chip" style={{fontSize: '0.75rem', marginRight: '0.4rem', color: '#c05621', background: '#feebc8'}}>وصفة إلزامية</span>}
+            <br/><small className="hint" dir="ltr">{s.code}</small>
+          </div>,
+          `${n(s.price_amount)} ل.س / ${s.included_minutes} د (+${n(s.block_price)}/${s.block_minutes}د)`,
+          <span key={`st-${s.id}`} className={`chip ${st.tone}`}>{st.label}</span>,
+          <small key={`re-${s.id}`} className="hint">{st.reason}</small>,
+          <div key={`act-${s.id}`} style={{display: 'flex', gap: '0.35rem', flexWrap: 'wrap'}}>
+            {st.canPublish && <button className="pill on" title="تفعيل واعتماد ونشر الخدمة للمرضى فورًا" onClick={() => void quickPublish(s)}>نشر فوري</button>}
+            <button className={'pill ' + (s.active ? 'on' : '')} onClick={() => void toggle(s, 'active')}>{s.active ? 'مفعلة' : 'معطلة'}</button>
+            <button className={'pill ' + (s.dispatch_approved ? 'on' : '')} onClick={() => void toggle(s, 'dispatchApproved')}>{s.dispatch_approved ? 'معتمدة' : 'غير معتمدة'}</button>
+            <button className="pill" onClick={() => edit(s)}>تعديل</button>
+          </div>
+        ];
+      })}/>
     </Panel>
-    <Notice>تظهر الخدمة للمرضى فقط إذا كانت «ظاهرة» و«معتمدة سريريًا» معًا. اعتماد الخدمة قرار سريري/قانوني، فلا تفعّله إلا بموافقة المسؤول السريري. تغيير السعر لا يمس الطلبات الجارية: لكل طلب نسخة سعر ثابتة وقت إنشائه.</Notice>
+    <Notice>تظهر الخدمة للمرضى فقط إذا كانت «مفعلة» و«معتمدة سريريًا» معًا. اعتماد الخدمة قرار سريري/قانوني، فلا تفعّله إلا بموافقة المسؤول السريري. تغيير السعر لا يمس الطلبات الجارية: لكل طلب نسخة سعر ثابتة وقت إنشائه.</Notice>
   </>;
 }
 

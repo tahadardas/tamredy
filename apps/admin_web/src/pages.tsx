@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useState, useEffect} from 'react';
 import {Chip, Notice, Panel, Row, Stat, Table, Icon} from './ui';
 
 export type Metrics = {available_nurses: number; searching_requests: number; en_route: number; in_service: number};
@@ -286,6 +286,13 @@ export function WalletRec({live}: {live?: Live}) {
 
 export function Reviews({live}: {live: Live}) {
   const x = live.extra.reviews;
+  const [reviewsData, setReviewsData] = useState<any[]>([]);
+  useEffect(() => {
+    if (live?.token) {
+      live.get('/v1/admin/reviews/items').then((r: any) => setReviewsData(r?.items || [])).catch(() => {});
+    }
+  }, [live?.token]);
+
   const sevConfig: Record<string, {label: string; tone: 'default' | 'warn' | 'danger' | 'purple'}> = {
     LOW: {label: 'منخفضة', tone: 'default'},
     MEDIUM: {label: 'متوسطة', tone: 'warn'},
@@ -317,6 +324,26 @@ export function Reviews({live}: {live: Live}) {
           );
         })
       ) : <Empty>لا توجد بلاغات سلامة أو شكاوى مفتوحة ✓</Empty>}
+    </Panel>
+    <Panel title="تقييمات وملاحظات الزيارات المكتملة" subtitle="مراجعات المرضى وتقارير الممرضين المهنية">
+      {reviewsData.length ? (
+        <Table
+          head={['التقييم', 'الطرف والمقيّم', 'الخدمة', 'الملاحظات والتقرير', 'التاريخ']}
+          rows={reviewsData.map(r => [
+            r.stars ? `⭐ ${r.stars} / 5` : 'تقرير مهني',
+            r.reviewer_role === 'PATIENT' ? (
+              <span key={r.id}><b>مريض:</b> {r.patient_name || r.patient_phone || '—'}<br/><small className="hint">للممرض: {r.nurse_name || r.nurse_phone}</small></span>
+            ) : (
+              <span key={r.id}><b>ممرض:</b> {r.nurse_name || r.nurse_phone || '—'}<br/><small className="hint">عن المريض: {r.patient_name || r.patient_phone}</small></span>
+            ),
+            r.service_title || '—',
+            r.behavior_notes || '—',
+            r.created_at ? String(r.created_at).slice(0, 10) : '—',
+          ])}
+        />
+      ) : (
+        <Empty>لا توجد تقييمات مسجلة بعد</Empty>
+      )}
     </Panel>
     <Notice tone="info">تقييم المريض للممرض ينشر بعد مراجعته لحماية الخصوصية، وتقييم الممرض للمريض تقييم داخلي لغايات السلامة.</Notice>
   </>;

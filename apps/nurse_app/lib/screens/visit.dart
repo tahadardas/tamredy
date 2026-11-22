@@ -240,8 +240,8 @@ class VisitFlowScreen extends StatelessWidget {
           ),
         const SectionTitle('الخطوة التالية'),
         PrimaryButton(
-          paid ? 'العودة إلى شاشة متاح' : 'أكمل التحصيل أولًا',
-          onPressed: paid ? c.backToAvailable : null,
+          paid ? 'العودة إلى شاشة متاح' : 'العودة إلى شاشة متاح (تحصيل لاحق)',
+          onPressed: c.backToAvailable,
         ),
         SoftButton(
           'تقييم المريض وتقرير ما بعد الزيارة',

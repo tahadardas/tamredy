@@ -24,6 +24,7 @@ class TamScaffold extends StatelessWidget {
   final List<Widget> children;
   final TamBottomNav? nav;
   final bool showBack;
+  final Future<void> Function()? onRefresh;
   const TamScaffold({
     super.key,
     required this.title,
@@ -31,6 +32,7 @@ class TamScaffold extends StatelessWidget {
     required this.children,
     this.nav,
     this.showBack = false,
+    this.onRefresh,
   });
 
   @override
@@ -89,10 +91,20 @@ class TamScaffold extends StatelessWidget {
               ),
               const Divider(height: 1, color: TamreedyColors.border),
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-                  children: children,
-                ),
+                child: onRefresh != null
+                    ? RefreshIndicator(
+                        color: TamreedyColors.teal,
+                        onRefresh: onRefresh!,
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+                          children: children,
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+                        children: children,
+                      ),
               ),
             ],
           ),

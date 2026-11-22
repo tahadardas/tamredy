@@ -6,10 +6,10 @@ export 'location.dart';
 import 'location.dart';
 
 const _serviceIcons = [
-  Icons.favorite_border,
-  Icons.description_outlined,
+  Icons.vaccines_outlined,
+  Icons.healing_outlined,
   Icons.monitor_heart_outlined,
-  Icons.groups_outlined,
+  Icons.elderly_outlined,
 ];
 const _serviceTones = [Tone.teal, Tone.blue, Tone.teal, Tone.orange];
 
@@ -25,63 +25,104 @@ class HomeScreen extends StatelessWidget {
       title: 'طلب تمريض منزلي',
       subtitle: 'رعاية مهنية موثوقة للعائلة',
       nav: nav,
+      onRefresh: () => c.loadServices(),
       children: [
         const HeroCard(
           title: 'رعايتكم مسؤوليتنا',
           body: 'احجز ممرضًا مؤهلًا ليصل إلى عنوانك في دمشق وريف دمشق.',
         ),
         const SectionTitle('اختر الخدمة المطلوبة'),
-        if (c.services.isEmpty)
-          const NoticeBox('لا توجد خدمات متاحة حاليًا. حاول لاحقًا أو تواصل مع الإدارة.'),
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.0,
-          children: [
-            for (var i = 0; i < c.services.length; i++)
-              TamCard(
-                onTap: () {
-                  c.pick(c.services[i]);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => ServiceScreen(c: c)),
-                  );
-                },
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      IconBox(
-                        _serviceIcons[c.services[i].iconCode],
-                        tone: _serviceTones[c.services[i].iconCode],
-                        size: 50,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        c.services[i].title,
-                        style: tamText(
-                          size: 15,
-                          weight: FontWeight.w800,
-                          color: TamreedyColors.navy,
+        if (c.serviceState == ServiceLoadState.loading)
+          const ServiceSkeletonGrid()
+        else if (c.serviceState == ServiceLoadState.networkError || c.serviceState == ServiceLoadState.serverError)
+          ServiceErrorCard(
+            message: c.serviceError ?? 'تعذر الاتصال بالخادم لجلب الخدمات المتاحة.',
+            onRetry: c.loadServices,
+          )
+        else if (c.serviceState == ServiceLoadState.empty)
+          const NoticeBox('لا توجد خدمات منشورة حاليًا في منطقتك. تواصل مع الدعم للمساعدة.')
+        else
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.95,
+            children: [
+              for (var i = 0; i < c.services.length; i++)
+                TamCard(
+                  onTap: () {
+                    c.pick(c.services[i]);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => ServiceScreen(c: c)),
+                    );
+                  },
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            IconBox(
+                              _serviceIcons[c.services[i].iconCode],
+                              tone: _serviceTones[c.services[i].iconCode],
+                              size: 46,
+                            ),
+                            const Spacer(),
+                            if (c.services[i].requiresPrescription)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFFBEB),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFFDE68A)),
+                                ),
+                                child: Text(
+                                  'وصفة',
+                                  style: tamText(size: 10, weight: FontWeight.w700, color: const Color(0xFFB45309)),
+                                ),
+                              ),
+                          ],
                         ),
-                      ),
-                      Text(
-                        c.services[i].subtitle,
-                        style: tamText(
-                          size: 11.5,
-                          color: TamreedyColors.subtext,
+                        const SizedBox(height: 10),
+                        Text(
+                          c.services[i].title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: tamText(
+                            size: 14.5,
+                            weight: FontWeight.w800,
+                            color: TamreedyColors.navy,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          c.services[i].subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: tamText(
+                            size: 11,
+                            color: TamreedyColors.subtext,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'من ${formatMoney(c.services[i].price)}',
+                          style: tamText(
+                            size: 12,
+                            weight: FontWeight.w800,
+                            color: TamreedyColors.teal,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
         ClaimCodeCard(c: c),
         const SectionTitle('حجوزاتي الأخيرة'),
         if (last == null)
@@ -97,6 +138,147 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class ServiceSkeletonGrid extends StatefulWidget {
+  const ServiceSkeletonGrid({super.key});
+  @override
+  State<ServiceSkeletonGrid> createState() => _ServiceSkeletonGridState();
+}
+
+class _ServiceSkeletonGridState extends State<ServiceSkeletonGrid> with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.35, end: 0.85).animate(_ctrl);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (context, _) {
+        final opacity = _anim.value;
+        return GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 0.95,
+          children: List.generate(4, (i) => Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: TamreedyColors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Opacity(
+                  opacity: opacity,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: TamreedyColors.teal.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Opacity(
+                  opacity: opacity,
+                  child: Container(
+                    width: 85,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Opacity(
+                  opacity: opacity,
+                  child: Container(
+                    width: 60,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )),
+        );
+      },
+    );
+  }
+}
+
+class ServiceErrorCard extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const ServiceErrorCard({super.key, required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF5F5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFEB2B2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.wifi_off_rounded, color: Color(0xFFE53E3E), size: 26),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  style: tamText(size: 13, weight: FontWeight.w600, color: const Color(0xFF9B2C2C)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('إعادة المحاولة'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: TamreedyColors.teal,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -140,7 +322,30 @@ class ServiceScreen extends StatelessWidget {
                     height: 1.7,
                   ),
                 ),
-                if (s.needsConfirmation) ...[
+                if (s.requiresPrescription) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.medical_information_outlined, color: Color(0xFFD97706), size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'تتطلب هذه الخدمة وجود وصفة طبية صالحة ومعتمدة. سيتحقق الممرض من الوصفة وتفاصيل الجرعة قبل تقديم الرعاية لسلامتكم.',
+                            style: tamText(size: 12, color: const Color(0xFF92400E), height: 1.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (s.needsConfirmation) ...[
                   const SizedBox(height: 14),
                   const StatusChip('تحتاج تأكيد الحالة', warning: true),
                 ],

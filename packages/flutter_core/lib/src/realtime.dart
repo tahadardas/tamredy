@@ -14,7 +14,9 @@ const bool kFcmEnabled = bool.fromEnvironment(
 
 /// Events the server emits on `/live` (payloads only carry ids; details come from REST).
 const liveEvents = [
+  'catalog.changed',
   'offer.created',
+  'offer.expired',
   'request.created',
   'request.assigned',
   'request.cancelled',
@@ -23,6 +25,8 @@ const liveEvents = [
   'visit.arrive',
   'visit.start',
   'visit.complete',
+  'payment.updated',
+  'tracking.updated',
 ];
 
 /// Best-effort realtime channel. REST is the source of truth: every (re)connect,

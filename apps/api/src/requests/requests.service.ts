@@ -26,9 +26,12 @@ export class RequestsService {
       if (orders && orders.accepting === false) throw new ServiceUnavailableException({ code: 'ORDERS_PAUSED', message: orders.pausedMessage ?? '' });
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
       if (!beneficiary.rowCount) forbidden();
-      const service = await client.query(`SELECT * FROM services WHERE id=$1 AND active=true AND dispatch_approved=true AND requires_prescription=false`,[dto.serviceId]);
-      if (!service.rowCount) invalid('Service unavailable, not clinically approved, or needs a prescription workflow');
+      const service = await client.query(`SELECT * FROM services WHERE id=$1 AND active=true AND dispatch_approved=true`,[dto.serviceId]);
+      if (!service.rowCount) invalid('Service unavailable or not clinically approved');
       const s=service.rows[0];
+      if (s.requires_prescription && !dto.prescriptionConfirmed) {
+        invalid('PRESCRIPTION_CONFIRMATION_REQUIRED: Medical prescription verification is mandatory for this service');
+      }
       const rule=ruleFromRow(s);
       const feeSnapshot=await this.fees.snapshot(client); // night/holiday/distance/tax rules frozen for this order
       // Explicit code must be valid; otherwise a claimed welcome code is applied silently. Row is locked against over-use.

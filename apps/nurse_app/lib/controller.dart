@@ -90,9 +90,10 @@ class NurseController extends ChangeNotifier {
     if (!kDemoMode) loadLive();
   }
 
-  /// Replaces demo figures with server values (summary + earnings).
+  /// Replaces demo figures with server values (summary + earnings) and restores active state.
   Future<void> loadLive() async {
     try {
+      await restoreActiveAssignment();
       final s = await api.getMap('/v1/nurse/me/summary');
       todayRequests = (s['requests_today'] as num?)?.toInt() ?? 0;
       completedVisits = (s['completed_today'] as num?)?.toInt() ?? 0;
@@ -114,6 +115,65 @@ class NurseController extends ChangeNotifier {
     } catch (_) {
       error = 'تعذر تحميل ملخص الأرباح من الخادم';
       notifyListeners();
+    }
+  }
+
+  /// Restores active assignment and true server status on app launch or reconnect.
+  Future<void> restoreActiveAssignment() async {
+    if (kDemoMode) return;
+    try {
+      final res = await api.getMap('/v1/nurse/me/active-assignment');
+      available = res['availability'] == 'AVAILABLE';
+      if (res['hasActive'] == true && res['assignment'] != null) {
+        final asgn = Map<String, dynamic>.from(res['assignment'] as Map);
+        assignmentId = asgn['assignment_id']?.toString();
+        requestId = asgn['request_id']?.toString();
+        final reqStatus = '${asgn['request_status']}';
+        if (asgn['service_title'] != null) {
+          serviceTitle = '${asgn['service_title']}';
+        }
+        if (asgn['address_text'] != null) {
+          patientAddress = '${asgn['address_text']}';
+        }
+        if (asgn['patient_lat'] != null && asgn['patient_lng'] != null) {
+          dest = LatLng(
+            double.parse('${asgn['patient_lat']}'),
+            double.parse('${asgn['patient_lng']}'),
+          );
+        }
+
+        switch (reqStatus) {
+          case 'ASSIGNED':
+          case 'EN_ROUTE':
+            stage = NurseStage.enRoute;
+            _startNavigation();
+            break;
+          case 'ARRIVED':
+            stage = NurseStage.arrived;
+            break;
+          case 'IN_SERVICE':
+            stage = NurseStage.inService;
+            break;
+          case 'COMPLETED':
+            stage = NurseStage.completed;
+            loadBill();
+            break;
+          default:
+            stage = NurseStage.idle;
+            assignmentId = null;
+            requestId = null;
+        }
+      } else {
+        if (stage != NurseStage.idle && stage != NurseStage.offer) {
+          stage = NurseStage.idle;
+          assignmentId = null;
+          requestId = null;
+          _stopNavigation();
+        }
+      }
+      notifyListeners();
+    } catch (_) {
+      // transient network error; keep state
     }
   }
 
@@ -183,9 +243,9 @@ class NurseController extends ChangeNotifier {
 
   /// Realtime event handler from WebSocket / Socket.io
   void onLive(String type) {
-    if (type == 'offer.created' ||
-        type == 'request.cancelled' ||
-        type == 'request.unfulfilled') {
+    if (type == 'catalog.changed') {
+      loadLive();
+    } else {
       resync();
     }
   }
@@ -263,20 +323,30 @@ class NurseController extends ChangeNotifier {
     OfferAlarm.cancelAll(); // silence the alarm as soon as she acts
     if (offer == null || busy) return;
     busy = true;
+    error = null;
     notifyListeners();
     try {
       if (!kDemoMode) {
         final a = await api.post('/v1/nurse/offers/${offer!.id}/accept');
-        assignmentId = a['assignmentId'].toString();
+        assignmentId = a['assignmentId']?.toString();
         requestId = a['requestId']?.toString();
+        if (assignmentId == null || assignmentId!.isEmpty) {
+          throw Exception('لم يتم استلام معرف الإسناد');
+        }
+        // Transitions status ASSIGNED -> EN_ROUTE on the backend
+        await api.post('/v1/nurse/assignments/$assignmentId/depart');
       }
       stage = NurseStage.enRoute;
       Analytics.log('offer_accepted');
       await _startNavigation();
-    } catch (_) {
-      error = 'لم يعد العرض متاحًا أو حصل عليه ممرض آخر';
-      stage = NurseStage.idle;
-      offer = null;
+    } catch (e) {
+      error = explainError(e, fallback: 'لم يعد العرض متاحًا أو حصل عليه ممرض آخر');
+      if (assignmentId != null) {
+        await restoreActiveAssignment();
+      } else {
+        stage = NurseStage.idle;
+        offer = null;
+      }
     } finally {
       busy = false;
       notifyListeners();
@@ -300,13 +370,22 @@ class NurseController extends ChangeNotifier {
   Future<void> _step(String command, NurseStage next) async {
     if (busy) return;
     busy = true;
+    error = null;
     notifyListeners();
     try {
-      if (!kDemoMode && assignmentId != null)
+      if (!kDemoMode && assignmentId != null) {
         await api.post('/v1/nurse/assignments/$assignmentId/$command');
+      }
       stage = next;
-    } catch (_) {
-      error = 'تعذر تأكيد الانتقال. راجع حالة الطلب قبل إعادة المحاولة.';
+    } on DioException catch (de) {
+      if (de.response?.statusCode == 409) {
+        // Resync true state on 409 conflict
+        await restoreActiveAssignment();
+      } else {
+        error = explainError(de, fallback: 'تعذر تأكيد الانتقال. راجع حالة الطلب قبل إعادة المحاولة.');
+      }
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر تأكيد الانتقال. راجع حالة الطلب قبل إعادة المحاولة.');
     } finally {
       busy = false;
       notifyListeners();
@@ -314,16 +393,21 @@ class NurseController extends ChangeNotifier {
   }
 
   Future<void> arrive() async {
+    if (stage != NurseStage.enRoute) return;
     await _step('arrive', NurseStage.arrived);
-    _stopNavigation();
+    if (stage == NurseStage.arrived) {
+      _stopNavigation();
+    }
   }
 
   Future<void> start() async {
+    if (stage != NurseStage.arrived) return;
     await _step('start', NurseStage.inService);
     Analytics.log('visit_started');
   }
 
   Future<void> complete() async {
+    if (stage != NurseStage.inService) return;
     await _step('complete', NurseStage.completed);
     Analytics.log('visit_completed', {'service_id': offer?.service ?? ''});
     if (stage == NurseStage.completed) await loadBill();

@@ -10,6 +10,7 @@ export class CreateRequestDto extends LocationDto {
   @IsIn(['GPS_CONFIRMED','MANUAL_PIN']) locationSource!: string;
   @IsString() @MaxLength(400) addressText!: string;
   @IsBoolean() nonEmergencyConfirmed!: boolean;
+  @IsOptional() @IsBoolean() prescriptionConfirmed?: boolean;
   @IsOptional() @IsString() @MaxLength(40) promoCode?: string;
 }
 export class AvailabilityDto {

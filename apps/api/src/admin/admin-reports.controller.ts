@@ -130,6 +130,26 @@ export class AdminReportsController {
     return {...q.rows[0], items: items.rows};
   }
 
+  @Get('reviews/items') async reviewsItems(@Request() r: AuthRequest) {
+    requireRole(r.user!, 'ADMIN');
+    const items = await this.db.query(`
+      SELECT vr.id, vr.visit_id, vr.reviewer_role, vr.stars, vr.behavior_notes, vr.created_at,
+        cr.id AS request_id, s.title_ar AS service_title,
+        patient_u.display_name AS patient_name, patient_u.phone_e164 AS patient_phone,
+        nurse_u.display_name AS nurse_name, nurse_u.phone_e164 AS nurse_phone
+      FROM visit_reviews vr
+      JOIN visits v ON v.id = vr.visit_id
+      JOIN request_assignments a ON a.id = v.assignment_id
+      JOIN care_requests cr ON cr.id = a.request_id
+      JOIN services s ON s.id = cr.service_id
+      JOIN users patient_u ON patient_u.id = cr.requester_user_id
+      JOIN nurses n ON n.id = a.nurse_id
+      JOIN users nurse_u ON nurse_u.id = n.user_id
+      ORDER BY vr.created_at DESC LIMIT 50
+    `);
+    return { items: items.rows };
+  }
+
   @Get('settings') settings(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
     // Read-only view of compiled policy; editing requires RBAC + second approval (not built yet).
