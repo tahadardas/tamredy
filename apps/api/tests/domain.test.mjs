@@ -1,0 +1,18 @@
+import {test, after} from 'node:test';
+import assert from 'node:assert/strict';
+import {tmpdir} from 'node:os';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {createRequire} from 'node:module';
+const dir=mkdtempSync(join(tmpdir(),'tamreedy-domain-'));
+const src=resolve(import.meta.dirname??'.','../src/common/states.ts');
+execFileSync('tsc',[src,'--target','ES2022','--module','commonjs','--skipLibCheck','--outDir',dir],{shell:process.platform==='win32'});
+const require=createRequire(import.meta.url);
+const {canTransition,nextWave,calculateChange}=require(join(dir,'states.js'));
+after(()=>rmSync(dir,{recursive:true,force:true}));
+test('terminal request states cannot transition',()=>{for(const state of ['COMPLETED','CANCELLED','UNFULFILLED','ESCALATED']) assert.equal(canTransition(state,'OFFERING'),false);});
+test('legal service life cycle',()=>{const flow=['OFFERING','ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE','COMPLETED'];for(let i=1;i<flow.length;i++)assert.equal(canTransition(flow[i-1],flow[i]),true);});
+test('cannot complete service before start',()=>{assert.equal(canTransition('ARRIVED','COMPLETED'),false);assert.equal(canTransition('ASSIGNED','COMPLETED'),false);});
+test('widen search radius in three dispatch waves',()=>{assert.deepEqual([1,2,3].map(n=>nextWave(n)?.radiusMeters),[3000,6000,10000]);assert.equal(nextWave(4),null);});
+test('cash change exact integer arithmetic, refuses underpayment',()=>{assert.equal(calculateChange(1200n,1500n),300n);assert.throws(()=>calculateChange(1500n,1200n),/INVALID_CASH_COLLECTION/);});

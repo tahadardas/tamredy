@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgis/postgis:18-3.7
+    environment:
+      POSTGRES_DB: tamreedy
+      POSTGRES_USER: tamreedy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_change_me}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["tamreedy_pg:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tamreedy -d tamreedy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: ["tamreedy_redis:/data"]
+volumes:
+  tamreedy_pg:
+  tamreedy_redis:

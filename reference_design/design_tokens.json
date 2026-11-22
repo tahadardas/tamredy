@@ -1,0 +1,42 @@
+{
+  "name": "Tamreedy Design System v1.0",
+  "brand": "تمريضي",
+  "direction": "rtl",
+  "colors": {
+    "primary_navy": "#074577",
+    "deep_navy": "#073F6C",
+    "teal": "#079D90",
+    "teal_alt": "#08A996",
+    "background": "#FFFFFF",
+    "canvas": "#F7FAFC",
+    "text": "#11395C",
+    "subtext": "#7891A3",
+    "border": "#E4EDF2",
+    "success": "#05866B",
+    "warning": "#B97824",
+    "danger": "#CF5361"
+  },
+  "typography": {
+    "arabic": "Noto Sans Arabic or Cairo",
+    "font_fallback": "sans-serif",
+    "base_px": 16,
+    "touch_target_dp_min": 48
+  },
+  "radii": {
+    "card_px": 16,
+    "button_px": 13
+  },
+  "spacing_px": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32
+  ],
+  "logos": [
+    "tamreedy_logo_approved.png",
+    "tamreedy_logo_cropped.png"
+  ],
+  "notes": "شعار وصور الشاشات مرجعية؛ لم يُعاد إنشاء الخط أو العلامة تجاريًا. تحقق من حقوق استخدام العلامة قبل النشر."
+}

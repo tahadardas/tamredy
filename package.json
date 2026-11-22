@@ -1,0 +1,23 @@
+{
+  "name": "tamreedy-monorepo",
+  "private": true,
+  "version": "0.2.0",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @tamreedy/api dev",
+    "dev:worker": "pnpm --filter @tamreedy/worker dev",
+    "dev:admin": "pnpm --filter @tamreedy/admin dev",
+    "test:domain": "node --test apps/api/tests/domain.test.mjs",
+    "test:auth": "pnpm --filter @tamreedy/api build && node --test apps/api/tests/auth.test.mjs",
+    "db:migrate": "node infra/db/migrate.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "test:performance": "node --experimental-strip-types --test apps/api/tests/performance.test.mjs",
+    "audit:query-plans": "node apps/api/scripts/audit-query-plans.mjs"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

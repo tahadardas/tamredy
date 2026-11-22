@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# Build context = repository root:  docker build -f infra/docker/Dockerfile.worker .
+
+FROM node:26-slim AS build
+ENV PNPM_HOME=/pnpm
+ENV PATH=/pnpm:$PATH
+RUN npm install -g pnpm@10.14.0
+# Keep the build light so small servers do not run out of memory
+ENV NODE_OPTIONS=--max-old-space-size=768
+WORKDIR /repo
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/api/package.json apps/api/
+COPY apps/worker/package.json apps/worker/
+COPY apps/admin_web/package.json apps/admin_web/
+RUN pnpm install --frozen-lockfile --filter @tamreedy/worker...
+COPY apps/worker apps/worker
+RUN pnpm --filter @tamreedy/worker build \
+ && pnpm --filter @tamreedy/worker --prod deploy --legacy /out
+
+FROM node:26-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /out/node_modules ./node_modules
+COPY --from=build /out/dist ./dist
+COPY --from=build /out/package.json ./package.json
+USER node
+CMD ["node", "dist/main.js"]

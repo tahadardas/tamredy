@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# Build context = repository root:  docker build -f infra/docker/Dockerfile.api .
+
+FROM node:26-slim AS build
+ENV PNPM_HOME=/pnpm
+ENV PATH=/pnpm:$PATH
+RUN npm install -g pnpm@10.14.0
+# Keep the build light so small servers do not run out of memory
+ENV NODE_OPTIONS=--max-old-space-size=768
+WORKDIR /repo
+# Dependency layer first (cached until a manifest or the lockfile changes).
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/api/package.json apps/api/
+COPY apps/worker/package.json apps/worker/
+COPY apps/admin_web/package.json apps/admin_web/
+RUN pnpm install --frozen-lockfile --filter @tamreedy/api...
+COPY apps/api apps/api
+RUN pnpm --filter @tamreedy/api build \
+ && pnpm --filter @tamreedy/api --prod deploy --legacy /out
+
+FROM node:26-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /out/node_modules ./node_modules
+COPY --from=build /out/dist ./dist
+COPY --from=build /out/scripts ./scripts
+COPY --from=build /out/package.json ./package.json
+# SQL migrations + runner (used by the `migrate` service and by create-admin).
+COPY infra/db ./infra/db
+RUN mkdir -p /data/uploads && chown node:node /data/uploads
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "dist/main.js"]

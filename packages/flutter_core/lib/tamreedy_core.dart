@@ -1,0 +1,19 @@
+library tamreedy_core;
+
+export 'src/analytics.dart';
+export 'src/api.dart';
+export 'src/errors.dart';
+export 'src/change_password_screen.dart';
+export 'src/firebase_boot.dart';
+export 'src/format.dart';
+export 'src/login_screen.dart';
+export 'src/map_illustration.dart';
+export 'src/nurse_apply_screen.dart';
+export 'src/realtime.dart';
+export 'src/register_screen.dart';
+export 'src/polyline.dart';
+export 'src/pricing.dart';
+export 'src/tam_map.dart';
+export 'package:latlong2/latlong.dart' show LatLng;
+export 'src/theme.dart';
+export 'src/widgets.dart';

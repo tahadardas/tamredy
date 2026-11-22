@@ -1,0 +1,40 @@
+name: tamreedy_core
+description: Shared API client, design system and widgets for the Tamreedy patient and nurse Flutter apps.
+version: 0.2.0
+publish_to: none
+environment:
+  sdk: '>=3.8.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.0.0
+  flutter_secure_storage: ^10.0.0
+  socket_io_client: ^3.0.0
+  firebase_core: ^4.0.0
+  firebase_messaging: ^16.0.0
+  firebase_analytics: ^12.0.0
+  flutter_map: ^8.0.0
+  latlong2: ^0.9.1
+  geolocator: ^14.0.0
+  geocoding: ^4.0.0
+  file_picker: ^13.4.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.png
+    - assets/images/logo_wordmark.png
+  fonts:
+    - family: NotoSansArabic
+      fonts:
+        - asset: assets/fonts/NotoSansArabic-400.ttf
+          weight: 400
+        - asset: assets/fonts/NotoSansArabic-600.ttf
+          weight: 600
+        - asset: assets/fonts/NotoSansArabic-700.ttf
+          weight: 700
+        - asset: assets/fonts/NotoSansArabic-800.ttf
+          weight: 800

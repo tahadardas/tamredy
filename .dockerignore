@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/build
+**/.dart_tool
+apps/patient_app
+apps/nurse_app
+packages
+reference_design
+docs
+.env
+.env.*
+!.env.example
+**/*.log
+.git
+infra/docker/.env
+infra/docker/secrets

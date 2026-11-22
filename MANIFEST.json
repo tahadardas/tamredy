@@ -1,0 +1,28 @@
+{
+  "project": "Tamreedy",
+  "version": "0.2.0-performance",
+  "generated": "2026-11-21",
+  "source_files": 89,
+  "changes": [
+    "foreign-key / query-driven indexes",
+    "keyset pagination + signed cursor",
+    "batched dispatch SQL without per-nurse DB N+1",
+    "Redis cache-aside reference catalog",
+    "admin load-more, manual refresh",
+    "performance documentation and query audit"
+  ],
+  "verification": {
+    "unit_and_static_tests": "12/12 pass",
+    "modified_typescript_transpile": "13 files; 0 syntax diagnostics",
+    "npm_install": "not run; dependencies unavailable",
+    "full_typecheck": "not run; dependencies unavailable",
+    "postgres_and_redis": "not run; services unavailable",
+    "flutter_compile": "not run; Flutter SDK unavailable",
+    "real_performance_benchmark": "not run"
+  },
+  "production_ready": false,
+  "notes": [
+    "Deploy migrations carefully; normal CREATE INDEX may block writes on populated tables",
+    "No real wallet funding or clinical use"
+  ]
+}

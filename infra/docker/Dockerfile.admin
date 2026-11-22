@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+# Build context = repository root:  docker build -f infra/docker/Dockerfile.admin .
+
+FROM node:26-slim AS build
+ENV PNPM_HOME=/pnpm
+ENV PATH=/pnpm:$PATH
+RUN npm install -g pnpm@10.14.0
+# Keep the build light so small servers do not run out of memory
+ENV NODE_OPTIONS=--max-old-space-size=768
+WORKDIR /repo
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/api/package.json apps/api/
+COPY apps/worker/package.json apps/worker/
+COPY apps/admin_web/package.json apps/admin_web/
+RUN pnpm install --frozen-lockfile --filter @tamreedy/admin...
+COPY apps/admin_web apps/admin_web
+# The dashboard calls the API through its own nginx at /api (same origin: no CORS needed).
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN pnpm --filter @tamreedy/admin build
+
+FROM nginx:1.27-alpine
+COPY infra/docker/nginx-admin.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /repo/apps/admin_web/dist /usr/share/nginx/html
+EXPOSE 80
