@@ -18,5 +18,20 @@ if ($LASTEXITCODE -ne 0) { throw "tar failed ($LASTEXITCODE)" }
 
 $mb = [math]::Round((Get-Item $out).Length / 1MB, 2)
 Write-Host "OK: $out ($mb MB)"
-Write-Host 'Upload it to the server and follow docs/PLESK_STEP_BY_STEP_AR.md'
+
+# Also create deploy/tamreedy-server.zip for Plesk File Manager 1-click extraction
+$zipOut = 'deploy/tamreedy-server.zip'
+if (Test-Path $zipOut) { Remove-Item $zipOut -Force }
+$tempStage = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Force $tempStage | Out-Null
+try {
+  tar.exe -xzf $out -C $tempStage
+  Compress-Archive -Path "$tempStage\*" -DestinationPath $zipOut -Force
+  $zipMb = [math]::Round((Get-Item $zipOut).Length / 1MB, 2)
+  Write-Host "OK: $zipOut ($zipMb MB) [Ready for Plesk File Manager]"
+} finally {
+  Remove-Item -Recurse -Force $tempStage -ErrorAction SilentlyContinue
+}
+
+Write-Host 'Upload either file to the server and follow docs/PLESK_STEP_BY_STEP_AR.md'
 
