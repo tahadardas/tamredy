@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'alarm.dart';
+import 'availability_manager.dart';
 
 enum NurseStage { idle, offer, enRoute, arrived, inService, completed }
 
@@ -29,17 +30,20 @@ class VisitRecord {
   const VisitRecord(this.title, this.date, this.share);
 }
 
-/// Nurse app state. Demo mode fabricates one offer after going available.
+/// Nurse app state. Uses AvailabilityManager for all readiness, telemetry, and background sync.
 class NurseController extends ChangeNotifier {
   final TamreedyApi api = TamreedyApi();
+  late final AvailabilityManager availabilityManager;
+
   int tab = 0;
-  bool available = false;
   NurseStage stage = NurseStage.idle;
   Offer? offer;
   String? assignmentId;
   bool busy = false;
   String? error;
-  Timer? _timer;
+
+  bool get available => availabilityManager.intentAvailable;
+  NurseReadinessState get readinessState => availabilityManager.state;
 
   // Bill + cash collection after the visit is closed.
   String? requestId;
@@ -90,7 +94,16 @@ class NurseController extends ChangeNotifier {
   final String lastPaymentMethod = 'نقدية';
 
   NurseController() {
-    OfferAlarm.onTap = resync; // tapping the alarm opens the app on the offer
+    availabilityManager = AvailabilityManager(
+      api: api,
+      onOffersReceived: (list) async {
+        if (list.isNotEmpty && stage == NurseStage.idle) {
+          _showOffer(Map<String, dynamic>.from(list.first as Map));
+        }
+      },
+    );
+    availabilityManager.addListener(notifyListeners);
+    OfferAlarm.onTap = resync;
     if (!kDemoMode) loadLive();
   }
 
@@ -128,8 +141,9 @@ class NurseController extends ChangeNotifier {
     if (kDemoMode) return;
     try {
       final res = await api.getMap('/v1/nurse/me/active-assignment');
-      available = res['availability'] == 'AVAILABLE';
+      final isAvail = res['availability'] == 'AVAILABLE';
       if (res['hasActive'] == true && res['assignment'] != null) {
+        availabilityManager.setActiveAssignment(true);
         final asgn = Map<String, dynamic>.from(res['assignment'] as Map);
         assignmentId = asgn['assignment_id']?.toString();
         requestId = asgn['request_id']?.toString();
@@ -169,12 +183,16 @@ class NurseController extends ChangeNotifier {
             requestId = null;
         }
       } else {
+        availabilityManager.setActiveAssignment(false);
         if (stage != NurseStage.idle && stage != NurseStage.offer) {
           stage = NurseStage.idle;
           assignmentId = null;
           requestId = null;
           _stopNavigation();
         }
+      }
+      if (isAvail && !availabilityManager.intentAvailable && stage == NurseStage.idle) {
+        await availabilityManager.setAvailability(true);
       }
       notifyListeners();
     } catch (_) {
@@ -191,50 +209,39 @@ class NurseController extends ChangeNotifier {
   Future<void> setAvailable(bool v) async {
     if (stage != NurseStage.idle) return;
     Analytics.log('availability_changed', {'available': v ? 1 : 0});
-    if (v)
-      OfferAlarm.requestPermissions().catchError(
-        (_) {},
-      ); // notifications + full-screen alerts for the alarm
-    available = v;
+    if (v) {
+      OfferAlarm.requestPermissions().catchError((_) {});
+    }
+    error = null;
     notifyListeners();
-    _timer?.cancel();
+
     if (kDemoMode) {
+      await availabilityManager.setAvailability(v);
       if (v) {
-        _timer = Timer(const Duration(seconds: 5), () {
-          offer = Offer(
-            'demo-offer',
-            'تغيير ضماد',
-            'المزة - دمشق',
-            2.4,
-            1200,
-            960,
-            DateTime.now().add(const Duration(seconds: 30)),
-          );
-          stage = NurseStage.offer;
-          tab = 1;
-          Analytics.log('offer_received');
-          OfferAlarm.show(
-            const AlarmData(
-              'demo-offer',
-              'طلب جديد قريب منك',
-              'تغيير ضماد • المزة — افتح للقبول',
-              30,
-            ),
-          );
-          notifyListeners();
+        Timer(const Duration(seconds: 4), () {
+          if (stage == NurseStage.idle) {
+            _showOffer({
+              'id': 'demo-offer',
+              'title_ar': 'تغيير ضماد',
+              'area': 'المزة - دمشق',
+              'distance_m': 2400,
+              'price_amount': 1200,
+              'commission_bps': 2000,
+              'expires_at': DateTime.now().add(const Duration(seconds: 30)).toIso8601String(),
+            });
+          }
         });
       }
       return;
     }
+
     try {
-      await api.put('/v1/nurse/me/availability', {
-        'availability': v ? 'AVAILABLE' : 'OFFLINE',
-      });
-      if (v)
-        _timer = Timer.periodic(const Duration(seconds: 6), (_) => _refresh());
+      await availabilityManager.setAvailability(v);
     } on DioException catch (e) {
-      available = !v;
       error = explainError(e, fallback: 'تعذر تغيير الحالة؛ تحقق من الحساب والترخيص');
+      notifyListeners();
+    } catch (e) {
+      error = 'تعذر تغيير الحالة؛ يرجى التأكد من تشغيل أذونات الموقع والاتصال';
       notifyListeners();
     }
   }
@@ -243,12 +250,26 @@ class NurseController extends ChangeNotifier {
   Future<void> resync() async {
     if (kDemoMode) return;
     await loadLive();
-    if (available && stage == NurseStage.idle) await _fetchOffers();
+    if (available && stage == NurseStage.idle) {
+      await availabilityManager.syncNow();
+    }
   }
 
   /// Realtime event handler from WebSocket / Socket.io
   void onLive(String type) {
-    if (type == 'catalog.changed') {
+    if (type == 'offer.created') {
+      _fetchOffers();
+    } else if (type == 'offer.expired') {
+      if (stage == NurseStage.offer) {
+        decline(expired: true);
+      }
+    } else if (type == 'request.cancelled') {
+      if (stage == NurseStage.offer) {
+        decline(expired: true);
+      } else {
+        restoreActiveAssignment();
+      }
+    } else if (type == 'catalog.changed') {
       loadLive();
     } else {
       resync();
@@ -256,10 +277,12 @@ class NurseController extends ChangeNotifier {
   }
 
   Future<void> _fetchOffers() async {
+    if (kDemoMode || stage != NurseStage.idle) return;
     try {
       final list = await api.getList('/v1/nurse/me/offers');
-      if (list.isNotEmpty)
+      if (list.isNotEmpty) {
         _showOffer(Map<String, dynamic>.from(list.first as Map));
+      }
     } catch (_) {
       /* next resync will retry */
     }
@@ -322,39 +345,7 @@ class NurseController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _refresh() async {
-    if (!available || stage != NurseStage.idle) return;
-    try {
-      await api.post('/v1/nurse/me/heartbeat');
-    } catch (_) {}
 
-    try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (serviceEnabled) {
-        var p = await Geolocator.checkPermission();
-        if (p == LocationPermission.denied) {
-          p = await Geolocator.requestPermission();
-        }
-        if (p != LocationPermission.denied && p != LocationPermission.deniedForever) {
-          final pos = await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-              timeLimit: Duration(seconds: 6),
-            ),
-          );
-          await api.put('/v1/nurse/me/location', {
-            'latitude': pos.latitude,
-            'longitude': pos.longitude,
-            'accuracyMeters': pos.accuracy,
-          });
-        }
-      }
-    } catch (_) {}
-
-    try {
-      await _fetchOffers();
-    } catch (_) {}
-  }
 
   Future<void> accept() async {
     OfferAlarm.cancelAll(); // silence the alarm as soon as she acts
@@ -373,6 +364,7 @@ class NurseController extends ChangeNotifier {
         // Transitions status ASSIGNED -> EN_ROUTE on the backend
         await api.post('/v1/nurse/assignments/$assignmentId/depart');
       }
+      availabilityManager.setActiveAssignment(true);
       stage = NurseStage.enRoute;
       Analytics.log('offer_accepted');
       await _startNavigation();
@@ -492,11 +484,13 @@ class NurseController extends ChangeNotifier {
       }
       notifyListeners();
       var p = await Geolocator.checkPermission();
-      if (p == LocationPermission.denied)
+      if (p == LocationPermission.denied) {
         p = await Geolocator.requestPermission();
+      }
       if (p == LocationPermission.denied ||
-          p == LocationPermission.deniedForever)
+          p == LocationPermission.deniedForever) {
         return;
+      }
       final settings = defaultTargetPlatform == TargetPlatform.android
           ? AndroidSettings(
               accuracy: LocationAccuracy.high,
@@ -673,6 +667,8 @@ class NurseController extends ChangeNotifier {
     assignmentId = null;
     stage = NurseStage.idle;
     tab = 0;
+    availabilityManager.setActiveAssignment(false);
+    if (available) availabilityManager.syncNow();
     notifyListeners();
   }
 
@@ -681,7 +677,7 @@ class NurseController extends ChangeNotifier {
     _posSub?.cancel();
     _routeTimer?.cancel();
     _demoMove?.cancel();
-    _timer?.cancel();
+    availabilityManager.dispose();
     super.dispose();
   }
 }

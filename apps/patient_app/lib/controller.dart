@@ -489,10 +489,11 @@ class PatientController extends ChangeNotifier {
   /// A new user enters a friend's code before the first order.
   Future<String> claimReferral(String code) async {
     code = code.trim().toUpperCase();
-    if (kDemoMode)
+    if (kDemoMode) {
       return code == 'TMDEMO12'
           ? 'تم! خصم 15% على طلبك الأول'
           : 'الكود غير صحيح';
+    }
     try {
       final r = await api.post('/v1/referral/claim', {'code': code});
       Analytics.log('referral_claimed');
@@ -866,8 +867,9 @@ class PatientController extends ChangeNotifier {
       nursePos = (lat != null && lng != null)
           ? LatLng(lat.toDouble(), lng.toDouble())
           : null;
-      if (stage == VisitStage.enRoute && _pollCount++ % 3 == 0)
+      if (stage == VisitStage.enRoute && _pollCount++ % 3 == 0) {
         await _loadRoute();
+      }
       if (stage != VisitStage.enRoute) route = null;
       _logStage();
       if (stage == VisitStage.completed) {

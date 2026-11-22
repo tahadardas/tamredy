@@ -218,8 +218,9 @@ class RatingScreen extends StatelessWidget {
           onPressed: () async {
             await c.submitRating();
             c.reset();
-            if (context.mounted)
+            if (context.mounted) {
               Navigator.of(context).popUntil((r) => r.isFirst);
+            }
           },
         ),
       ],

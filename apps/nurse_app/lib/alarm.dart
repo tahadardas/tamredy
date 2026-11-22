@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -48,8 +47,9 @@ class OfferAlarm {
   static void Function()? onTap;
 
   static Future<void> init() async {
-    if (_ready || kIsWeb || defaultTargetPlatform != TargetPlatform.android)
+    if (_ready || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return;
+    }
     await _plugin.initialize(
       const InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),

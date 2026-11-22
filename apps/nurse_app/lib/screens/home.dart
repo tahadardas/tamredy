@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../alarm.dart';
+import '../availability_manager.dart';
 import '../controller.dart';
 import '../main.dart';
 import 'visit.dart';
@@ -96,21 +97,8 @@ class NurseHomeScreen extends StatelessWidget {
             ),
           ],
         ),
-        const SectionTitle('التوفر والموقع الجغرافي'),
-        TamCard(
-          child: ListRow(
-            icon: Icons.location_on_outlined,
-            title: c.available ? 'موقعك محدث ومتزامن' : 'موقعك غير متزامن',
-            subtitle: c.available
-                ? 'يتم تحديث إحداثياتك بانتظام لاستقبال الطلبات القريبة'
-                : 'فعّل التوفر ليتمكن النظام من إسناد الطلبات المناسبة لك',
-            trailing: StatusChip(
-              c.available ? 'متاح' : 'غير متاح',
-              warning: !c.available,
-            ),
-            divider: false,
-          ),
-        ),
+        const SectionTitle('حالة الجاهزية والاستقبال الميداني'),
+        _ReadinessCard(c: c),
         const SectionTitle('آخر الزيارات المنفذة'),
         TamCard(
           child: Column(
@@ -133,6 +121,152 @@ class NurseHomeScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ReadinessCard extends StatelessWidget {
+  final NurseController c;
+  const _ReadinessCard({required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = c.readinessState;
+    final color = state.color;
+    final lastLoc = c.availabilityManager.lastLocationUpdate;
+    final lastHb = c.availabilityManager.lastHeartbeat;
+    final acc = c.availabilityManager.lastAccuracy;
+    final unmet = c.availabilityManager.unmetRequirements;
+
+    String telemetryText = '';
+    if (c.available) {
+      final locAge = lastLoc != null ? DateTime.now().difference(lastLoc).inSeconds : null;
+      final hbAge = lastHb != null ? DateTime.now().difference(lastHb).inSeconds : null;
+      final locStr = locAge != null ? 'الموقع: منذ $locAge ثانية${acc != null ? " (دقة ${acc.round()}م)" : ""}' : 'الموقع: جاري التحديد...';
+      final hbStr = hbAge != null ? 'النبض: منذ $hbAge ث' : 'النبض: متصل';
+      telemetryText = '$locStr • $hbStr';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(state.icon, color: color, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            state.label,
+                            style: tamText(size: 15, weight: FontWeight.w800, color: color),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            state == NurseReadinessState.ready ? 'جاهز 100%' : 'تنبيه',
+                            style: tamText(size: 11, weight: FontWeight.w800, color: color),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      state.description,
+                      style: tamText(size: 12.5, color: const Color(0xFF374151), height: 1.45),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (unmet.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final u in unmet)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          Icon(Icons.error_outline, size: 14, color: color),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              u,
+                              style: tamText(size: 11.5, weight: FontWeight.w600, color: color),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (telemetryText.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.sensors, size: 13, color: TamreedyColors.subtext),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    telemetryText,
+                    style: tamText(size: 11, color: TamreedyColors.subtext),
+                  ),
+                ),
+                InkWell(
+                  onTap: () => c.availabilityManager.syncNow(),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.refresh, size: 13, color: Color(0xFF2563EB)),
+                      const SizedBox(width: 3),
+                      Text(
+                        'مزامنة فورية',
+                        style: tamText(size: 11, weight: FontWeight.w700, color: const Color(0xFF2563EB)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
