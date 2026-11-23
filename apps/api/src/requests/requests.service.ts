@@ -46,6 +46,19 @@ export class RequestsService {
       ]);
       const request = r.rows[0];
       await client.query('UPDATE request_create_keys SET request_id=$1 WHERE user_id=$2 AND key=$3',[request.id,userId,key]);
+      const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
+      if (process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
+        const search = await client.query(`UPDATE care_requests SET
+          search_started_at=statement_timestamp(),
+          search_expires_at=statement_timestamp()+$2::integer*interval '1 second',
+          search_radius_meters=$3,
+          search_max_heartbeat_seconds=$4, search_max_location_seconds=$5, search_max_accuracy_meters=$6
+          WHERE id=$1 RETURNING search_started_at, search_expires_at`,
+        [request.id, policy.offerDurationSeconds ?? 60, policy.radiusMeters ?? 10000,
+          policy.maxHeartbeatAgeSeconds ?? 60, policy.maxLocationAgeSeconds ?? 120,
+          policy.maxLocationAccuracyMeters ?? 100]);
+        Object.assign(request, search.rows[0]);
+      }
       await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
       await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
       await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);

@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { runOpenSearch } from './open-dispatch.ts';
 
 const defaultWaves = [
   { radius: 3000, seconds: 15 },
@@ -70,7 +71,7 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
   try {
     await c.query('BEGIN');
     const due = await c.query(`
-      SELECT j.request_id, cr.status, cr.service_id, cr.requester_user_id
+      SELECT j.request_id, cr.status, cr.service_id, cr.requester_user_id, cr.search_expires_at
       FROM dispatch_jobs j JOIN care_requests cr ON cr.id = j.request_id
       WHERE j.next_run_at <= now()
       ORDER BY j.next_run_at, j.request_id LIMIT 1
@@ -96,6 +97,12 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
 
     if (request.status !== 'OFFERING') {
       await c.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [requestId]);
+      await c.query('COMMIT');
+      return true;
+    }
+
+    if (request.search_expires_at !== null) {
+      await runOpenSearch(c, requestId);
       await c.query('COMMIT');
       return true;
     }

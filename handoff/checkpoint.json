@@ -2,8 +2,8 @@
   "projectName": "tamreedy",
   "branch": "codex/open-dispatch",
   "baselineCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
-  "phase": 3,
+  "phase": 4,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement opt-in open dispatch with fixed deadlines, event-driven eligibility and reconciliation.",
+  "nextAction": "Revalidate atomic acceptance in PostgreSQL and separate nurse acceptance from explicit departure with fixed ETA.",
   "productionDeploymentAuthorized": false
 }

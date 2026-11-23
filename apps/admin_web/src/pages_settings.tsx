@@ -76,12 +76,28 @@ export function SettingsPage({live}: {live: Live}) {
         <label className="check"><input type="checkbox" checked={v.patients} onChange={e => set({patients: e.target.checked})}/> تسجيل المرضى مفتوح</label>
         <label className="check"><input type="checkbox" checked={v.nurses} onChange={e => set({nurses: e.target.checked})}/> تسجيل الممرضين مفتوح</label></div>}
     </Section>
-    <Section k="dispatch" title="موجات البحث عن ممرض" desc="كل موجة تعرض الطلب لجميع الممرضين المؤهلين ضمن نطاقها ممن لم يتلقوا العرض سابقًا. يتوقف البحث عند أول قبول. تنتهي الطلبات «غير ملبّاة» بعد آخر موجة." value={s.dispatch} reload={load}>
-      {(v, set) => <>{v.waves.map((w: any, i: number) => <div className="form" key={i}>
+    <Section k="dispatch" title="سياسة توزيع الطلبات" desc="يوزع البحث المفتوح الطلب على جميع المؤهلين ضمن نطاق واحد حتى انتهاء المهلة." value={s.dispatch} reload={load}>
+      {(v, set) => <>
+        <label className="check">
+          <input type="checkbox" checked={v.openEnabled === true} onChange={e => set({...v, openEnabled: e.target.checked})}/>
+          تشغيل البحث المفتوح للطلبات الجديدة
+        </label>
+        <div className="form">
+          {([
+            ['offerDurationSeconds', 'مهلة البحث (ثانية)', 60],
+            ['radiusMeters', 'نطاق البحث (متر)', 10000],
+            ['maxHeartbeatAgeSeconds', 'أقصى عمر للنبض (ثانية)', 60],
+            ['maxLocationAgeSeconds', 'أقصى عمر للموقع (ثانية)', 120],
+            ['maxLocationAccuracyMeters', 'أقصى خطأ للموقع (متر)', 100],
+          ] as const).map(([key, label, fallback]) => <label key={key}>{label}
+            <input type="number" value={v[key] ?? fallback} onChange={e => set({...v, [key]: Number(e.target.value)})}/>
+          </label>)}
+        </div>
+        {v.waves.map((w: any, i: number) => <div className="form" key={i}>
         {(['radiusM', 'seconds'] as const).map(key => <label key={key}>{{radiusM: `نصف القطر (م) — موجة ${i + 1}`, seconds: 'المهلة (ثانية)'}[key]}
-          <input type="number" value={w[key]} onChange={e => set({waves: v.waves.map((x: any, j: number) => j === i ? {...x, [key]: Number(e.target.value)} : x)})}/></label>)}</div>)}
-        <div className="actions">{v.waves.length < 5 && <button className="pill" onClick={() => set({waves: [...v.waves, {radiusM: v.waves.at(-1).radiusM + 5000, seconds: 20}]})}>+ موجة</button>}
-          {v.waves.length > 1 && <button className="pill" onClick={() => set({waves: v.waves.slice(0, -1)})}>− حذف الأخيرة</button>}</div>
+          <input type="number" value={w[key]} onChange={e => set({...v, waves: v.waves.map((x: any, j: number) => j === i ? {...x, [key]: Number(e.target.value)} : x)})}/></label>)}</div>)}
+        <div className="actions">{v.waves.length < 5 && <button className="pill" onClick={() => set({...v, waves: [...v.waves, {radiusM: v.waves.at(-1).radiusM + 5000, seconds: 20}]})}>+ موجة</button>}
+          {v.waves.length > 1 && <button className="pill" onClick={() => set({...v, waves: v.waves.slice(0, -1)})}>− حذف الأخيرة</button>}</div>
         <Notice>تُقرأ الإعدادات عند بدء كل موجة.</Notice></>}
     </Section>
     <Section k="security" title="الأمان" desc="تسجيل الخروج التلقائي عند الخمول، والحد الأدنى لطول كلمة المرور." value={s.security} reload={load}>

@@ -14,7 +14,14 @@ const VALIDATORS: Record<string, (v: any) => unknown> = {
   dispatch: v => {
     if (!Array.isArray(v?.waves) || v.waves.length < 1 || v.waves.length > 5) bad('BAD_WAVES');
     let prev = 0;
-    return { waves: v.waves.map((w: any) => {
+    return {
+      openEnabled: v.openEnabled === true,
+      offerDurationSeconds: Math.trunc(num(v.offerDurationSeconds ?? 60, 15, 300, 'BAD_OFFER_DURATION')),
+      radiusMeters: Math.trunc(num(v.radiusMeters ?? 10000, 500, 50000, 'BAD_RADIUS')),
+      maxHeartbeatAgeSeconds: Math.trunc(num(v.maxHeartbeatAgeSeconds ?? 60, 15, 300, 'BAD_HEARTBEAT_AGE')),
+      maxLocationAgeSeconds: Math.trunc(num(v.maxLocationAgeSeconds ?? 120, 15, 600, 'BAD_LOCATION_AGE')),
+      maxLocationAccuracyMeters: Math.trunc(num(v.maxLocationAccuracyMeters ?? 100, 10, 5000, 'BAD_LOCATION_ACCURACY')),
+      waves: v.waves.map((w: any) => {
       const radiusM = num(w?.radiusM, 500, 50_000, 'BAD_RADIUS');
       if (radiusM <= prev) bad('WAVES_MUST_GROW'); prev = radiusM;
       return { radiusM, seconds: Math.trunc(num(w?.seconds, 5, 120, 'BAD_SECONDS')) };

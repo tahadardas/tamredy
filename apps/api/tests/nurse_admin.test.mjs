@@ -18,7 +18,7 @@ const { hashPassword, AuthService } = await import('../dist/auth/auth.service.js
 
 const pg = new PGlite();
 const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(Point,4326\)/g, 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
-for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '006_pricing_promos_rewards', '009_nurse_admin_documents_settings', '010_self_registration', '011_regions', '012_area_coordinates', '013_default_password', '014_applications_doc_kinds'])
+for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '006_pricing_promos_rewards', '009_nurse_admin_documents_settings', '010_self_registration', '011_regions', '012_area_coordinates', '013_default_password', '014_applications_doc_kinds', '019_device_sessions_and_persistent_auth'])
   await pg.exec(strip(readFileSync(resolve(root, `infra/db/migrations/${f}.sql`), 'utf8')));
 let chain = Promise.resolve();
 const db = {
@@ -135,12 +135,19 @@ test('settings validate their shape and are audited', async () => {
   assert.equal(all.settings.dispatch.waves.length, 3);
   await settings.save(asAdmin, 'dispatch', { waves: [{ radiusM: 2000, seconds: 10, limit: 5 }, { radiusM: 8000, seconds: 20, limit: 10 }] });
   assert.equal((await settings.all(asAdmin)).settings.dispatch.waves.length, 2);
+  const waves = (await settings.all(asAdmin)).settings.dispatch.waves;
+  await settings.save(asAdmin, 'dispatch', { waves, openEnabled: true, offerDurationSeconds: 45 });
+  const policy = (await settings.all(asAdmin)).settings.dispatch;
+  assert.equal(policy.openEnabled, true);
+  assert.equal(policy.offerDurationSeconds, 45);
+  assert.equal(policy.radiusMeters, 10000);
+  await assert.rejects(settings.save(asAdmin, 'dispatch', { waves, offerDurationSeconds: 0 }), code('BAD_OFFER_DURATION'));
   await assert.rejects(settings.save(asAdmin, 'dispatch', { waves: [{ radiusM: 5000, seconds: 10, limit: 5 }, { radiusM: 3000, seconds: 10, limit: 5 }] }), code('WAVES_MUST_GROW'));
   await assert.rejects(settings.save(asAdmin, 'security', { idleMinutes: 1, passwordMinLength: 12 }), code('BAD_IDLE'));
   await assert.rejects(settings.save(asAdmin, 'nonsense', {}), e => e.getStatus?.() === 404);
   await settings.save(asAdmin, 'orders', { accepting: false, pausedMessage: 'صيانة', extra: 'dropped' });
   assert.deepEqual((await settings.all(asAdmin)).settings.orders, { accepting: false, pausedMessage: 'صيانة' });
-  assert.equal((await settings.audit(asAdmin)).items.filter(x => x.action === 'settings.changed').length, 2);
+  assert.equal((await settings.audit(asAdmin)).items.filter(x => x.action === 'settings.changed').length, 3);
 });
 
 test('staff accounts: cannot delete self or the last admin; role change revokes sessions', async () => {
