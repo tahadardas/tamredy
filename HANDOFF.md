@@ -129,9 +129,9 @@ If resuming:
 - CURRENT_BRANCH: codex/open-dispatch
 - LAST_COMMIT: cb0066ea6a925aeac16e85852c18897ab5691b34 (verified baseline; origin/feature/aero-signature matched)
 - COMPLETED: Phase 1 baseline and targeted audit. Phase 2 additive database foundation and invariant tests. Existing worker uses waves, automatic departure remains in the nurse app, cancellation has no evidence ledger, and push currently performs network I/O inside its outbox transaction.
-- IN_PROGRESS: Phase 5, transactional cancellation policy.
-- NEXT_EXACT_ACTION: Add transactional cancellation with idempotency, server-time policy evaluation and durable closure events.
-- PENDING: Phases 5–10, configurable delayed-departure alerts and detailed open-search exclusion reporting. The opt-in worker and admin setting are implemented and tested off production.
+- IN_PROGRESS: Phase 6, commitment history.
+- NEXT_EXACT_ACTION: Add authenticated commitment summaries scoped to patient ownership and active nurse offers, then test privacy and rolling time windows.
+- PENDING: Phases 6–10, distinct arrived/early-termination incident workflows, configurable delayed-departure alerts and detailed open-search exclusion reporting. The opt-in worker and admin setting are implemented and tested off production.
 - FILES_CHANGED: HANDOFF.md, handoff/checkpoint.json, migration 021, docs/MIGRATION_021.md and apps/api/tests/open_dispatch_foundation.test.mjs. Existing dirty apps/nurse_app/lib/screens/home.dart belongs to the workspace baseline.
 - TEST_RESULTS: API build passed. Focused baseline tests 10 passed, 1 skipped. Migration 021 passed a pre-existing-data and integrity test (PGlite).
 - KNOWN_ISSUES: PGlite tests substitute geometry; they cannot establish PostGIS query plans or concurrent multi-connection behavior.
@@ -142,3 +142,5 @@ If resuming:
 - Phase 3 evidence: 100 recipients matched initially on eligibility change, a 101st joined under the same deadline, no duplicates on reconciliation, and no new offer after expiry. Legacy waves still passed. Admin build and policy validation passed. Corrected the admin test fixture to include baseline migration 019.
 
 - Phase 4 evidence: expired offer rejected, winning acceptance replay after departure returns the original assignment, ETA computed outside the transaction and persisted once. Billing/routes regression suite 23/23 and nurse Flutter 5/5 passed. PostGIS and multi-connection acceptance/cancellation remain to verify.
+
+- Phase 5 evidence: cancel locks request → nurse → assignment, evaluates server time, requires acknowledgement for counted cases, writes one record and one event, and replays the previous result. Health reasons and notes are excluded from outbox payloads. Added the patient-owned cancellation-policy preview endpoint. Existing clients with no cancellation DTO receive no negative commitment impact. The post-travel pause is a disabled-by-default setting.

@@ -1,3 +1,4 @@
+import { closeOpenOffers } from './offer-outbox.js';
 import { Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { conflict, forbidden, gone, missing } from '../common/errors.js';
@@ -83,8 +84,7 @@ export class DispatchService {
       // Distance the nurse must cover (straight line x 1.3 road factor) -> automatic travel fee when enabled.
       await c.query(`UPDATE care_requests SET travel_distance_m=(SELECT round(ST_Distance(nl.location,cr.location)*1.3)::int
         FROM nurse_locations nl JOIN care_requests cr ON cr.id=$1 WHERE nl.nurse_id=$2) WHERE id=$1`,[requestId,nurseId]);
-      await c.query(`UPDATE request_offers SET status=CASE WHEN id=$2 THEN 'ACCEPTED' ELSE 'CLOSED' END
-        WHERE request_id=$1 AND status='OPEN'`,[requestId,offerId]);
+      await closeOpenOffers(c, requestId, 'ASSIGNED', offerId);
       await c.query('DELETE FROM dispatch_jobs WHERE request_id=$1',[requestId]);
       await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
         VALUES($1,$2,'request.assigned',$3::jsonb)`,[requestId,userId,JSON.stringify({assignmentId,nurseId})]);

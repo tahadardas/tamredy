@@ -1,3 +1,5 @@
+import { cancelRequest, cancellationClassification } from './cancellation.service.js';
+import type { CancelRequestDto } from './cancel-request.dto.js';
 import { createHash } from 'node:crypto';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
@@ -89,29 +91,23 @@ export class RequestsService {
       [userId,page.cursor?.at??null,page.cursor?.id??null,page.limit+1]);
     return makePage(result.rows,page.limit,`patient:${userId}`);
   }
-  async cancel(userId: string, requestId: string) {
-    return this.db.transaction(async c => {
-      const rr=await c.query('SELECT * FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
-      const req=rr.rows[0];
-      if(!req || req.requester_user_id!==userId) missing();
-      if(req.status === 'CANCELLED') return {requestId, status: 'CANCELLED'};
-      if(!['REQUESTED','OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(req.status)) conflict('REQUEST_CANNOT_BE_CANCELLED');
-      const aa=await c.query(`SELECT * FROM request_assignments WHERE request_id=$1 AND status='ACTIVE'`,[requestId]);
-      const recipients = [userId];
-      if(aa.rowCount) {
-        const assignment=aa.rows[0];
-        const nurse = await c.query('SELECT user_id FROM nurses WHERE id=$1 FOR UPDATE',[assignment.nurse_id]);
-        if (nurse.rowCount) recipients.push(nurse.rows[0].user_id);
-        await c.query(`UPDATE request_assignments SET status='RELEASED',released_at=now(),reason='PATIENT_CANCELLED' WHERE id=$1`,[assignment.id]);
-        await c.query(`UPDATE nurses SET work_status=CASE WHEN availability_intent='AVAILABLE' AND last_heartbeat_at > now()-interval '120 seconds' THEN 'AVAILABLE' ELSE 'OFFLINE' END WHERE id=$1`,[assignment.nurse_id]);
-      }
-      await c.query(`UPDATE request_offers SET status='CLOSED' WHERE request_id=$1 AND status='OPEN'`,[requestId]);
-      await c.query(`UPDATE care_requests SET status='CANCELLED',version=version+1,updated_at=now() WHERE id=$1`,[requestId]);
-      await c.query(`DELETE FROM dispatch_jobs WHERE request_id=$1`,[requestId]);
-      await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,'request.cancelled')`,[requestId,userId]);
-      await c.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.cancelled',$1,$2::jsonb)`,[requestId,JSON.stringify({requestId,recipientUserIds:recipients})]);
-      return {requestId,status:'CANCELLED'};
-    });
+  async cancellationPolicy(userId: string, requestId: string) {
+    const row = (await this.db.query(`SELECT r.status,r.version,a.departed_at IS NOT NULL AS departed,
+      a.eta_status='AVAILABLE' AS eta_available,
+      statement_timestamp()>=a.expected_arrival_at+interval '30 minutes' AS threshold_met
+      FROM care_requests r LEFT JOIN request_assignments a ON a.request_id=r.id AND a.status='ACTIVE'
+      WHERE r.id=$1 AND r.requester_user_id=$2`,[requestId,userId])).rows[0];
+    if (!row) missing();
+    const canCancel = ['OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(row.status);
+    const classification = canCancel ? cancellationClassification({
+      status: row.status, departed: row.departed,
+      etaAvailable: row.eta_available === true, thresholdMet: row.threshold_met === true,
+    },false) : null;
+    return { canCancel, status: row.status, version: row.version, classification,
+      requiresAcknowledgement: classification === 'EN_ROUTE_COUNTED' };
+  }
+  async cancel(userId: string, requestId: string, dto: CancelRequestDto = {}) {
+    return this.db.transaction(client => cancelRequest(client, userId, requestId, dto));
   }
   async track(userId:string, requestId:string) {
     const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,

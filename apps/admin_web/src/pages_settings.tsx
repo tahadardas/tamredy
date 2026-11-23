@@ -82,6 +82,10 @@ export function SettingsPage({live}: {live: Live}) {
           <input type="checkbox" checked={v.openEnabled === true} onChange={e => set({...v, openEnabled: e.target.checked})}/>
           تشغيل البحث المفتوح للطلبات الجديدة
         </label>
+        <label className="check">
+          <input type="checkbox" checked={v.pauseAfterTravelCancellation === true} onChange={e => set({...v, pauseAfterTravelCancellation: e.target.checked})}/>
+          إيقاف استقبال العروض مؤقتًا للممرض عند إلغاء زيارة في الطريق
+        </label>
         <div className="form">
           {([
             ['offerDurationSeconds', 'مهلة البحث (ثانية)', 60],

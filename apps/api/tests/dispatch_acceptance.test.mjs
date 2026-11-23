@@ -3,11 +3,12 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { DispatchService } from '../dist/dispatch/dispatch.service.js';
+import { cancelRequest } from '../dist/requests/cancellation.service.js';
 
 const migrations = new URL('../../../infra/db/migrations/', import.meta.url);
 const read = (name) => readFileSync(new URL(`${name}.sql`, migrations), 'utf8');
 
-test('accept checks server time, retries the same assignment, and departure freezes ETA', async (t) => {
+test('acceptance, fixed ETA and cancellation maintain a single replayable result', async (t) => {
   const pg = new PGlite();
   t.after(() => pg.close());
   await pg.exec(read('001_core').replace(/CREATE EXTENSION[^;]*;/g, '')
@@ -27,6 +28,7 @@ test('accept checks server time, retries the same assignment, and departure free
   `);
   await pg.exec(read('022_open_dispatch_eligibility'));
   await pg.exec(`
+    CREATE TABLE app_settings(key text PRIMARY KEY, value jsonb);
     INSERT INTO users(phone_e164,role) VALUES ('patient-1','PATIENT'),('nurse-1','NURSE');
     INSERT INTO beneficiaries(owner_user_id,display_name,consent_status)
       SELECT id,'زيارة اختبارية','GRANTED' FROM users WHERE role='PATIENT';
@@ -90,4 +92,18 @@ test('accept checks server time, retries the same assignment, and departure free
   const snapshot = (await query(`SELECT eta_status,eta_provider,
     EXTRACT(EPOCH FROM expected_arrival_at-departed_at)::int AS duration FROM request_assignments`)).rows[0];
   assert.deepEqual(snapshot, { eta_status: 'AVAILABLE', eta_provider: 'google', duration: 600 });
+  const patient = (await query("SELECT id FROM users WHERE role='PATIENT'")).rows[0].id;
+  const cancel = (dto) => db.transaction(client => cancelRequest(client,patient,first.requestId,dto));
+  const payload = {reasonCode:'HEALTH_CIRCUMSTANCE_CHANGED',reasonNote:'تفاصيل اختبار خاصة',idempotencyKey:'cancel-1'};
+  await assert.rejects(cancel(payload), error => error.getResponse().code === 'CANCELLATION_POLICY_ACK_REQUIRED');
+  const accepted = await cancel({...payload,policyAcknowledged:true});
+  assert.equal(accepted.commitmentImpact,true);
+  assert.equal(accepted.policyClassification,'EN_ROUTE_COUNTED');
+  assert.equal((await cancel({...payload,policyAcknowledged:true})).replayed,true);
+  await assert.rejects(cancel({...payload,reasonCode:'OTHER',policyAcknowledged:true}),
+    error => error.getResponse().code === 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
+  const events = (await query("SELECT payload FROM outbox_events WHERE event_type='request.cancelled'")).rows;
+  assert.equal(events.length, 1);
+  assert.doesNotMatch(JSON.stringify(events),/HEALTH_CIRCUMSTANCE_CHANGED|تفاصيل اختبار خاصة/);
+  assert.equal((await query("SELECT status FROM request_assignments")).rows[0].status,'RELEASED');
 });

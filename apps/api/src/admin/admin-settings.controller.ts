@@ -16,6 +16,7 @@ const VALIDATORS: Record<string, (v: any) => unknown> = {
     let prev = 0;
     return {
       openEnabled: v.openEnabled === true,
+      pauseAfterTravelCancellation: v.pauseAfterTravelCancellation === true,
       offerDurationSeconds: Math.trunc(num(v.offerDurationSeconds ?? 60, 15, 300, 'BAD_OFFER_DURATION')),
       radiusMeters: Math.trunc(num(v.radiusMeters ?? 10000, 500, 50000, 'BAD_RADIUS')),
       maxHeartbeatAgeSeconds: Math.trunc(num(v.maxHeartbeatAgeSeconds ?? 60, 15, 300, 'BAD_HEARTBEAT_AGE')),
