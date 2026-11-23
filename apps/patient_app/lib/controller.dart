@@ -81,7 +81,7 @@ class WalletTx {
   const WalletTx(this.title, this.sub, this.amount);
 }
 
-enum VisitStage { none, searching, enRoute, arrived, inService, completed, unfulfilled }
+enum VisitStage { none, searching, assigned, enRoute, arrived, inService, completed, unfulfilled }
 
 const List<ServiceItem> kSampleServices = [
   ServiceItem(
@@ -768,7 +768,8 @@ class PatientController extends ChangeNotifier {
         nursePos = (lat != null && lng != null) ? LatLng(lat.toDouble(), lng.toDouble()) : null;
 
         stage = switch (status) {
-          'REQUESTED' || 'OFFERING' || 'ASSIGNED' => VisitStage.searching,
+          'REQUESTED' || 'OFFERING' => VisitStage.searching,
+          'ASSIGNED' => VisitStage.assigned,
           'EN_ROUTE' => VisitStage.enRoute,
           'ARRIVED' => VisitStage.arrived,
           'IN_SERVICE' => VisitStage.inService,
@@ -866,6 +867,7 @@ class PatientController extends ChangeNotifier {
       if (id != requestId) return null;
       final status = '${d['status']}';
       stage = switch (status) {
+        'ASSIGNED' => VisitStage.assigned,
         'EN_ROUTE' => VisitStage.enRoute,
         'ARRIVED' => VisitStage.arrived,
         'IN_SERVICE' => VisitStage.inService,
@@ -923,7 +925,35 @@ class PatientController extends ChangeNotifier {
     await submit();
   }
 
-  Future<bool> cancel() async {
+  (String, String, int?, bool)? _lastCancellation;
+  String? _cancellationKey;
+
+  Future<Map<String, dynamic>?> loadCancellationPolicy() async {
+    if (busy) return null;
+    error = null;
+    if (kDemoMode) return {'canCancel': true, 'requiresAcknowledgement': false};
+    final id = requestId;
+    if (id == null) return null;
+    busy = true;
+    notifyListeners();
+    try {
+      final result = await api.getMap('/v1/requests/$id/cancellation-policy');
+      return id == requestId ? result : null;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر التحقق من حالة الزيارة قبل الإلغاء.');
+      return null;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> cancel({
+    String? reasonCode,
+    int? expectedVersion,
+    bool policyAcknowledged = false,
+  }) async {
+    if (busy) return false;
     if (requestId == null || stage == VisitStage.unfulfilled) {
       resetToHome();
       return true;
@@ -933,8 +963,22 @@ class PatientController extends ChangeNotifier {
     notifyListeners();
     try {
       if (!kDemoMode) {
-        await api.post('/v1/requests/$requestId/cancel');
+        final id = requestId!;
+        if (reasonCode == null) return false;
+        final attempt = (id, reasonCode, expectedVersion, policyAcknowledged);
+        if (_lastCancellation != attempt) {
+          _lastCancellation = attempt;
+          _cancellationKey = const Uuid().v4();
+        }
+        await api.post('/v1/requests/$id/cancel', {
+          'reasonCode': reasonCode,
+          'idempotencyKey': _cancellationKey,
+          'expectedVersion': ?expectedVersion,
+          'policyAcknowledged': policyAcknowledged,
+        });
       }
+      _lastCancellation = null;
+      _cancellationKey = null;
       resetToHome();
       return true;
     } catch (e) {
