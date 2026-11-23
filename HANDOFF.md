@@ -128,13 +128,13 @@ If resuming:
 
 - CURRENT_BRANCH: codex/open-dispatch
 - LAST_COMMIT: cb0066ea6a925aeac16e85852c18897ab5691b34 (verified baseline; origin/feature/aero-signature matched)
-- COMPLETED: Phase 1 baseline and targeted audit. Existing worker uses waves, automatic departure remains in the nurse app, cancellation has no evidence ledger, and push currently performs network I/O inside its outbox transaction.
-- IN_PROGRESS: Phase 2, additive database invariants.
-- NEXT_EXACT_ACTION: Add migration 021 for persisted search windows, fixed departure ETA, cancellation evidence and appeals, then test its constraints with pre-migration fixtures.
+- COMPLETED: Phase 1 baseline and targeted audit. Phase 2 additive database foundation and invariant tests. Existing worker uses waves, automatic departure remains in the nurse app, cancellation has no evidence ledger, and push currently performs network I/O inside its outbox transaction.
+- IN_PROGRESS: Phase 3, implementing open dispatch behind the existing settings boundary.
+- NEXT_EXACT_ACTION: Implement the disabled-by-default policy, durable nurse eligibility wakeup, and fixed-deadline matching worker.
 - PENDING: Phases 3–10 from the attached specification.
-- FILES_CHANGED: HANDOFF.md and handoff/checkpoint.json. Existing dirty apps/nurse_app/lib/screens/home.dart belongs to the workspace baseline.
-- TEST_RESULTS: API build passed. Focused baseline tests 10 passed, 1 skipped.
+- FILES_CHANGED: HANDOFF.md, handoff/checkpoint.json, migration 021, docs/MIGRATION_021.md and apps/api/tests/open_dispatch_foundation.test.mjs. Existing dirty apps/nurse_app/lib/screens/home.dart belongs to the workspace baseline.
+- TEST_RESULTS: API build passed. Focused baseline tests 10 passed, 1 skipped. Migration 021 passed a pre-existing-data and integrity test (PGlite).
 - KNOWN_ISSUES: PGlite tests substitute geometry; they cannot establish PostGIS query plans or concurrent multi-connection behavior.
 - DECISIONS: Preserve legacy in-flight records and keep open dispatch disabled until a separately authorized rollout. Preserve billing and historical records.
-- MIGRATIONS: Existing baseline through 020.
+- MIGRATIONS: 021 adds search/closure, ETA, cancellations, appeals and audit invariants.
 - BLOCKERS: No disposable PostgreSQL/PostGIS connection in TEST_DATABASE_URL; no Docker or psql detected.
