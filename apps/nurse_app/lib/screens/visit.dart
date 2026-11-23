@@ -17,6 +17,7 @@ class VisitFlowScreen extends StatelessWidget {
     switch (c.stage) {
       case NurseStage.offer:
         return OfferScreen(c: c, nav: nav);
+      case NurseStage.assigned:
       case NurseStage.enRoute:
       case NurseStage.arrived:
         return _navigation(context);
@@ -29,15 +30,17 @@ class VisitFlowScreen extends StatelessWidget {
 
   // N03
   Widget _navigation(BuildContext context) {
+    final assigned = c.stage == NurseStage.assigned;
     final arrived = c.stage == NurseStage.arrived;
+    final destination = c.dest;
     return TamScaffold(
-      title: arrived ? 'وصلت إلى الموقع' : 'تم قبول الطلب',
-      subtitle: 'اتجه إلى موقع المريض المؤكد',
+      title: arrived ? 'وصلت إلى الموقع' : assigned ? 'تم إسناد الزيارة' : 'في الطريق إلى المريض',
+      subtitle: assigned ? 'أكّد الانطلاق عندما تبدأ التوجه' : 'موقع الزيارة المؤكد',
       nav: nav,
       children: [
-        TamMap(
+        if (destination != null) TamMap(
           height: 300,
-          patient: c.dest ?? kDamascus,
+          patient: destination,
           nurse: c.myPos,
           route: c.route,
         ),
@@ -52,7 +55,7 @@ class VisitFlowScreen extends StatelessWidget {
                     ? c.patientAddress
                     : 'الموقع المحدد على الخريطة',
               ),
-              KeyValueRow('الحالة', arrived ? 'وصل' : 'في الطريق'),
+              KeyValueRow('الحالة', arrived ? 'وصل' : assigned ? 'بانتظار الانطلاق' : 'في الطريق'),
               KeyValueRow(
                 'زمن الوصول',
                 arrived
@@ -66,14 +69,16 @@ class VisitFlowScreen extends StatelessWidget {
         ),
         PrimaryButton(
           'فتح الملاحة في الخرائط',
-          onPressed: () => launchUrl(
+          onPressed: destination == null ? null : () => launchUrl(
             Uri.parse(
-              'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${(c.dest ?? kDamascus).latitude},${(c.dest ?? kDamascus).longitude}',
+              'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${destination.latitude},${destination.longitude}',
             ),
             mode: LaunchMode.externalApplication,
           ),
         ),
-        if (!arrived)
+        if (assigned)
+          PrimaryButton('بدأت التوجه إلى المريض', onPressed: c.busy ? null : c.depart)
+        else if (!arrived)
           SoftButton('وصلت إلى الموقع', onPressed: c.arrive)
         else
           PrimaryButton('بدء الزيارة', onPressed: c.start),

@@ -1,7 +1,7 @@
 import { HttpException, Injectable } from '@nestjs/common';
 
 export interface RouteResult { distanceMeters: number; durationSeconds: number; polyline: string; }
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json(): Promise<any> }>;
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<any> }>;
 type Pt = { lat: number; lng: number };
 
 /** Driving route + ETA behind the server, so no key ever ships in an app.
@@ -14,8 +14,16 @@ export class RoutesService {
   fetchImpl: FetchLike = (u, i) => fetch(u, i) as any;
   now = () => Date.now();
 
+  get provider(): 'google' | 'osm' {
+    return process.env.MAPS_PROVIDER === 'google' ? 'google' : 'osm';
+  }
+
+  get configured(): boolean {
+    return Boolean(this.provider === 'google' ? process.env.GOOGLE_MAPS_SERVER_KEY : process.env.ORS_API_KEY);
+  }
+
   async compute(origin: Pt, dest: Pt): Promise<RouteResult> {
-    const provider = (process.env.MAPS_PROVIDER ?? 'osm') === 'google' ? 'google' : 'osm';
+    const provider = this.provider;
     const key = provider === 'google' ? process.env.GOOGLE_MAPS_SERVER_KEY : process.env.ORS_API_KEY;
     if (!key) throw new HttpException({ code: 'ROUTES_NOT_CONFIGURED', provider }, 503);
     const r4 = (n: number) => n.toFixed(4); // ~11 m: near-identical requests share a route
@@ -32,6 +40,7 @@ export class RoutesService {
     const base = process.env.ORS_BASE_URL ?? 'https://api.heigit.org/openrouteservice';
     const res = await this.fetchImpl(`${base}/v2/directions/driving-car`, {
       method: 'POST',
+      signal: AbortSignal.timeout(4000),
       headers: { 'Content-Type': 'application/json', Authorization: key },
       body: JSON.stringify({ coordinates: [[o.lng, o.lat], [d.lng, d.lat]], instructions: false }), // [lng,lat] order
     });
@@ -48,6 +57,7 @@ export class RoutesService {
   private async google(key: string, o: Pt, d: Pt): Promise<RouteResult> {
     const res = await this.fetchImpl('https://routes.googleapis.com/directions/v2:computeRoutes', {
       method: 'POST',
+      signal: AbortSignal.timeout(4000),
       headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline' },
       body: JSON.stringify({
         origin: { location: { latLng: { latitude: o.lat, longitude: o.lng } } },

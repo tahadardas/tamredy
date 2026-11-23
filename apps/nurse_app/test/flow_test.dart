@@ -22,6 +22,10 @@ void main() {
     expect(accept.hitTestable(), findsOneWidget);
     expect(find.text('رفض الطلب').hitTestable(), findsOneWidget);
     await tester.tap(accept);
+    await tester.pump();
+    expect(c.stage, NurseStage.assigned);
+    expect(find.text('بدأت التوجه إلى المريض'), findsOneWidget);
+    await c.depart();
     await c.arrive();
     await c.start();
     await c.complete();
@@ -45,6 +49,7 @@ void moneyTests() {
       await c.setAvailable(true);
       await tester.pump(const Duration(seconds: 6));
       await c.accept();
+      await c.depart();
       await c.arrive();
       await c.start();
       await c.complete();

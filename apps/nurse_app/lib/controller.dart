@@ -6,7 +6,7 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 import 'alarm.dart';
 import 'availability_manager.dart';
 
-enum NurseStage { idle, offer, enRoute, arrived, inService, completed }
+enum NurseStage { idle, offer, assigned, enRoute, arrived, inService, completed }
 
 class Offer {
   final String id, service, area;
@@ -172,10 +172,9 @@ class NurseController extends ChangeNotifier {
 
         switch (reqStatus) {
           case 'ASSIGNED':
+            stage = NurseStage.assigned;
+            break;
           case 'EN_ROUTE':
-            if (reqStatus == 'ASSIGNED') {
-              await api.post('/v1/nurse/assignments/$assignmentId/depart');
-            }
             stage = NurseStage.enRoute;
             _startNavigation();
             break;
@@ -378,13 +377,16 @@ class NurseController extends ChangeNotifier {
         if (assignmentId == null || assignmentId!.isEmpty) {
           throw Exception('لم يتم استلام معرف الإسناد');
         }
-        // Transitions status ASSIGNED -> EN_ROUTE on the backend
-        await api.post('/v1/nurse/assignments/$assignmentId/depart');
+        if (a['status'] == 'ASSIGNED') {
+          availabilityManager.setActiveAssignment(true);
+          stage = NurseStage.assigned;
+        }
+        await restoreActiveAssignment();
+      } else {
+        availabilityManager.setActiveAssignment(true);
+        stage = NurseStage.assigned;
       }
-      availabilityManager.setActiveAssignment(true);
-      stage = NurseStage.enRoute;
       Analytics.log('offer_accepted');
-      await _startNavigation();
     } catch (e) {
       error = explainError(e, fallback: 'لم يعد العرض متاحًا أو حصل عليه ممرض آخر');
       await restoreActiveAssignment();
@@ -415,12 +417,12 @@ class NurseController extends ChangeNotifier {
   }
 
   Future<void> _step(String command, NurseStage next) async {
-    if (busy) return;
+    if (busy || (!kDemoMode && assignmentId == null)) return;
     busy = true;
     error = null;
     notifyListeners();
     try {
-      if (!kDemoMode && assignmentId != null) {
+      if (!kDemoMode) {
         await api.post('/v1/nurse/assignments/$assignmentId/$command');
       }
       stage = next;
@@ -437,6 +439,12 @@ class NurseController extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
+  }
+
+  Future<void> depart() async {
+    if (stage != NurseStage.assigned || busy) return;
+    await _step('depart', NurseStage.enRoute);
+    if (stage == NurseStage.enRoute) await _startNavigation();
   }
 
   Future<void> arrive() async {
