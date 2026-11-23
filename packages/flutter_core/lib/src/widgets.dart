@@ -1,5 +1,13 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'analytics.dart';
+import 'design/tokens/aero_colors.dart';
+import 'design/tokens/aero_motion_tokens.dart';
+import 'design/tokens/aero_radii.dart';
+import 'design/tokens/aero_shadows.dart';
+import 'design/tokens/aero_typography.dart';
+import 'design/widgets/aero_button.dart';
 import 'theme.dart';
 
 enum Tone { teal, blue, orange, danger }
@@ -44,7 +52,7 @@ class TamScaffold extends StatelessWidget {
     final visibleNav = MediaQuery.viewInsetsOf(context).bottom == 0 ? nav : null;
     final content = ListView(
       physics: refresh == null ? null : const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, visibleNav != null ? 86 : 24),
       children: [
         Center(
           child: ConstrainedBox(
@@ -61,64 +69,87 @@ class TamScaffold extends StatelessWidget {
     return ScreenLogger(
       name: title,
       child: Scaffold(
-        extendBody: false,
+        backgroundColor: AeroColors.lightCanvas,
+        extendBody: true,
         bottomNavigationBar: visibleNav,
         body: SafeArea(
           bottom: visibleNav == null,
           child: Column(
             children: [
-              Material(
-                color: Colors.white,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 712),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          if (showBack)
-                            IconButton(
-                              tooltip: 'رجوع',
-                              onPressed: () => Navigator.of(context).maybePop(),
-                              icon: const Icon(Icons.arrow_back_rounded),
-                            )
-                          else
-                            Image.asset(
-                              'assets/images/logo_mark.png',
-                              package: kFontPackage,
-                              width: 52,
-                              height: 52,
-                              excludeFromSemantics: true,
-                            ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Semantics(
-                                  header: true,
-                                  child: Text(title, style: tamText(size: 20, weight: FontWeight.w800)),
+              ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.88),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: AeroColors.borderLight,
+                          width: 1.0,
+                        ),
+                      ),
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 712),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          child: Row(
+                            children: [
+                              if (showBack)
+                                IconButton(
+                                  tooltip: 'رجوع',
+                                  onPressed: () => Navigator.of(context).maybePop(),
+                                  icon: const Icon(Icons.arrow_back_rounded, color: AeroColors.primaryNavy),
+                                )
+                              else
+                                Image.asset(
+                                  'assets/images/logo_mark.png',
+                                  package: kFontPackage,
+                                  width: 46,
+                                  height: 46,
+                                  excludeFromSemantics: true,
                                 ),
-                                if (subtitle.isNotEmpty)
-                                  Text(subtitle, style: tamText(size: 12, color: TamreedyColors.subtext)),
-                              ],
-                            ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Semantics(
+                                      header: true,
+                                      child: Text(
+                                        title,
+                                        style: aeroText(size: 20, weight: FontWeight.w800, color: AeroColors.textPrimary),
+                                      ),
+                                    ),
+                                    if (subtitle.isNotEmpty)
+                                      Text(
+                                        subtitle,
+                                        style: aeroText(size: 12, weight: FontWeight.w500, color: AeroColors.textSecondary),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-              const Divider(height: 1, color: TamreedyColors.border),
               Expanded(
                 child: refresh == null
                     ? content
-                    : RefreshIndicator(onRefresh: refresh, child: content),
+                    : RefreshIndicator(
+                        color: AeroColors.accentTeal,
+                        onRefresh: refresh,
+                        child: content,
+                      ),
               ),
               if (actions != null)
-                Material(
-                  color: Colors.white,
+                Container(
+                  color: Colors.white.withValues(alpha: 0.9),
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 680),
@@ -168,21 +199,15 @@ class TamCard extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     margin: const EdgeInsets.only(bottom: 12),
     decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(TamreedyRadii.card),
-      border: Border.all(color: TamreedyColors.border),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x0A074577),
-          blurRadius: 10,
-          offset: Offset(0, 3),
-        ),
-      ],
+      color: Colors.white.withValues(alpha: 0.92),
+      borderRadius: BorderRadius.circular(AeroRadii.mainCard),
+      border: Border.all(color: AeroColors.borderLight, width: 1.1),
+      boxShadow: AeroShadows.card,
     ),
     child: Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(TamreedyRadii.card),
+        borderRadius: BorderRadius.circular(AeroRadii.mainCard),
         onTap: onTap,
         child: Padding(padding: padding, child: child),
       ),
@@ -206,65 +231,55 @@ class HeroCard extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 12),
+    margin: const EdgeInsets.only(bottom: 14),
     padding: const EdgeInsets.all(22),
     decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(AeroRadii.heroCard),
       gradient: const LinearGradient(
         begin: AlignmentDirectional.centerStart,
         end: AlignmentDirectional.centerEnd,
-        colors: [TamreedyColors.teal, TamreedyColors.navy],
+        colors: [AeroColors.primaryNavy, Color(0xFF0C5D8B), AeroColors.accentTeal],
       ),
+      boxShadow: AeroShadows.hero,
     ),
     child: Stack(
       children: [
-        PositionedDirectional(
-          end: 0,
-          bottom: 0,
-          child: Icon(
-            Icons.add,
-            size: 96,
-            color: Colors.white.withValues(alpha: .08),
+        if (caption != null)
+          PositionedDirectional(
+            top: 0,
+            start: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(AeroRadii.dock),
+              ),
+              child: Text(
+                caption!,
+                style: aeroText(size: 11, weight: FontWeight.w700, color: Colors.white),
+              ),
+            ),
           ),
-        ),
-        SizedBox(
-          width: double.infinity,
+        Padding(
+          padding: EdgeInsets.only(top: caption != null ? 28 : 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (caption != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    caption!,
-                    style: tamText(size: 12, color: Colors.white70),
-                  ),
-                ),
               Text(
                 title,
-                style: tamText(
-                  size: titleSize,
-                  weight: FontWeight.w800,
-                  color: Colors.white,
-                ),
+                style: aeroText(size: titleSize, weight: FontWeight.w800, color: Colors.white),
               ),
-              if (body != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    body!,
-                    style: tamText(
-                      size: 12.5,
-                      color: Colors.white70,
-                      height: 1.7,
-                    ),
-                  ),
+              if (body != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  body!,
+                  style: aeroText(size: 13, weight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.9)),
                 ),
-              if (trailing != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: trailing,
-                ),
+              ],
+              if (trailing != null) ...[
+                const SizedBox(height: 14),
+                trailing!,
+              ],
             ],
           ),
         ),
@@ -441,37 +456,10 @@ class PrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Opacity(
-      opacity: onPressed == null ? .5 : 1,
-      child: Material(
-        color: Colors.transparent,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(TamreedyRadii.button),
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [TamreedyColors.tealAlt, Color(0xFF058A7C)],
-            ),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(TamreedyRadii.button),
-            onTap: onPressed,
-            child: Container(
-              height: 54,
-              alignment: Alignment.center,
-              child: Text(
-                label,
-                style: tamText(
-                  size: 15,
-                  weight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    child: AeroButton(
+      label,
+      onPressed: onPressed,
+      variant: AeroButtonVariant.primary,
     ),
   );
 }
@@ -542,29 +530,41 @@ class TamBottomNav extends StatelessWidget {
     required this.onTap,
   });
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: const BoxDecoration(
-      border: Border(top: BorderSide(color: TamreedyColors.border)),
-    ),
-    child: Padding(
-      padding: const EdgeInsets.only(top: 1),
-      child: NavigationBar(
-        backgroundColor: Colors.white,
-        indicatorColor: TamreedyColors.tealTint,
-        height: 60,
-        selectedIndex: index,
-        onDestinationSelected: onTap,
-        destinations: [
-          for (final item in items)
-            NavigationDestination(
-              icon: Icon(item.icon, size: 22, color: TamreedyColors.subtext),
-              selectedIcon: Icon(item.icon, size: 22, color: TamreedyColors.teal),
-              label: item.label,
-            ),
-        ],
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        bottom: bottomInset > 0 ? bottomInset + 4 : 12,
       ),
-    ),
-  );
+      child: Container(
+        height: 64,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AeroRadii.dock),
+          boxShadow: AeroShadows.floatingDock,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AeroRadii.dock),
+          child: NavigationBar(
+            backgroundColor: Colors.white.withValues(alpha: 0.94),
+            indicatorColor: AeroColors.accentTeal.withValues(alpha: 0.16),
+            height: 64,
+            selectedIndex: index,
+            onDestinationSelected: onTap,
+            destinations: [
+              for (final item in items)
+                NavigationDestination(
+                  icon: Icon(item.icon, size: 22, color: AeroColors.textSecondary),
+                  selectedIcon: Icon(item.icon, size: 22, color: AeroColors.accentTeal),
+                  label: item.label,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Segmented progress bar used while searching for a nurse.

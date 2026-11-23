@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../alarm.dart';
 import '../controller.dart';
 import '../main.dart';
 
@@ -321,7 +322,7 @@ class _CollectionCardState extends State<CollectionCard> {
   }
 }
 
-/// N02 — incoming offer with countdown.
+/// N02 — Full-Screen Deep Navy Offer (#102F49) with glowing aura & insistent alarm.
 class OfferScreen extends StatefulWidget {
   final NurseController c;
   final TamBottomNav nav;
@@ -330,11 +331,19 @@ class OfferScreen extends StatefulWidget {
   State<OfferScreen> createState() => _OfferScreenState();
 }
 
-class _OfferScreenState extends State<OfferScreen> {
+class _OfferScreenState extends State<OfferScreen> with SingleTickerProviderStateMixin {
   Timer? _t;
+  bool _muted = false;
+  late final AnimationController _pulseController;
+
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+
     _t = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       if (widget.c.offer != null &&
@@ -349,7 +358,13 @@ class _OfferScreenState extends State<OfferScreen> {
   @override
   void dispose() {
     _t?.cancel();
+    _pulseController.dispose();
     super.dispose();
+  }
+
+  void _muteAlarm() {
+    OfferAlarm.cancelAll();
+    setState(() => _muted = true);
   }
 
   @override
@@ -357,57 +372,273 @@ class _OfferScreenState extends State<OfferScreen> {
     final o = widget.c.offer;
     if (o == null) return const SizedBox.shrink();
     final left = o.expiresAt.difference(DateTime.now());
-    return TamScaffold(
-      title: 'طلب جديد قريب منك',
-      subtitle: 'راجع تفاصيل الزيارة قبل القبول',
-      nav: widget.nav,
-      actions: Row(
+    final secondsLeft = left.inSeconds.clamp(0, 60);
+
+    return Scaffold(
+      backgroundColor: AeroColors.deepNavyOffer,
+      body: Stack(
         children: [
-          Expanded(
-            flex: 2,
-            child: PrimaryButton(
-              'قبول الطلب',
-              onPressed: widget.c.busy || left <= Duration.zero
-                  ? null
-                  : widget.c.accept,
+          // Ambient teal glowing aura in the center
+          Positioned(
+            top: 140,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, _) => Container(
+                  width: 260 + (_pulseController.value * 40),
+                  height: 260 + (_pulseController.value * 40),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AeroColors.accentTeal.withValues(alpha: 0.18 + (_pulseController.value * 0.14)),
+                        blurRadius: 60,
+                        spreadRadius: 10,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SoftButton(
-              'رفض الطلب',
-              onPressed: widget.c.busy ? null : widget.c.decline,
+
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Top bar: Dispatch title + Mute button
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(AeroRadii.dock),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF34D399),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'عرض زيارة جديد',
+                              style: aeroText(size: 13, weight: FontWeight.w700, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _muted ? 'تم كتم التنبيه' : 'كتم الصوت',
+                        onPressed: _muteAlarm,
+                        icon: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                            color: _muted ? Colors.white60 : Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const Spacer(flex: 1),
+
+                  // Countdown circle & countdown timer
+                  Center(
+                    child: Container(
+                      width: 90,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.08),
+                        border: Border.all(
+                          color: AeroColors.accentTeal,
+                          width: 3,
+                        ),
+                        boxShadow: AeroShadows.deepNavyHalo,
+                      ),
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '$secondsLeft',
+                            style: aeroText(
+                              size: 32,
+                              weight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                          ),
+                          Text(
+                            'ثانية',
+                            style: aeroText(
+                              size: 11,
+                              weight: FontWeight.w600,
+                              color: AeroColors.accentTeal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // Offer details card (frosted dark card)
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.09),
+                      borderRadius: BorderRadius.circular(AeroRadii.heroCard),
+                      border: Border.all(
+                        color: AeroColors.accentTeal.withValues(alpha: 0.4),
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          o.service,
+                          style: aeroText(
+                            size: 20,
+                            weight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            const Icon(Icons.location_on_rounded, color: AeroColors.accentTeal, size: 16),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                '${o.area} • ${o.km} كم',
+                                style: aeroText(size: 13, weight: FontWeight.w600, color: Colors.white),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Container(height: 1, color: Colors.white.withValues(alpha: 0.12)),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'سعر الزيارة:',
+                                style: aeroText(size: 13, color: Colors.white70),
+                              ),
+                            ),
+                            Text(
+                              formatMoney(o.price),
+                              style: aeroText(size: 14, weight: FontWeight.w700, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'صافي حصتك:',
+                                style: aeroText(size: 14, weight: FontWeight.w700, color: Colors.white),
+                              ),
+                            ),
+                            Text(
+                              formatMoney(o.nurseShare),
+                              style: aeroText(
+                                size: 18,
+                                weight: FontWeight.w900,
+                                color: const Color(0xFF2DD4BF),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  if (widget.c.error != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
+                      ),
+                      child: Text(
+                        widget.c.error!,
+                        style: aeroText(size: 12.5, color: Colors.red[200]!),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+
+                  const Spacer(flex: 2),
+
+                  // Actions: Large Teal Accept + Ghost Decline
+                  AeroButton.teal(
+                    'قبول الطلب',
+                    onPressed: widget.c.busy || left <= Duration.zero
+                        ? null
+                        : () {
+                            OfferAlarm.cancelAll();
+                            widget.c.accept();
+                          },
+                    height: 54,
+                    fontSize: 17,
+                    leadingIcon: const Icon(Icons.check_circle_rounded, color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(height: 8),
+                  AeroButton.ghost(
+                    'رفض الطلب',
+                    onPressed: widget.c.busy
+                        ? null
+                        : () {
+                            OfferAlarm.cancelAll();
+                            widget.c.decline();
+                          },
+                    height: 48,
+                    fontSize: 15,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
           ),
         ],
       ),
-      children: [
-        HeroCard(
-          caption: 'الوقت المتبقي للقبول',
-          title: o.service,
-          trailing: Text(
-            formatCountdown(left),
-            textDirection: TextDirection.ltr,
-            style: tamText(size: 26, weight: FontWeight.w800, color: Colors.white),
-          ),
-        ),
-        TamCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ListRow(
-                icon: Icons.location_on_outlined,
-                title: o.area,
-                subtitle: '${o.km} كم تقريبًا',
-              ),
-              KeyValueRow('سعر الزيارة', formatMoney(o.price)),
-              KeyValueRow('حصتك من الزيارة', formatMoney(o.nurseShare)),
-            ],
-          ),
-        ),
-        if (widget.c.error != null)
-          NoticeBox(widget.c.error!),
-      ],
     );
   }
 }

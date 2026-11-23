@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'analytics.dart';
 import 'api.dart';
+import 'design/auth/syrian_phone_normalizer.dart';
+import 'design/widgets/aero_syrian_phone_field.dart';
 import 'errors.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -22,8 +24,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _busy = false, _agree = false, _show = false;
   String? _error;
 
-  static final _phoneRe = RegExp(r'^\+[1-9]\d{7,14}$');
-
   Widget _field(TextEditingController c, String hint, {bool ltr = false, bool secret = false, TextInputType? type}) => TamCard(
     child: TextField(
       controller: c,
@@ -37,7 +37,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String? _validate() {
     if (_name.text.trim().length < 2) return 'اكتب اسمك الكامل';
-    if (!_phoneRe.hasMatch(_phone.text.trim())) return 'رقم الهاتف بصيغة دولية، مثل ‎+963911111111';
+    final phoneErr = SyrianPhoneNormalizer.validateSyrianMobile(_phone.text.trim());
+    if (phoneErr != null) return phoneErr;
     if (_password.text.length < 8) return 'كلمة المرور 8 أحرف على الأقل';
     if (_password.text != _again.text) return 'تأكيد كلمة المرور لا يطابقها';
     if (!_agree) return 'يجب الموافقة على الشروط للمتابعة';
@@ -52,7 +53,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
-      await widget.api.register(_phone.text.trim(), _name.text.trim(), _password.text);
+      final normalizedPhone = SyrianPhoneNormalizer.normalizeSyrianMobile(_phone.text.trim())!;
+      await widget.api.register(normalizedPhone, _name.text.trim(), _password.text);
       Analytics.log('sign_up', {'role': 'patient'});
       if (!mounted) return;
       Navigator.of(context).popUntil((r) => r.isFirst);
@@ -71,7 +73,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     showBack: true,
     children: [
       _field(_name, 'الاسم الكامل'),
-      _field(_phone, '+963…', ltr: true, type: TextInputType.phone),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: AeroSyrianPhoneField(
+          controller: _phone,
+        ),
+      ),
       _field(_password, 'كلمة المرور (8 أحرف فأكثر)', ltr: true, secret: true),
       _field(_again, 'تأكيد كلمة المرور', ltr: true, secret: true),
       CheckboxListTile(

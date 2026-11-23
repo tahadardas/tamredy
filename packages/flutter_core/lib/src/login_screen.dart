@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'analytics.dart';
 import 'api.dart';
 import 'change_password_screen.dart';
+import 'design/auth/syrian_phone_normalizer.dart';
+import 'design/widgets/aero_syrian_phone_field.dart';
 import 'errors.dart';
 import 'nurse_apply_screen.dart';
 import 'register_screen.dart';
@@ -50,22 +52,16 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) => TamScaffold(
     title: 'تسجيل الدخول',
     subtitle: _pw
-        ? 'أدخل رقم هاتفك وكلمة المرور'
+        ? 'أدخل رقم هاتفك (09XXXXXXXX) وكلمة المرور'
         : _codeSent
         ? 'أدخل الرمز المرسل إلى هاتفك'
-        : 'أدخل رقم هاتفك بصيغة دولية، مثل ‎+963911111111',
+        : 'أدخل رقم هاتفك السوري (مثال: 0987080330)',
     children: [
       if (_pw) ...[
-        TamCard(
-          child: TextField(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AeroSyrianPhoneField(
             controller: _phone,
-            keyboardType: TextInputType.phone,
-            textDirection: TextDirection.ltr,
-            style: tamText(size: 18, weight: FontWeight.w700),
-            decoration: InputDecoration(
-              hintText: '+963…',
-              hintStyle: tamText(color: TamreedyColors.subtext),
-            ),
           ),
         ),
         TamCard(
@@ -80,15 +76,22 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
-      ] else
+      ] else if (!_codeSent)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AeroSyrianPhoneField(
+            controller: _phone,
+          ),
+        )
+      else
         TamCard(
           child: TextField(
-            controller: _codeSent ? _code : _phone,
-            keyboardType: TextInputType.phone,
+            controller: _code,
+            keyboardType: TextInputType.number,
             textDirection: TextDirection.ltr,
             style: tamText(size: 18, weight: FontWeight.w700),
             decoration: InputDecoration(
-              hintText: _codeSent ? '000000' : '+963…',
+              hintText: '000000',
               hintStyle: tamText(color: TamreedyColors.subtext),
             ),
           ),
@@ -108,8 +111,13 @@ class _LoginScreenState extends State<LoginScreen> {
               ? null
               : () => _run(
                   () async {
+                    final phoneErr = SyrianPhoneNormalizer.validateSyrianMobile(_phone.text.trim());
+                    if (phoneErr != null) {
+                      throw Exception(phoneErr);
+                    }
+                    final normalizedPhone = SyrianPhoneNormalizer.normalizeSyrianMobile(_phone.text.trim())!;
                     final role = await widget.api.login(
-                      _phone.text.trim(),
+                      normalizedPhone,
                       _password.text,
                     );
                     if (role != widget.expectedRole) {
@@ -151,12 +159,17 @@ class _LoginScreenState extends State<LoginScreen> {
               ? null
               : () => _run(
                   () async {
+                    final phoneErr = SyrianPhoneNormalizer.validateSyrianMobile(_phone.text.trim());
+                    if (phoneErr != null && !_codeSent) {
+                      throw Exception(phoneErr);
+                    }
+                    final normalizedPhone = SyrianPhoneNormalizer.normalizeSyrianMobile(_phone.text.trim()) ?? _phone.text.trim();
                     if (!_codeSent) {
-                      await widget.api.requestOtp(_phone.text.trim());
+                      await widget.api.requestOtp(normalizedPhone);
                       _codeSent = true;
                     } else {
                       final role = await widget.api.verifyOtp(
-                        _phone.text.trim(),
+                        normalizedPhone,
                         _code.text.trim(),
                       );
                       if (role != widget.expectedRole) {

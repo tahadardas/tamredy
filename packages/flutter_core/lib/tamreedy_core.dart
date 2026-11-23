@@ -17,3 +17,4 @@ export 'src/tam_map.dart';
 export 'package:latlong2/latlong.dart' show LatLng;
 export 'src/theme.dart';
 export 'src/widgets.dart';
+export 'src/design/aero_design.dart';

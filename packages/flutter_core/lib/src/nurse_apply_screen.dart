@@ -3,6 +3,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'analytics.dart';
 import 'api.dart';
+import 'design/auth/syrian_phone_normalizer.dart';
+import 'design/widgets/aero_syrian_phone_field.dart';
 import 'errors.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -24,7 +26,6 @@ class NurseApplyScreen extends StatefulWidget {
 }
 
 class _NurseApplyScreenState extends State<NurseApplyScreen> {
-  static final _phoneRe = RegExp(r'^\+[1-9]\d{7,14}$');
   static const _pledge =
       'أقرّ بأن جميع المعلومات التي أدخلتها صحيحة وأتحمّل مسؤوليتها القانونية كاملة، '
       'وأن الصور والمستندات التي رفعتها صحيحة وغير مزوّرة وأنا المسؤول عنها مسؤولية تامة.';
@@ -86,7 +87,8 @@ class _NurseApplyScreenState extends State<NurseApplyScreen> {
   String? _validate(int step) {
     if (step == 0) {
       if (_name.text.trim().length < 2) return 'اكتب اسمك الكامل';
-      if (!_phoneRe.hasMatch(_phone.text.trim())) return 'رقم الهاتف بصيغة دولية، مثل ‎+963911111111';
+      final phoneErr = SyrianPhoneNormalizer.validateSyrianMobile(_phone.text.trim());
+      if (phoneErr != null) return phoneErr;
       if (_govId == null || _areaId == null) return 'اختر المحافظة والمنطقة التي تعمل فيها';
     }
     if (step == 1 && _idPhoto == null) return 'ارفع صورة هويتك';
@@ -116,8 +118,9 @@ class _NurseApplyScreenState extends State<NurseApplyScreen> {
       _error = null;
     });
     try {
+      final normalizedPhone = SyrianPhoneNormalizer.normalizeSyrianMobile(_phone.text.trim())!;
       await widget.api.applyAsNurse(
-        phone: _phone.text.trim(),
+        phone: normalizedPhone,
         name: _name.text.trim(),
         governorateId: _govId!,
         areaId: _areaId!,
@@ -215,7 +218,10 @@ class _NurseApplyScreenState extends State<NurseApplyScreen> {
 
   List<Widget> _stepOne() => [
     _field(_name, 'الاسم الكامل'),
-    _field(_phone, '+963…', ltr: true, type: TextInputType.phone),
+    Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: AeroSyrianPhoneField(controller: _phone),
+    ),
     _drop('المحافظة التي تعمل فيها', _govId, _govs, (v) => setState(() {
       _govId = v;
       _areaId = null;
