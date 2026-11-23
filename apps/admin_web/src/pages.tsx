@@ -1,5 +1,5 @@
 import {useState, useEffect} from 'react';
-import {Chip, Notice, Panel, Row, Stat, Table, Icon} from './ui';
+import {Chip, Notice, Panel, Row, Stat, Table, Icon, AeroHero} from './ui';
 
 export type Metrics = {
   available_nurses: number;
@@ -98,6 +98,18 @@ export function Dashboard({live}: {live: Live}) {
   }
 
   return <>
+    <AeroHero
+      title="غرفة العمليات المركزية والتحكم الميداني"
+      subtitle="مراقبة حية فورية للجاهزية الميدانية، موجات التوزيع الذكية، وسرعة استجابة الكوادر التمريضية في دمشق وريفها."
+      badgeText="نظام المراقبة والتحكم الميداني الفوري"
+      pills={[
+        {label: `ممرضون متاحون: ${pad(m?.available_nurses ?? 0)}`, active: (m?.available_nurses ?? 0) > 0},
+        {label: `زيارات جارية: ${pad(m?.in_service ?? 0)}`, active: (m?.in_service ?? 0) > 0},
+        {label: `قيد البحث: ${pad(m?.searching_requests ?? 0)}`, active: (m?.searching_requests ?? 0) > 0},
+        {label: 'محرك التوزيع الذكي نشط ✓'},
+      ]}
+    />
+
     <div className="section-title">
       <h3>المؤشرات التشغيلية الحية</h3>
       <small className="text-muted">مراقبة فورية للجاهزية الميدانية والطلبات النشطة</small>

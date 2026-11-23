@@ -4,8 +4,8 @@
 **Branch:** feature/aero-signature  
 **Last Verified Commit:** `95a66d1`  
 **Last Update:** 2026-11-23  
-**Current Phase:** Phase 6 & 7 Complete (Shared Aero Design, Syrian Phone, Patient & Nurse Redesign, Deep Navy Offer)  
-**Overall Status:** Green (All Tests Passing, 0 Analyzer Issues)
+**Current Phase:** Phase 6, 7 & 8 Complete (Shared Aero Design, Syrian Phone, Patient & Nurse Redesign, Deep Navy Offer, Admin Web Aero Control Panel)  
+**Overall Status:** Green (All Tests Passing, 0 Analyzer Issues, Admin Web Build Clean)
 
 ---
 
@@ -80,6 +80,14 @@
   - Integrated Floating Aero Dock navigation across both apps.
   - Implemented Full-Screen Deep Navy Offer (`#102F49`) with glowing teal halo, countdown timer, sound mute, and accept/decline in `apps/nurse_app/lib/screens/visit.dart`.
   - All unit/flow tests pass in both apps (6/6 patient, 5/5 nurse).
+- **Phase 8 (Admin Web Aero Control Panel Redesign):**
+  - Implemented `AeroHero` with deep navy gradient (`#102F49` to `#074577`), illuminated borders, dual ambient glow orbs, live pulsating indicator dot, and operational status pills in `apps/admin_web/src/ui.tsx`.
+  - Upgraded `Dashboard` (`apps/admin_web/src/pages.tsx`) and `DispatchMonitor` (`apps/admin_web/src/pages_dispatch.tsx`) with `AeroHero` and live operational telemetry.
+  - Upgraded CSS tokens, frosted glass cards (`.stat`, `.panel`, `.card`), illuminated borders, and diffuse shadows in `apps/admin_web/src/style.css`.
+  - Upgraded weekly booking bar chart with teal-to-navy gradient and hover scaling.
+  - Upgraded `login-card` with frosted glass and illuminated border.
+  - Built production bundle with `npm run build` in `apps/admin_web` (0 errors).
+  - Updated server deployment archives: `deploy/tamreedy-server.tar.gz` and `deploy/tamreedy-server.zip`.
 
 ---
 

@@ -122,6 +122,49 @@ export const Table = ({
   </div>
 );
 
+export const AeroHero = ({
+  title,
+  subtitle,
+  badgeText = 'غرفة العمليات المركزية المباشرة',
+  pills,
+  action,
+}: {
+  title: string;
+  subtitle: string;
+  badgeText?: string;
+  pills?: {label: string; active?: boolean}[];
+  action?: ReactNode;
+}) => (
+  <div className="aero-hero">
+    <div className="aero-hero-glow-1"/>
+    <div className="aero-hero-glow-2"/>
+    <div className="aero-hero-content">
+      <div className="aero-hero-top">
+        <span className="aero-hero-badge">
+          <span className="live-dot"/>
+          {badgeText}
+        </span>
+        {pills && pills.length > 0 && (
+          <div className="aero-hero-pills">
+            {pills.map((p, idx) => (
+              <span key={idx} className={`aero-hero-pill ${p.active ? 'active' : ''}`}>
+                {p.label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="aero-hero-body">
+        <div>
+          <h2 className="aero-hero-title">{title}</h2>
+          <p className="aero-hero-sub">{subtitle}</p>
+        </div>
+        {action && <div className="aero-hero-action">{action}</div>}
+      </div>
+    </div>
+  </div>
+);
+
 export const MapArt = ({height = 250}: {height?: number}) => (
   <div className="mapart" style={{height}}>
     <svg viewBox="0 0 400 250" preserveAspectRatio="none">

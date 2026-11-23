@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Live } from './pages';
-import { Notice, Panel } from './ui';
+import { Notice, Panel, AeroHero } from './ui';
 import { msgOf } from './session';
 
 export function DispatchMonitor({ live }: { live: Live }) {
@@ -73,25 +73,29 @@ export function DispatchMonitor({ live }: { live: Live }) {
     <div className="dispatch-monitor">
       {err && <Notice tone="danger">{err}</Notice>}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: '#1E293B' }}>
-            مراقبة التوزيع المباشر وصحة الإشعارات
-          </h2>
-          <p style={{ margin: '4px 0 0', color: '#64748B', fontSize: 13 }}>
-            تتبع لحظي لمحرك المطابقة الجغرافية (Worker)، أسباب استبعاد الممرضين، وتدفق إشعارات FCM وSocket.IO.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary" onClick={exportReport} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span>📥</span> تصدير تقرير التشخيص التقني
-          </button>
-          <button className="btn btn-primary" onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-block', transform: loading ? 'rotate(180deg)' : 'none', transition: '0.3s' }}>🔄</span>
-            {loading ? 'جاري التحديث...' : 'تحديث فوري'}
-          </button>
-        </div>
-      </div>
+      <AeroHero
+        title="مراقبة محرك التوزيع وصحة الإشعارات"
+        subtitle="تتبع لحظي لمحرك المطابقة الجغرافية (Dispatch Worker)، أسباب استبعاد الكوادر، وتدفق إشعارات FCM وSocket.IO."
+        badgeText="محرك التوزيع الذكي — Dispatch Monitor"
+        pills={[
+          {label: `جاهزون فعلياً: ${m.ready_nurses ?? 0}`, active: (m.ready_nurses ?? 0) > 0},
+          {label: `موجات جارية: ${m.active_searches ?? 0}`, active: (m.active_searches ?? 0) > 0},
+          {label: `توكنات FCM: ${tokenTotal}`},
+          {label: `حالة العامل: ${worker.status ?? 'ONLINE'}`},
+        ]}
+        action={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary" onClick={exportReport} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.12)', color: '#fff', borderColor: 'rgba(255,255,255,0.2)' }}>
+              <span>📥</span> تصدير تقرير التشخيص
+            </button>
+            <button className="btn btn-primary" onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ display: 'inline-block', transform: loading ? 'rotate(180deg)' : 'none', transition: '0.3s' }}>🔄</span>
+              {loading ? 'جارٍ التحديث...' : 'تحديث فوري'}
+            </button>
+          </div>
+        }
+      />
+      <div style={{ height: 16 }} />
 
       {/* Primary KPI Grid (12 Indicators per Section 10) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
