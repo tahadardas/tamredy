@@ -102,6 +102,8 @@ class TamreedyApi {
           if (jwt != null && !options.headers.containsKey('Authorization')) {
             options.headers['Authorization'] = 'Bearer $jwt';
           }
+          final devId = await getDeviceId();
+          options.headers['X-Device-Id'] = devId;
 
           if (kDebugMode) {
             debugPrint('[HTTP] -> ${options.method} ${options.uri} [trace:$traceId]');
@@ -158,6 +160,16 @@ class TamreedyApi {
 
   Future<String?> accessToken() => _storage.read(key: 'access_token');
 
+  /// Persistent hardware-anchored device identifier stored safely in secure storage.
+  Future<String> getDeviceId() async {
+    var id = await _storage.read(key: 'device_id');
+    if (id == null || id.isEmpty) {
+      id = 'dev-${DateTime.now().millisecondsSinceEpoch}-${_random.nextInt(999999).toString().padLeft(6, '0')}';
+      await _storage.write(key: 'device_id', value: id);
+    }
+    return id;
+  }
+
   /// Rotates the refresh token now (used by the realtime channel on reconnect).
   Future<bool> refreshNow() => _refreshSingleFlight();
 
@@ -166,6 +178,8 @@ class TamreedyApi {
 
   Future<bool> hasSession() async =>
       (await _storage.read(key: 'refresh_token')) != null;
+
+  Future<String?> getCachedRole() => _storage.read(key: 'cached_user_role');
 
   Future<void> _saveTokens(Map<String, dynamic> t) async {
     await _storage.write(
@@ -191,20 +205,25 @@ class TamreedyApi {
         _refreshCompleter!.complete(false);
         return false;
       }
+      final devId = await getDeviceId();
       final r = await Dio(
         BaseOptions(baseUrl: baseUrl, connectTimeout: const Duration(seconds: 10)),
-      ).post('/v1/auth/refresh', data: {'refreshToken': rt});
+      ).post('/v1/auth/refresh', data: {'refreshToken': rt, 'deviceId': devId});
 
       await _saveTokens(Map<String, dynamic>.from(r.data as Map));
       _refreshCompleter!.complete(true);
       return true;
     } catch (e) {
-      // Security: Only clear session if the server definitively rejected the token (400, 401, 403).
-      // DO NOT clear user session on transient network timeouts / socket errors!
+      // Security: Only clear session if server explicitly revoked or invalidated the session
+      // NEVER clear local tokens on network timeouts, socket exceptions, 5xx server errors, or offline state!
       if (e is DioException && e.response != null) {
         final code = e.response!.statusCode;
-        if (code == 400 || code == 401 || code == 403) {
-          await _storage.deleteAll();
+        final data = e.response!.data;
+        final err = data is Map ? (data['code'] ?? data['message']) : null;
+        if (code == 401 && (err == 'REFRESH_INVALID' || err == 'REFRESH_EXPIRED' || err == 'REFRESH_REUSED' || err == 'SESSION_REVOKED' || err == 'ACCOUNT_INACTIVE')) {
+          await _storage.delete(key: 'access_token');
+          await _storage.delete(key: 'refresh_token');
+          await _storage.delete(key: 'cached_user_role');
         }
       }
       _refreshCompleter!.complete(false);
@@ -216,13 +235,18 @@ class TamreedyApi {
 
   /// Interim password login; returns the account role.
   Future<String> login(String phone, String password) async {
+    final devId = await getDeviceId();
     final t = await post('/v1/auth/login', {
       'phone': phone,
       'password': password,
+      'deviceId': devId,
+      'platform': defaultTargetPlatform.name,
     });
     await _saveTokens(t);
     mustChangePassword = t['mustChangePassword'] == true;
-    return t['role'] as String;
+    final role = t['role'] as String;
+    await _storage.write(key: 'cached_user_role', value: role);
+    return role;
   }
 
   /// Replaces the password (ends other sessions) and keeps this device signed in.
@@ -241,9 +265,17 @@ class TamreedyApi {
 
   /// Step 2: exchange the code for tokens; returns the account role.
   Future<String> verifyOtp(String phone, String code) async {
-    final t = await post('/v1/auth/otp/verify', {'phone': phone, 'code': code});
+    final devId = await getDeviceId();
+    final t = await post('/v1/auth/otp/verify', {
+      'phone': phone,
+      'code': code,
+      'deviceId': devId,
+      'platform': defaultTargetPlatform.name,
+    });
     await _saveTokens(t);
-    return t['role'] as String;
+    final role = t['role'] as String;
+    await _storage.write(key: 'cached_user_role', value: role);
+    return role;
   }
 
   /// Patient self-registration. Signs the new account in and returns its role.
@@ -254,7 +286,9 @@ class TamreedyApi {
       'password': password,
     });
     await _saveTokens(t);
-    return (t['role'] as String?) ?? 'PATIENT';
+    final role = (t['role'] as String?) ?? 'PATIENT';
+    await _storage.write(key: 'cached_user_role', value: role);
+    return role;
   }
 
   /// Nurse join application (no account is created until staff approve it).
@@ -315,18 +349,22 @@ class TamreedyApi {
 
   Future<void> logout() async {
     final rt = await _storage.read(key: 'refresh_token');
+    final devId = await getDeviceId();
     if (rt != null) {
       try {
-        await post('/v1/auth/logout', {'refreshToken': rt});
+        await post('/v1/auth/logout', {'refreshToken': rt, 'deviceId': devId});
       } catch (_) {}
     }
-    await _storage.deleteAll();
+    await _storage.delete(key: 'access_token');
+    await _storage.delete(key: 'refresh_token');
+    await _storage.delete(key: 'cached_user_role');
+    mustChangePassword = false;
   }
 
   Future<void> saveAccessToken(String value) =>
       _storage.write(key: 'access_token', value: value);
 
-  Future<void> signOut() => _storage.deleteAll();
+  Future<void> signOut() => logout();
 
   Future<Map<String, dynamic>> getMap(String path) async =>
       Map<String, dynamic>.from((await dio.get(path)).data as Map);

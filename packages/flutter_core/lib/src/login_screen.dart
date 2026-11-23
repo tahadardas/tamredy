@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'analytics.dart';
 import 'api.dart';
@@ -200,7 +201,17 @@ class _LoginScreenState extends State<LoginScreen> {
   );
 }
 
-/// Shows [child] in demo mode or once a session exists; otherwise the login.
+/// Explicit session lifecycle states to guarantee persistent trusted device sessions
+enum AuthGateStatus {
+  initializing,
+  authenticated,
+  offlineWithSavedSession,
+  reauthenticationRequired,
+  signedOut,
+  accountSuspended,
+}
+
+/// Resilient AuthGate: Keeps trusted devices signed in across months and network drops.
 class AuthGate extends StatefulWidget {
   final TamreedyApi api;
   final String role;
@@ -216,64 +227,193 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
-  bool? _in = kDemoMode ? true : null;
+  AuthGateStatus _status = kDemoMode ? AuthGateStatus.authenticated : AuthGateStatus.initializing;
   bool _mustChange = false;
+
   @override
   void initState() {
     super.initState();
     if (!kDemoMode) {
-      widget.api.hasSession().then((has) async {
-        if (!has) {
-          if (mounted) setState(() => _in = false);
+      _verifySession();
+    }
+  }
+
+  Future<void> _verifySession() async {
+    final has = await widget.api.hasSession();
+    if (!has) {
+      if (mounted) setState(() => _status = AuthGateStatus.signedOut);
+      return;
+    }
+
+    final cachedRole = await widget.api.getCachedRole();
+    if (cachedRole != null && cachedRole != widget.role) {
+      // Role mismatch (e.g. nurse trying to open patient app)
+      await widget.api.logout();
+      if (mounted) setState(() => _status = AuthGateStatus.signedOut);
+      return;
+    }
+
+    try {
+      final me = await widget.api.getMap('/v1/auth/me');
+      final role = me['role'] as String?;
+      if (role != null && role != widget.role) {
+        await widget.api.logout();
+        if (mounted) setState(() => _status = AuthGateStatus.signedOut);
+        return;
+      }
+      final must = me['mustChangePassword'] == true;
+      if (mounted) {
+        setState(() {
+          _status = AuthGateStatus.authenticated;
+          _mustChange = must;
+        });
+      }
+    } catch (e) {
+      // Analyze the failure precisely:
+      // Never wipe trusted device credentials due to transient network failures!
+      if (e is DioException) {
+        final code = e.response?.statusCode;
+        final data = e.response?.data;
+        final err = data is Map ? (data['code'] ?? data['message']) : null;
+
+        if (code == 403 && (err == 'ACCOUNT_INACTIVE' || err == 'ACCOUNT_LOCKED')) {
+          if (mounted) setState(() => _status = AuthGateStatus.accountSuspended);
           return;
         }
-        try {
-          final me = await widget.api.getMap('/v1/auth/me');
-          final role = me['role'] as String?;
-          if (role != widget.role) {
-            await widget.api.logout();
-            if (mounted) setState(() => _in = false);
-            return;
-          }
-          final must = me['mustChangePassword'] == true;
-          if (mounted) {
-            setState(() {
-              _in = true;
-              _mustChange = must;
-            });
-          }
-        } catch (_) {
+
+        if (code == 401 && (err == 'SESSION_REVOKED' || err == 'REFRESH_REVOKED' || err == 'REFRESH_INVALID' || err == 'REFRESH_EXPIRED')) {
           await widget.api.logout();
-          if (mounted) {
-            setState(() {
-              _in = false;
-              _mustChange = false;
-            });
-          }
+          if (mounted) setState(() => _status = AuthGateStatus.reauthenticationRequired);
+          return;
         }
-      });
+
+        // Network timeouts, offline DNS, connection drops, 5xx server errors
+        if (mounted) {
+          setState(() => _status = AuthGateStatus.offlineWithSavedSession);
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() => _status = AuthGateStatus.offlineWithSavedSession);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_in == null)
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    if (_in! && _mustChange) {
-      return ChangePasswordScreen(
-        api: widget.api,
-        onDone: () => setState(() => _mustChange = false),
-        onLogout: () async {
-          await widget.api.logout();
-          if (mounted) setState(() => _in = false);
-        },
-      );
+    switch (_status) {
+      case AuthGateStatus.initializing:
+        return const Scaffold(
+          backgroundColor: Color(0xFFF5FAFD),
+          body: Center(
+            child: CircularProgressIndicator(color: TamreedyColors.teal),
+          ),
+        );
+
+      case AuthGateStatus.accountSuspended:
+        return Scaffold(
+          backgroundColor: const Color(0xFFF5FAFD),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: TamreedyColors.danger.withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.block_rounded, size: 48, color: TamreedyColors.danger),
+                  ),
+                  const SizedBox(height: 20),
+                  Text('تم تعليق الحساب', style: tamText(size: 20, weight: FontWeight.w800, color: TamreedyColors.text)),
+                  const SizedBox(height: 10),
+                  Text(
+                    'تم إيقاف هذا الحساب أو تعليقه من قبل إدارة تمريضي لأسباب تنظيمية. يرجى مراجعة الدعم الفني.',
+                    textAlign: TextAlign.center,
+                    style: tamText(size: 14, color: TamreedyColors.subtext, height: 1.5),
+                  ),
+                  const SizedBox(height: 28),
+                  PrimaryButton(
+                    'تسجيل الخروج',
+                    onPressed: () async {
+                      await widget.api.logout();
+                      if (mounted) setState(() => _status = AuthGateStatus.signedOut);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+      case AuthGateStatus.reauthenticationRequired:
+      case AuthGateStatus.signedOut:
+        return LoginScreen(
+          api: widget.api,
+          expectedRole: widget.role,
+          onLoggedIn: () => setState(() => _status = AuthGateStatus.authenticated),
+        );
+
+      case AuthGateStatus.authenticated:
+        if (_mustChange) {
+          return ChangePasswordScreen(
+            api: widget.api,
+            onDone: () => setState(() => _mustChange = false),
+            onLogout: () async {
+              await widget.api.logout();
+              if (mounted) setState(() => _status = AuthGateStatus.signedOut);
+            },
+          );
+        }
+        return widget.child(context);
+
+      case AuthGateStatus.offlineWithSavedSession:
+        return Stack(
+          children: [
+            widget.child(context),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF163B52).withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 8, offset: const Offset(0, 3)),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.wifi_off_rounded, size: 16, color: Color(0xFFDFF4F2)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'أنت في وضع عدم الاتصال — جلستك محفوظة وسيتم المزامنة تلقائياً',
+                          style: tamText(size: 12, weight: FontWeight.w600, color: Colors.white),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: _verifySession,
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          child: Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
     }
-    if (_in!) return widget.child(context);
-    return LoginScreen(
-      api: widget.api,
-      expectedRole: widget.role,
-      onLoggedIn: () => setState(() => _in = true),
-    );
   }
 }

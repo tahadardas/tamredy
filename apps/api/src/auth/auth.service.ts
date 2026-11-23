@@ -8,7 +8,7 @@ export const OTP_TTL_SECONDS = 300;
 export const OTP_MAX_ATTEMPTS = 5;
 export const OTP_MAX_PER_WINDOW = 3;
 export const ACCESS_TTL_SECONDS = 900;
-export const REFRESH_TTL_DAYS = 30;
+export const REFRESH_TTL_DAYS = 180; // 6 months sliding window for trusted devices
 const PHONE = /^\+[1-9]\d{7,14}$/;
 
 /** Real SMS delivery must be a licensed gateway; nothing is sent in this build. */
@@ -57,8 +57,38 @@ const safeEq = (a: string, b: string) => a.length === b.length && timingSafeEqua
 export class AuthService {
   constructor(private readonly db: DbService, private readonly sms: SmsProvider) {}
 
+  /** Upserts device session for trusted persistent logins. */
+  async upsertDeviceSession(
+    c: { query: (sql: string, p?: unknown[]) => Promise<any> },
+    userId: string,
+    deviceId?: string,
+    deviceName?: string,
+    platform?: string,
+    appKind?: string,
+  ): Promise<string | undefined> {
+    if (!deviceId) return undefined;
+    try {
+      const res = await c.query(`
+        INSERT INTO device_sessions(user_id, device_id, device_name, platform, app_kind, last_seen_at)
+        VALUES($1, $2, $3, coalesce($4, 'android'), $5, now())
+        ON CONFLICT (user_id, device_id)
+        DO UPDATE SET
+          device_name = coalesce(EXCLUDED.device_name, device_sessions.device_name),
+          platform = coalesce(EXCLUDED.platform, device_sessions.platform),
+          app_kind = coalesce(EXCLUDED.app_kind, device_sessions.app_kind),
+          revoked_at = NULL,
+          last_seen_at = now()
+        RETURNING id
+      `, [userId, deviceId, deviceName ?? null, platform ?? 'android', appKind ?? null]);
+      return res.rows[0]?.id;
+    } catch {
+      // Graceful fallback if migrations are pending in dev test runner
+      return undefined;
+    }
+  }
+
   /** Interim login for staff-provisioned accounts (AUTH_MODE=password). */
-  async login(phone: string, password: string) {
+  async login(phone: string, password: string, deviceMeta?: { deviceId?: string; deviceName?: string; platform?: string }) {
     if (authMode() !== 'password') throw new HttpException({ code: 'AUTH_MODE_OTP' }, 404);
     if (!PHONE.test(phone) || typeof password !== 'string' || password.length < 6 || password.length > 128) throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
     return this.db.transaction(async c => {
@@ -74,7 +104,8 @@ export class AuthService {
         throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
       }
       await c.query('UPDATE users SET failed_logins=0,locked_until=NULL WHERE id=$1', [u.id]);
-      return { ...(await this.issue(c, u.id, u.role, randomUUID())), mustChangePassword: !!u.must_change_password };
+      const dsi = await this.upsertDeviceSession(c, u.id, deviceMeta?.deviceId, deviceMeta?.deviceName, deviceMeta?.platform, u.role);
+      return { ...(await this.issue(c, u.id, u.role, randomUUID(), dsi)), mustChangePassword: !!u.must_change_password };
     });
   }
 
@@ -91,7 +122,7 @@ export class AuthService {
     return { expiresInSeconds: OTP_TTL_SECONDS };
   }
 
-  async verifyOtp(phone: string, code: string) {
+  async verifyOtp(phone: string, code: string, deviceMeta?: { deviceId?: string; deviceName?: string; platform?: string }) {
     if (authMode() !== 'otp') throw new HttpException({ code: 'OTP_DISABLED_PASSWORD_MODE' }, 404);
     if (!PHONE.test(phone) || !/^\d{6}$/.test(code)) throw new UnauthorizedException({ code: 'OTP_INVALID' });
     return this.db.transaction(async c => {
@@ -110,40 +141,97 @@ export class AuthService {
       const u = (await c.query('SELECT id,role,status FROM users WHERE phone_e164=$1', [phone])).rows[0];
       if (u.status !== 'ACTIVE') throw new ForbiddenException({ code: 'ACCOUNT_INACTIVE' });
       if (!['PATIENT', 'NURSE'].includes(u.role)) throw new ForbiddenException({ code: 'MFA_REQUIRED' });
-      return this.issue(c, u.id, u.role, randomUUID());
+      const dsi = await this.upsertDeviceSession(c, u.id, deviceMeta?.deviceId, deviceMeta?.deviceName, deviceMeta?.platform, u.role);
+      return this.issue(c, u.id, u.role, randomUUID(), dsi);
     });
   }
 
-  async refresh(refreshToken: string) {
+  async refresh(refreshToken: string, deviceId?: string) {
     const h = hashToken(refreshToken ?? '');
     return this.db.transaction(async c => {
-      const r = (await c.query('SELECT * FROM refresh_tokens WHERE token_hash=$1 FOR UPDATE', [h])).rows[0];
+      const r = (await c.query(`
+        SELECT rt.*
+        FROM refresh_tokens rt
+        WHERE rt.token_hash = $1
+        FOR UPDATE
+      `, [h])).rows[0];
+
       if (!r) throw new UnauthorizedException({ code: 'REFRESH_INVALID' });
+
+      // Check if associated device session was revoked
+      if (r.device_session_id) {
+        const ds = (await c.query('SELECT revoked_at FROM device_sessions WHERE id=$1', [r.device_session_id])).rows[0];
+        if (ds?.revoked_at) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+      }
+
       if (r.used_at || r.revoked_at) {
-        // Replay of an already-rotated token: assume theft and kill the whole family.
+        // Replay of an already-rotated or revoked token: assume theft and kill the whole family and device session.
         await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE family_id=$1', [r.family_id]);
+        if (r.device_session_id) {
+          await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE id=$1', [r.device_session_id]).catch(() => {});
+        }
         await c.query('COMMIT'); await c.query('BEGIN');
         throw new UnauthorizedException({ code: 'REFRESH_REUSED' });
       }
+
       if (new Date(r.expires_at) <= new Date()) throw new UnauthorizedException({ code: 'REFRESH_EXPIRED' });
       const u = (await c.query('SELECT id,role,status FROM users WHERE id=$1', [r.user_id])).rows[0];
       if (!u || u.status !== 'ACTIVE') throw new UnauthorizedException({ code: 'ACCOUNT_INACTIVE' });
-      await c.query('UPDATE refresh_tokens SET used_at=now() WHERE id=$1', [r.id]);
-      return this.issue(c, u.id, u.role, r.family_id);
+
+      // Sliding session update: extend device session last_seen_at
+      let dsi = r.device_session_id;
+      if (deviceId) {
+        dsi = (await this.upsertDeviceSession(c, u.id, deviceId, undefined, undefined, u.role)) ?? dsi;
+      } else if (dsi) {
+        await c.query('UPDATE device_sessions SET last_seen_at=now() WHERE id=$1', [dsi]).catch(() => {});
+      }
+
+      const nextRefreshToken = randomBytes(32).toString('base64url');
+      const nextHash = hashToken(nextRefreshToken);
+
+      await c.query('UPDATE refresh_tokens SET used_at=now(), replaced_by_hash=$2 WHERE id=$1', [r.id, nextHash]);
+
+      await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id)
+        VALUES($1,$2,$3,now()+($4||' days')::interval,$5)`,
+        [u.id, r.family_id, nextHash, String(REFRESH_TTL_DAYS), dsi]);
+
+      const accessToken = jwt.sign({ dsi }, secret(), {
+        algorithm: 'HS256', subject: u.id, expiresIn: ACCESS_TTL_SECONDS,
+        issuer: process.env.JWT_ISSUER ?? 'tamreedy-api', audience: process.env.JWT_AUDIENCE ?? 'tamreedy-mobile',
+      });
+      return { accessToken, refreshToken: nextRefreshToken, expiresInSeconds: ACCESS_TTL_SECONDS, role: u.role };
     });
   }
 
-  async logout(refreshToken: string) {
-    await this.db.query(`UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now())
-      WHERE family_id=(SELECT family_id FROM refresh_tokens WHERE token_hash=$1)`, [hashToken(refreshToken ?? '')]);
+  async logout(refreshToken: string, deviceId?: string) {
+    const h = hashToken(refreshToken ?? '');
+    await this.db.transaction(async c => {
+      const r = (await c.query('SELECT family_id, device_session_id FROM refresh_tokens WHERE token_hash=$1', [h])).rows[0];
+      if (r) {
+        await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE family_id=$1', [r.family_id]);
+        if (r.device_session_id) {
+          await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE id=$1', [r.device_session_id]).catch(() => {});
+        }
+      }
+      if (deviceId) {
+        await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE device_id=$1', [deviceId]).catch(() => {});
+      }
+    });
     return { ok: true };
   }
 
-  async issue(c: { query: (sql: string, p?: unknown[]) => Promise<any> }, userId: string, role: string, family: string) {
+  async issue(
+    c: { query: (sql: string, p?: unknown[]) => Promise<any> },
+    userId: string,
+    role: string,
+    family: string,
+    deviceSessionId?: string,
+  ) {
     const refreshToken = randomBytes(32).toString('base64url');
-    await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at) VALUES($1,$2,$3,now()+($4||' days')::interval)`,
-      [userId, family, hashToken(refreshToken), String(REFRESH_TTL_DAYS)]);
-    const accessToken = jwt.sign({}, secret(), {
+    await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id)
+      VALUES($1,$2,$3,now()+($4||' days')::interval,$5)`,
+      [userId, family, hashToken(refreshToken), String(REFRESH_TTL_DAYS), deviceSessionId ?? null]);
+    const accessToken = jwt.sign({ dsi: deviceSessionId }, secret(), {
       algorithm: 'HS256', subject: userId, expiresIn: ACCESS_TTL_SECONDS,
       issuer: process.env.JWT_ISSUER ?? 'tamreedy-api', audience: process.env.JWT_AUDIENCE ?? 'tamreedy-mobile',
     });

@@ -16,6 +16,7 @@ const pg = new PGlite();
 const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(Point,4326\)/g, 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
 await pg.exec(strip(readFileSync(resolve(root, 'infra/db/migrations/001_core.sql'), 'utf8')));
 await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/004_auth_otp_refresh.sql'), 'utf8'));
+await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/019_device_sessions_and_persistent_auth.sql'), 'utf8'));
 
 // Minimal DbService stand-in: one connection, serialised transactions.
 let chain = Promise.resolve();
@@ -86,4 +87,24 @@ test('logout revokes the family; admin accounts need MFA', async () => {
 test('code hash is bound to the phone number', () => {
   assert.notEqual(hashCode('+1', '123456'), hashCode('+2', '123456'));
   assert.ok(SmsProvider);
+});
+
+test('trusted device sessions persist and can be revoked', async () => {
+  const p = '+963988888888';
+  const deviceMeta = { deviceId: 'test-device-uuid-1', deviceName: 'Pixel 8 Pro', platform: 'android' };
+  const t1 = await auth.verifyOtp(p, await code(p), deviceMeta);
+  assert.ok(t1.accessToken && t1.refreshToken);
+
+  // Check device session recorded
+  const sessions = await pg.query('SELECT * FROM device_sessions WHERE device_id=$1', [deviceMeta.deviceId]);
+  assert.equal(sessions.rowCount, 1);
+  assert.equal(sessions.rows[0].device_name, 'Pixel 8 Pro');
+
+  // Refresh with device ID updates last_seen_at
+  const t2 = await auth.refresh(t1.refreshToken, deviceMeta.deviceId);
+  assert.ok(t2.accessToken && t2.refreshToken);
+
+  // Revoke device session
+  await pg.query('UPDATE device_sessions SET revoked_at=now() WHERE device_id=$1', [deviceMeta.deviceId]);
+  await assert.rejects(auth.refresh(t2.refreshToken, deviceMeta.deviceId), codeIs('SESSION_REVOKED'));
 });
