@@ -28,6 +28,10 @@ const VALIDATORS: Record<string, (v: any) => unknown> = {
       return { radiusM, seconds: Math.trunc(num(w?.seconds, 5, 120, 'BAD_SECONDS')) };
     }) };
   },
+  commitment: v => ({
+    lookbackDays: Math.trunc(num(v?.lookbackDays ?? 90, 1, 365, 'BAD_COMMITMENT_WINDOW')),
+    minAssignedVisits: Math.trunc(num(v?.minAssignedVisits ?? 5, 1, 100, 'BAD_COMMITMENT_MINIMUM')),
+  }),
   orders: v => ({ accepting: v?.accepting === true, pausedMessage: str(v?.pausedMessage ?? '', 200, 'BAD_MESSAGE') }),
   registration: v => ({ patients: v?.patients !== false, nurses: v?.nurses !== false }),
   security: v => ({ idleMinutes: Math.trunc(num(v?.idleMinutes, 5, 240, 'BAD_IDLE')), passwordMinLength: Math.trunc(num(v?.passwordMinLength, 8, 64, 'BAD_PWLEN')), defaultPassword: (() => { const p = str(v?.defaultPassword ?? '123456', 64, 'BAD_DEFAULT_PW'); if (p.length < 6) bad('BAD_DEFAULT_PW'); return p; })() }),

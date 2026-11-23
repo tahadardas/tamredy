@@ -2,8 +2,8 @@
   "projectName": "tamreedy",
   "branch": "codex/open-dispatch",
   "baselineCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
-  "phase": 6,
+  "phase": 7,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement bounded commitment-history summaries with patient ownership and active-offer privacy.",
+  "nextAction": "Implement appeal submission, authorized review, and audited decision transitions.",
   "productionDeploymentAuthorized": false
 }

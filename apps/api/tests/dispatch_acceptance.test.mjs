@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { DispatchService } from '../dist/dispatch/dispatch.service.js';
+import { CommitmentService } from '../dist/requests/commitment.service.js';
 import { cancelRequest } from '../dist/requests/cancellation.service.js';
 
 const migrations = new URL('../../../infra/db/migrations/', import.meta.url);
@@ -106,4 +107,25 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   assert.equal(events.length, 1);
   assert.doesNotMatch(JSON.stringify(events),/HEALTH_CIRCUMSTANCE_CHANGED|تفاصيل اختبار خاصة/);
   assert.equal((await query("SELECT status FROM request_assignments")).rows[0].status,'RELEASED');
+  const commitment = new CommitmentService(db);
+  assert.equal((await commitment.ownHistory(patient)).countedCancellations,1);
+  await assert.rejects(commitment.forActiveOffer(nurse,offer),error => error.getStatus() === 404);
+  const newOffer = (await query(`
+    WITH next_request AS (
+      INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,
+        price_amount,currency_code,commission_bps)
+      SELECT requester_user_id,beneficiary_id,service_id,location,location_source,address_text,
+        price_amount,currency_code,commission_bps FROM care_requests WHERE id=$1 RETURNING id
+    )
+    INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at)
+    SELECT r.id,n.id,1,now()+interval '1 minute' FROM next_request r CROSS JOIN nurses n RETURNING id
+  `,[first.requestId])).rows[0].id;
+  assert.deepEqual(await commitment.forActiveOffer(nurse,newOffer), {sufficient:false,lookbackDays:90});
+  await query(`INSERT INTO app_settings VALUES('commitment','{"lookbackDays":90,"minAssignedVisits":1}')`);
+  assert.deepEqual(await commitment.forActiveOffer(nurse,newOffer),
+    {sufficient:true,lookbackDays:90,assignedVisits:1,countedCancellations:1});
+  await query(`INSERT INTO cancellation_appeals(cancellation_id,submitted_by_user_id,submitter_role,description)
+    VALUES($1,$2,'PATIENT','أطلب مراجعة التصنيف')`,[accepted.cancellationId,patient]);
+  assert.equal((await commitment.forActiveOffer(nurse,newOffer)).countedCancellations,0);
+  assert.equal((await commitment.ownHistory(patient)).items[0].commitmentImpact,false);
 });
