@@ -1,11 +1,9 @@
 {
   "projectName": "tamreedy",
-  "branch": "feature/aero-signature",
-  "lastCommit": "0683927",
-  "phase": "PHASE_9_DATABASE_AUDIT_COMPLETE",
-  "status": "GREEN",
-  "timestamp": "2026-11-23T13:22:00+03:00",
-  "activeTask": "Database schema audited against international standards; redundant indexes dropped; critical foreign keys and spatial indexes added in migration 020",
-  "testsPassing": true,
-  "nextAction": "Commit and push feature/aero-signature to GitHub"
+  "branch": "codex/open-dispatch",
+  "baselineCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
+  "phase": 2,
+  "status": "IN_PROGRESS",
+  "nextAction": "Implement and verify migration 021 for open dispatch search windows, ETA, cancellation evidence, and appeals.",
+  "productionDeploymentAuthorized": false
 }

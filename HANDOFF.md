@@ -121,3 +121,20 @@ If resuming:
 1. Verify HEAD on `feature/aero-signature`.
 2. Inspect `HANDOFF.md` and `handoff/checkpoint.json`.
 3. All code is clean, fully tested, and passing all monorepo checks.
+
+---
+
+## Open Dispatch implementation checkpoint
+
+- CURRENT_BRANCH: codex/open-dispatch
+- LAST_COMMIT: cb0066ea6a925aeac16e85852c18897ab5691b34 (verified baseline; origin/feature/aero-signature matched)
+- COMPLETED: Phase 1 baseline and targeted audit. Existing worker uses waves, automatic departure remains in the nurse app, cancellation has no evidence ledger, and push currently performs network I/O inside its outbox transaction.
+- IN_PROGRESS: Phase 2, additive database invariants.
+- NEXT_EXACT_ACTION: Add migration 021 for persisted search windows, fixed departure ETA, cancellation evidence and appeals, then test its constraints with pre-migration fixtures.
+- PENDING: Phases 3–10 from the attached specification.
+- FILES_CHANGED: HANDOFF.md and handoff/checkpoint.json. Existing dirty apps/nurse_app/lib/screens/home.dart belongs to the workspace baseline.
+- TEST_RESULTS: API build passed. Focused baseline tests 10 passed, 1 skipped.
+- KNOWN_ISSUES: PGlite tests substitute geometry; they cannot establish PostGIS query plans or concurrent multi-connection behavior.
+- DECISIONS: Preserve legacy in-flight records and keep open dispatch disabled until a separately authorized rollout. Preserve billing and historical records.
+- MIGRATIONS: Existing baseline through 020.
+- BLOCKERS: No disposable PostgreSQL/PostGIS connection in TEST_DATABASE_URL; no Docker or psql detected.
