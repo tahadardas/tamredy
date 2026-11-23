@@ -38,6 +38,7 @@ class NurseController extends ChangeNotifier {
   int tab = 0;
   NurseStage stage = NurseStage.idle;
   Offer? offer;
+  Future<Map<String, dynamic>?>? offerCommitment;
   String? assignmentId;
   bool busy = false;
   String? error;
@@ -200,6 +201,8 @@ class NurseController extends ChangeNotifier {
           stage = NurseStage.idle;
           assignmentId = null;
           requestId = null;
+          dest = null;
+          patientAddress = '';
           _stopNavigation();
         }
       }
@@ -347,6 +350,7 @@ class NurseController extends ChangeNotifier {
       netShare,
       exp,
     );
+    offerCommitment = kDemoMode ? null : _fetchCommitment(offer!.id);
     stage = NurseStage.offer;
     tab = 1;
     Analytics.log('offer_received');
@@ -364,6 +368,14 @@ class NurseController extends ChangeNotifier {
   }
 
 
+
+  Future<Map<String, dynamic>?> _fetchCommitment(String offerId) async {
+    try {
+      return await api.getMap('/v1/nurse/offers/$offerId/commitment');
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<void> accept() async {
     OfferAlarm.cancelAll(); // silence the alarm as soon as she acts

@@ -1,3 +1,4 @@
+import 'cancellation_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
@@ -234,12 +235,13 @@ class TrackScreen extends StatelessWidget {
           ),
           SoftButton(
             'إلغاء الطلب',
-            onPressed: c.busy ? null : () => _confirmCancel(context, c),
+            onPressed: c.busy ? null : () => showCancellationSheet(context, c),
           ),
         ],
       );
     }
     final titles = {
+      VisitStage.assigned: ('تم إسناد الزيارة', 'بانتظار تأكيد انطلاق الممرض', 'معيّنة'),
       VisitStage.enRoute: (
         'الممرض في الطريق',
         'يمكنك متابعة وصوله على الخريطة',
@@ -325,45 +327,17 @@ class TrackScreen extends StatelessWidget {
               ),
             ),
           ),
-          if (c.stage == VisitStage.enRoute)
+          if (c.stage == VisitStage.assigned || c.stage == VisitStage.enRoute)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: SoftButton(
                 'إلغاء الطلب',
-                onPressed: c.busy ? null : () => _confirmCancel(context, c),
+                onPressed: c.busy ? null : () => showCancellationSheet(context, c),
               ),
             ),
         ],
       ],
     );
-  }
-
-  static Future<void> _confirmCancel(BuildContext context, PatientController c) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تأكيد إلغاء الطلب'),
-        content: const Text('هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('تراجع'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('نعم، إلغاء الطلب', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && context.mounted) {
-      final success = await c.cancel();
-      if (!success && context.mounted && c.error != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(c.error!), backgroundColor: Colors.red),
-        );
-      }
-    }
   }
 
   Widget _tile(String a, String b, String sub) => Container(

@@ -593,7 +593,19 @@ class _OfferScreenState extends State<OfferScreen> with SingleTickerProviderStat
                     ),
                   ),
 
-                  if (widget.c.error != null) ...[
+                  if (widget.c.offerCommitment != null)
+                  FutureBuilder(
+                    future: widget.c.offerCommitment,
+                    builder: (context, snapshot) {
+                      final summary = snapshot.data;
+                      if (summary == null) return const SizedBox.shrink();
+                      final text = summary['sufficient'] == true
+                          ? 'آخر ${summary['lookbackDays']} يومًا: ${summary['assignedVisits']} زيارة مسندة، ${summary['countedCancellations']} إلغاء محتسب بعد الانطلاق. تستثنى الحالات المعذورة.'
+                          : 'لا توجد بيانات كافية عن سجل الالتزام';
+                      return Text(text, style: tamText(size: 12, color: Colors.white70));
+                    },
+                  ),
+                if (widget.c.error != null) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(12),

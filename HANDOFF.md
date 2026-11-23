@@ -129,9 +129,9 @@ If resuming:
 - CURRENT_BRANCH: codex/open-dispatch
 - LAST_COMMIT: cb0066ea6a925aeac16e85852c18897ab5691b34 (verified baseline; origin/feature/aero-signature matched)
 - COMPLETED: Phase 1 baseline and targeted audit. Phase 2 additive database foundation and invariant tests. Existing worker uses waves, automatic departure remains in the nurse app, cancellation has no evidence ledger, and push currently performs network I/O inside its outbox transaction.
-- IN_PROGRESS: Phase 8, client and admin integration.
-- NEXT_EXACT_ACTION: Integrate policy preview and retry-safe cancellation in the patient app, commitment history and appeal views, and scoped nurse offer summaries.
-- PENDING: Phases 8–10, distinct arrived/early-termination incident workflows, configurable delayed-departure alerts and detailed open-search exclusion reporting. The opt-in worker and admin setting are implemented and tested off production.
+- IN_PROGRESS: Phase 9, outbox and notification reliability.
+- NEXT_EXACT_ACTION: Lease outbox work atomically, deliver closure by offer ID, and make the device reconcile duplicate and delayed messages.
+- PENDING: Phases 9–10, nurse appeal submission UI, distinct arrived/early-termination incident workflows, configurable delayed-departure alerts and detailed open-search exclusion reporting. The opt-in worker and admin setting are implemented and tested off production.
 - FILES_CHANGED: HANDOFF.md, handoff/checkpoint.json, migration 021, docs/MIGRATION_021.md and apps/api/tests/open_dispatch_foundation.test.mjs. Existing dirty apps/nurse_app/lib/screens/home.dart belongs to the workspace baseline.
 - TEST_RESULTS: API build passed. Focused baseline tests 10 passed, 1 skipped. Migration 021 passed a pre-existing-data and integrity test (PGlite).
 - KNOWN_ISSUES: PGlite tests substitute geometry; they cannot establish PostGIS query plans or concurrent multi-connection behavior.
@@ -148,3 +148,5 @@ If resuming:
 - Phase 6 evidence: authenticated patient history, active-offer-only nurse summaries, configurable 90-day window and minimum five assigned visits. Test confirms a closed offer cannot fetch a summary, small samples redact counts, and open patient appeals suppress impact.
 
 - Phase 7 evidence: ownership, deadline, legal transitions, duplicate protection, private notes and audited review. Integrated test covers open appeal suppression, approval history, and replay retaining the original cancellation decision. Protected evidence attachments are still pending. Concurrent workspace commit 61fb950 was preserved.
+
+- Phase 8 evidence: verified Flutter patient 6/6, nurse 5/5, route audit 3/3 and admin build. Added Aero cancellation sheet with preview, retry key and server acknowledgement, patient commitment and appeal screens, nurse offer summary, and admin appeal queue.

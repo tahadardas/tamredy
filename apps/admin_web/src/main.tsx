@@ -13,6 +13,7 @@ import {Applications} from './pages_applications';
 import {AuditLog, SettingsPage} from './pages_settings';
 import {Dashboard, Finance, Live, LiveMap, Metrics, Page, Reports, RequestRow, Requests, Reviews, WalletRec} from './pages';
 import {DispatchMonitor} from './pages_dispatch';
+import {CancellationAppeals} from './pages_appeals';
 
 export type NavItem = {
   id: string;
@@ -36,6 +37,7 @@ export const navCategories: NavCategory[] = [
       {id: 'dispatch', label: 'مراقبة التوزيع', icon: 'bell', title: 'مراقبة الطلبات والإشعارات — Dispatch Monitor', desc: 'تتبع لحظي لمحرك المطابقة الجغرافية وأسباب الاستبعاد وصحة الإشعارات'},
       {id: 'map', label: 'مراقبة ميدانية', icon: 'pin', title: 'المراقبة الميدانية المباشرة', desc: 'عرض توزيع الحالات والزيارات والممرضين'},
       {id: 'requests', label: 'إدارة الطلبات', icon: 'doc', title: 'إدارة ومتابعة الطلبات', desc: 'تصفية وبحث ومراقبة مراحل الإسناد والخدمة'},
+      {id: 'appeals', label: 'الاعتراضات', icon: 'doc', title: 'اعتراضات الإلغاء', desc: 'مراجعة الاعتراضات واتخاذ القرارات'},
     ],
   },
   {
@@ -321,6 +323,7 @@ function App() {
     dispatch: <DispatchMonitor live={live} />,
     map: <LiveMap live={live} />,
     requests: <Requests live={live} />,
+    appeals: <CancellationAppeals live={live} />,
     applications: <Applications live={live} />,
     nurses: <Nurses live={live} />,
     credentials: <Credentials live={live} />,

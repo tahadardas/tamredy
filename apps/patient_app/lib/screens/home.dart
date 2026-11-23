@@ -146,6 +146,12 @@ class ActiveOrderBanner extends StatelessWidget {
         icon = Icons.radar;
         statusColor = TamreedyColors.teal;
         break;
+      case VisitStage.assigned:
+        statusTitle = 'تم إسناد الزيارة';
+        statusSub = 'بانتظار تأكيد انطلاق الممرض';
+        icon = Icons.check_circle_outline;
+        statusColor = TamreedyColors.teal;
+        break;
       case VisitStage.enRoute:
         statusTitle = 'الممرض في الطريق إليك';
         statusSub = c.route?.etaLabel != null ? 'الوصول التقديري: ${c.route!.etaLabel}' : 'الممرض في طريقه لموقعك';

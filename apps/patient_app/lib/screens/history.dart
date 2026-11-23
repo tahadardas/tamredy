@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
+import 'commitment.dart';
 
 /// P09 — order history.
 class HistoryScreen extends StatelessWidget {
@@ -50,6 +51,9 @@ class HistoryScreen extends StatelessWidget {
         ),
       ),
       const SectionTitle('الخيارات'),
+      SoftButton('سجل الالتزام بالمواعيد', onPressed: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => CommitmentScreen(api: c.api)),
+      )),
       TamCard(
         child: Column(
           children: [
