@@ -80,7 +80,7 @@ class NurseController extends ChangeNotifier {
   String serviceTitle = 'زيارة تمريضية';
   RouteInfo? route;
   StreamSubscription<Position>? _posSub;
-  Timer? _routeTimer, _demoMove;
+  Timer? _routeTimer, _demoMove, _demoOfferTimer;
   DateTime _lastSent = DateTime.fromMillisecondsSinceEpoch(0);
 
   // Home / earnings (demo values mirror the approved designs).
@@ -194,7 +194,8 @@ class NurseController extends ChangeNotifier {
             requestId = null;
         }
       } else {
-        availabilityManager.setActiveAssignment(false);
+        _demoOfferTimer?.cancel();
+    availabilityManager.setActiveAssignment(false);
         if (stage != NurseStage.idle && stage != NurseStage.offer) {
           stage = NurseStage.idle;
           assignmentId = null;
@@ -228,8 +229,9 @@ class NurseController extends ChangeNotifier {
 
     if (kDemoMode) {
       await availabilityManager.setAvailability(v);
+      _demoOfferTimer?.cancel();
       if (v) {
-        Timer(const Duration(seconds: 4), () {
+        _demoOfferTimer = Timer(const Duration(seconds: 4), () {
           if (stage == NurseStage.idle) {
             _showOffer({
               'id': 'demo-offer',
@@ -693,6 +695,7 @@ class NurseController extends ChangeNotifier {
     assignmentId = null;
     stage = NurseStage.idle;
     tab = 0;
+    _demoOfferTimer?.cancel();
     availabilityManager.setActiveAssignment(false);
     if (available) availabilityManager.syncNow();
     notifyListeners();
@@ -700,6 +703,7 @@ class NurseController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _demoOfferTimer?.cancel();
     _posSub?.cancel();
     _routeTimer?.cancel();
     _demoMove?.cancel();

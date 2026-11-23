@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -44,10 +45,11 @@ class AlarmData {
 class OfferAlarm {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
+  static bool disabledForTesting = false;
   static void Function()? onTap;
 
   static Future<void> init() async {
-    if (_ready || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    if (disabledForTesting || _ready || kIsWeb || !Platform.isAndroid) {
       return;
     }
     await _plugin.initialize(
@@ -91,6 +93,7 @@ class OfferAlarm {
 
   /// Ask once (when the nurse goes available): notifications + full-screen alerts over the lock screen (Android 14+).
   static Future<void> requestPermissions() async {
+    if (disabledForTesting || kIsWeb || !Platform.isAndroid) return;
     await init();
     final android = _plugin
         .resolvePlatformSpecificImplementation<
@@ -101,6 +104,7 @@ class OfferAlarm {
   }
 
   static Future<void> show(AlarmData a) async {
+    if (disabledForTesting || kIsWeb || !Platform.isAndroid) return;
     try {
       await init();
       if (!_ready) return;

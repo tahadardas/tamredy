@@ -1,10 +1,12 @@
 import 'package:tamreedy_core/tamreedy_core.dart' show mapsEnabled;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tamreedy_nurse_app/alarm.dart';
 import 'package:tamreedy_nurse_app/controller.dart';
 import 'package:tamreedy_nurse_app/main.dart';
 
 void main() {
+  OfferAlarm.disabledForTesting = true;
   moneyTests();
   testWidgets('availability -> offer -> accept -> complete', (tester) async {
     tester.view.physicalSize = const Size(360, 740);

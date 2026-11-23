@@ -699,20 +699,29 @@ class ProfileScreen extends StatelessWidget {
       const SectionTitle('مهاراتي السريرية المعتمدة'),
       if (c.skills.isEmpty)
         Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFFFEF3C7),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.3)),
+            color: const Color(0xFFFEF3C7).withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(AeroRadii.secondaryCard),
+            border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.35)),
+            boxShadow: AeroShadows.card,
           ),
           child: Row(
             children: [
-              const Icon(Icons.info_outline, color: Color(0xFFD97706), size: 22),
-              const SizedBox(width: 10),
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.info_outline, color: Color(0xFFD97706), size: 20),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'لم يتم اعتماد أي مهارات سريرية لك بعد. يرجى مراجعة الإدارة لاعتماد خدماتك لتتمكن من استقبال الطلبات في منطقتك.',
-                  style: tamText(size: 12, color: const Color(0xFF92400E), height: 1.5),
+                  style: tamText(size: 12.5, color: const Color(0xFF92400E), height: 1.5),
                 ),
               ),
             ],
@@ -720,25 +729,34 @@ class ProfileScreen extends StatelessWidget {
         )
       else
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: 10,
+          runSpacing: 10,
           children: [
             for (final s in c.skills)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF0FDF4),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.4)),
+                  color: AeroColors.aeroTint.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(AeroRadii.dock),
+                  border: Border.all(color: AeroColors.accentTeal.withValues(alpha: 0.3)),
+                  boxShadow: AeroShadows.card,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.verified, size: 14, color: Color(0xFF059669)),
-                    const SizedBox(width: 6),
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: const BoxDecoration(
+                        color: AeroColors.accentTeal,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.check, size: 13, color: Colors.white),
+                    ),
+                    const SizedBox(width: 8),
                     Text(
                       s,
-                      style: tamText(size: 12, weight: FontWeight.w600, color: const Color(0xFF065F46)),
+                      style: tamText(size: 12.5, weight: FontWeight.w700, color: AeroColors.primaryNavy),
                     ),
                   ],
                 ),
