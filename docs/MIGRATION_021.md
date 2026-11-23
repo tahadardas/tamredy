@@ -27,3 +27,8 @@ Preflight on a restored staging database with 021, PostGIS, and migration 007 in
 ## Migration 023 · Outbox delivery leases
 
 Verify migration 018 exists and historical delivery rows have not been deleted. Back up the target before running the migration during a quiet deployment window. Both ALTER TABLEs take exclusive locks; the new fields are nullable with no backfill. For rollout, stop the old worker before starting the lease-aware worker. Verify lease expiry recovery and independent realtime/push claims with the outbox test. Rows with an active lease remain pending for up to three minutes. Preserve the columns during app rollback; let claims drain or expire before starting a previous worker. External delivery is at least once when a worker dies after the provider accepted a message but before the ledger has recorded it.
+
+
+## Migration 024 · Delayed departure reminders
+
+The new deadline and reminder timestamp are nullable. There is no backfill or automatic penalty. Review ALTER TABLE lock time on staging, and verify the partial reminder index. The dispatch admin settings control the deadline for newly accepted assignments, with zero disabling it. Verify one reminder per overdue assignment, no reminder after departure, and no cancellation or fee mutation. Keep evidence columns if reverting application code.

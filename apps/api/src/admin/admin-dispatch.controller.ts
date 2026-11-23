@@ -17,6 +17,9 @@ export class AdminDispatchController {
       this.db.query(`
         SELECT
           (SELECT count(*)::int FROM care_requests WHERE status = 'OFFERING') AS active_searches,
+          (SELECT count(*)::int FROM request_assignments a JOIN care_requests r ON r.id=a.request_id
+            WHERE r.status='ASSIGNED' AND a.status='ACTIVE' AND a.departed_at IS NULL
+              AND a.departure_due_at<=statement_timestamp()) AS delayed_departures,
           (SELECT count(*)::int FROM care_requests WHERE status = 'UNFULFILLED' AND created_at >= now() - interval '24 hours') AS unfulfilled_24h,
           (SELECT count(*)::int FROM request_offers WHERE created_at >= date_trunc('day', now())) AS offers_today,
           (SELECT count(*)::int FROM request_offers WHERE status = 'ACCEPTED' AND created_at >= date_trunc('day', now())) AS offers_accepted_today,

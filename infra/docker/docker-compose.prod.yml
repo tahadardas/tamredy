@@ -12,6 +12,7 @@ x-api-env: &api-env
   JWT_ISSUER: tamreedy-api
   JWT_AUDIENCE: tamreedy-mobile
   API_PORT: "3000"
+  OPEN_DISPATCH_ENABLED: ${OPEN_DISPATCH_ENABLED:-false}
   UPLOADS_DIR: /data/uploads
   DOCS_ENC_KEY: ${DOCS_ENC_KEY:-}   # 64 hex chars; if empty, derived from JWT_SECRET (then never rotate JWT_SECRET)
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}

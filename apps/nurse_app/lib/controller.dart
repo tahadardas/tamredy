@@ -356,9 +356,13 @@ class NurseController extends ChangeNotifier {
   }
 
   void _showOffer(Map<String, dynamic> o) {
-    final expiresAt = DateTime.tryParse('${o['expires_at']}');
-    if (!kDemoMode &&
-        (expiresAt == null || !expiresAt.isAfter(DateTime.now()))) {
+    final deadline = DateTime.tryParse('${o['expires_at']}');
+    final serverNow = DateTime.tryParse('${o['server_now']}');
+    final now = DateTime.now();
+    final expiresAt = deadline != null && serverNow != null
+        ? now.add(deadline.difference(serverNow))
+        : deadline;
+    if (!kDemoMode && (expiresAt == null || !expiresAt.isAfter(now))) {
       return;
     }
     final title = (o['title_ar'] ?? 'زيارة تمريضية').toString();
@@ -387,7 +391,11 @@ class NurseController extends ChangeNotifier {
     Analytics.log('offer_received');
 
     // Trigger insistent alert and alarm immediately
-    final ttl = exp.difference(DateTime.now()).inSeconds.clamp(5, 60);
+    final ttl = exp.difference(DateTime.now()).inSeconds.clamp(0, 60);
+    if (ttl == 0) {
+      notifyListeners();
+      return;
+    }
     OfferAlarm.show(AlarmData(
       offer!.id,
       'طلب جديد في $area',

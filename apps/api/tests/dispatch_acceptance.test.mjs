@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { notifyDelayedDepartures } from '../../worker/src/departure-reminders.ts';
 import { PGlite } from '@electric-sql/pglite';
 import { DispatchService } from '../dist/dispatch/dispatch.service.js';
 import { AppealsService } from '../dist/requests/appeals.service.js';
@@ -29,6 +30,7 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
     CREATE FUNCTION ST_X(geometry) RETURNS double precision LANGUAGE sql AS $$ SELECT 36.25::double precision $$;
   `);
   await pg.exec(read('022_open_dispatch_eligibility'));
+  await pg.exec(read('024_departure_reminders'));
   await pg.exec(`
     CREATE TABLE app_settings(key text PRIMARY KEY, value jsonb);
     INSERT INTO users(phone_e164,role) VALUES ('patient-1','PATIENT'),('nurse-1','NURSE');
@@ -78,11 +80,21 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   const {offer, user_id: nurse} = (await query('SELECT o.id AS offer,n.user_id FROM request_offers o JOIN nurses n ON n.id=o.nurse_id')).rows[0];
   await assert.rejects(dispatch.accept(nurse, offer), error => error.getStatus() === 410);
   await query(`UPDATE request_offers SET expires_at=(SELECT search_expires_at FROM care_requests)`);
+  const shown = (await dispatch.offersForUser(nurse))[0];
+  assert.equal(shown.area,'ضمن نطاق الخدمة');
+  assert.doesNotMatch(JSON.stringify(shown), /دمشق|address_text/);
+  await query("INSERT INTO app_settings VALUES('dispatch',$1::jsonb)",[JSON.stringify({departureReminderSeconds:60})]);
   const first = await dispatch.accept(nurse, offer);
   assert.equal(first.status, 'ASSIGNED');
   assert.equal(first.replayed, false);
   assert.equal(routeCalls, 0);
   assert.equal((await query('SELECT departed_at FROM request_assignments')).rows[0].departed_at, null);
+  assert.equal(await notifyDelayedDepartures(db),false);
+  await query(`UPDATE request_assignments SET accepted_at=now()-interval '2 minutes',
+    departure_due_at=now()-interval '1 minute' WHERE id=$1`,[first.assignmentId]);
+  assert.equal(await notifyDelayedDepartures(db),true);
+  assert.equal(await notifyDelayedDepartures(db),false);
+  assert.equal((await query("SELECT 1 FROM outbox_events WHERE event_type='visit.departure_delayed'")).rowCount,1);
   const departed = await dispatch.transition(nurse, first.assignmentId, 'depart');
   assert.equal(departed.status, 'EN_ROUTE');
   const replay = await dispatch.accept(nurse, offer);

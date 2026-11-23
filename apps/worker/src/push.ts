@@ -13,6 +13,7 @@ export function pushCopy(type: string, payload: Record<string, any> = {}): { tit
     case 'cancellation.appeal.resolved': return { title: 'تمت مراجعة الاعتراض', body: 'افتح التطبيق للاطلاع على النتيجة.' };
     case 'offer.created': return { title: 'طلب جديد قريب منك', body: 'لديك عرض محدود المدة، افتح التطبيق للقبول.' };
     case 'request.assigned': return { title: 'تم قبول طلبك', body: 'تم إسناد طلبك إلى ممرض معتمد.' };
+    case 'visit.departure_delayed': return { title: 'تذكير ببدء التوجه', body: 'لديك زيارة مسندة بانتظار تأكيد الانطلاق.' };
     case 'visit.depart': return { title: 'الممرض في الطريق', body: 'يمكنك متابعة وصوله من التطبيق.' };
     case 'visit.arrive': return { title: 'وصل الممرض', body: 'الممرض عند موقع الزيارة.' };
     case 'visit.complete': return { title: 'تمت الزيارة', body: 'المبلغ المطلوب جاهز في التطبيق.' };

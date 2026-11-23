@@ -81,6 +81,7 @@ export function DispatchMonitor({ live }: { live: Live }) {
           {label: `جاهزون فعلياً: ${m.ready_nurses ?? 0}`, active: (m.ready_nurses ?? 0) > 0},
           {label: `موجات جارية: ${m.active_searches ?? 0}`, active: (m.active_searches ?? 0) > 0},
           {label: `توكنات FCM: ${tokenTotal}`},
+          {label: `بانتظار الانطلاق بعد المهلة: ${m.delayed_departures ?? 0}`},
           {label: `حالة العامل: ${worker.status ?? 'ONLINE'}`},
         ]}
         action={

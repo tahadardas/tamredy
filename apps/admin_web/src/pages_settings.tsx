@@ -88,6 +88,7 @@ export function SettingsPage({live}: {live: Live}) {
         </label>
         <div className="form">
           {([
+            ['departureReminderSeconds', 'تذكير بدء التوجه بالثواني (صفر للتعطيل)', 0],
             ['offerDurationSeconds', 'مهلة البحث (ثانية)', 60],
             ['radiusMeters', 'نطاق البحث (متر)', 10000],
             ['maxHeartbeatAgeSeconds', 'أقصى عمر للنبض (ثانية)', 60],

@@ -129,14 +129,14 @@ If resuming:
 - CURRENT_BRANCH: codex/open-dispatch
 - LAST_COMMIT: cb0066ea6a925aeac16e85852c18897ab5691b34 (verified baseline; origin/feature/aero-signature matched)
 - COMPLETED: Phase 1 baseline and targeted audit. Phase 2 additive database foundation and invariant tests. Existing worker uses waves, automatic departure remains in the nurse app, cancellation has no evidence ledger, and push currently performs network I/O inside its outbox transaction.
-- IN_PROGRESS: Phase 10, integrated verification.
-- NEXT_EXACT_ACTION: Build the workspaces, run all API and worker checks plus Flutter tests, and report the remaining release blockers.
-- PENDING: Phase 10, nurse appeal submission UI, distinct arrived/early-termination incident workflows, configurable delayed-departure alerts and detailed open-search exclusion reporting. The opt-in worker and admin setting are implemented and tested off production.
+- IN_PROGRESS: Staging verification and remaining workflows. Local implementation and build/test gates were run.
+- NEXT_EXACT_ACTION: In an authorized disposable PostgreSQL/PostGIS environment, apply 021–024, run concurrency.integration.mjs with TEST_DATABASE_URL, then run real-device FCM and EXPLAIN checks before reviewing rollout.
+- PENDING: Staging concurrency, representative PostGIS load and real-device FCM; nurse appeal submission UI, protected evidence attachments, distinct arrived/early-termination incident workflows, and detailed open-search exclusion reporting. The opt-in worker and admin setting are implemented and tested off production.
 - FILES_CHANGED: HANDOFF.md, handoff/checkpoint.json, migration 021, docs/MIGRATION_021.md and apps/api/tests/open_dispatch_foundation.test.mjs. Existing dirty apps/nurse_app/lib/screens/home.dart belongs to the workspace baseline.
 - TEST_RESULTS: API build passed. Focused baseline tests 10 passed, 1 skipped. Migration 021 passed a pre-existing-data and integrity test (PGlite).
 - KNOWN_ISSUES: PGlite tests substitute geometry; they cannot establish PostGIS query plans or concurrent multi-connection behavior.
 - DECISIONS: Preserve legacy in-flight records and keep open dispatch disabled until a separately authorized rollout. Preserve billing and historical records.
-- MIGRATIONS: 021 adds search/closure, ETA, cancellations, appeals and audit invariants; 022 adds snapshot thresholds and durable eligibility wake-ups; 023 adds outbox claim/lease columns without backfill.
+- MIGRATIONS: 021 adds search/closure, ETA, cancellations, appeals and audit invariants; 022 adds snapshot thresholds and durable eligibility wake-ups; 023 adds outbox claim/lease columns without backfill; 024 adds opt-in delayed departure reminders.
 - BLOCKERS: No disposable PostgreSQL/PostGIS connection in TEST_DATABASE_URL; no Docker or psql detected.
 
 - Phase 3 evidence: 100 recipients matched initially on eligibility change, a 101st joined under the same deadline, no duplicates on reconciliation, and no new offer after expiry. Legacy waves still passed. Admin build and policy validation passed. Corrected the admin test fixture to include baseline migration 019.
@@ -152,3 +152,5 @@ If resuming:
 - Phase 8 evidence: verified Flutter patient 6/6, nurse 5/5, route audit 3/3 and admin build. Added Aero cancellation sheet with preview, retry key and server acknowledgement, patient commitment and appeal screens, nurse offer summary, and admin appeal queue.
 
 - Phase 9 evidence: 22 notification/worker/performance tests passed, nurse Flutter 5/5, patient Flutter 6/6. Recovered an expired claim after a simulated worker crash, verified independent channel claims and dedup of recorded deliveries. Firebase acceptance remains distinct from device receipt; live FCM, independent PostGIS sessions, and delivery across device restarts remain unverified.
+
+- Phase 10 evidence: pnpm -r build green; Node API and worker 119 passed / 2 skipped (live PostgreSQL missing); Flutter patient 6, nurse 5, and shared 12 passed. Added the genuine multi-connection test for ten acceptors and cancellation racing acceptance. Delayed reminders tested once without creating a penalty. Declared Android real device unavailable. No deploy or push. See docs/OPEN_DISPATCH_DELIVERY_AR.md.

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import Redis from 'ioredis';
 import 'dotenv/config';
 import { FcmClient, loadServiceAccount, pushDeliverBatch, retryPendingPushes } from './push.js';
+import { notifyDelayedDepartures } from './departure-reminders.js';
 import { deliverOutbox } from './outbox.js';
 import { doDispatch } from './dispatch.js';
 import { processBroadcast, runWinback } from './marketing.js';
@@ -54,6 +55,7 @@ async function runWorker(): Promise<void> {
   let stopping = false;
   let lastWinback = 0;
   let lastPushRetry = 0;
+  let lastDepartureCheck = 0;
 
   process.on('SIGINT', () => { stopping = true; });
   process.on('SIGTERM', () => { stopping = true; });
@@ -72,6 +74,10 @@ async function runWorker(): Promise<void> {
   }
 
   async function runBackgroundJobs(): Promise<boolean> {
+    if (Date.now() - lastDepartureCheck > 5000) {
+      lastDepartureCheck = Date.now();
+      await notifyDelayedDepartures(pool);
+    }
     if (fcm && Date.now() - lastPushRetry > 5000) {
       lastPushRetry = Date.now();
       await retryPendingPushes(pool, fcm).catch(error => console.error('[Retry Push Error]', error));

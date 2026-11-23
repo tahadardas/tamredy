@@ -11,12 +11,12 @@ export class DispatchService {
   constructor(private readonly db: DbService, private readonly fees: FeesService = new FeesService(), private readonly dues: DuesService = new DuesService(), private readonly routes: RoutesService = new RoutesService()) {}
 
   async offersForUser(userId: string) {
-    const results = await this.db.query(`SELECT o.id,o.request_id,o.expires_at,o.wave_no,
+    const results = await this.db.query(`SELECT o.id,o.request_id,o.expires_at,o.wave_no,statement_timestamp() AS server_now,
       s.title_ar,s.code AS service_code,s.expected_minutes,
       round(ST_Distance(nl.location,cr.location))::integer AS distance_m,
       cr.price_amount,cr.currency_code,cr.commission_bps,
       round(cr.price_amount * (10000 - cr.commission_bps) / 10000)::integer AS nurse_share,
-      coalesce(nullif(split_part(split_part(cr.address_text,' • ',1),' - ',1),''),'دمشق وريفها') AS area
+      'ضمن نطاق الخدمة' AS area
       FROM request_offers o JOIN nurses n ON n.id=o.nurse_id
       JOIN care_requests cr ON cr.id=o.request_id JOIN services s ON s.id=cr.service_id
       LEFT JOIN nurse_locations nl ON nl.nurse_id=n.id
@@ -69,8 +69,13 @@ export class DispatchService {
           AND nc.approved=true AND nc.expires_at>clock_timestamp())`,[nurseId,request.service_id]);
       if(!qualified.rowCount) forbidden();
       if((await this.dues.balance(c,nurseId)).blocked) conflict('SETTLEMENT_REQUIRED'); // owes the company more than the allowed limit
-      const ins=await c.query(`INSERT INTO request_assignments(request_id,nurse_id)
-        VALUES($1,$2) RETURNING id`,[requestId,nurseId]);
+      const ins=await c.query(`WITH policy AS (
+        SELECT nullif(coalesce((SELECT (value->>'departureReminderSeconds')::integer
+          FROM app_settings WHERE key='dispatch'),0),0) AS seconds
+      )
+      INSERT INTO request_assignments(request_id,nurse_id,accepted_at,departure_due_at)
+        SELECT $1,$2,statement_timestamp(),statement_timestamp()+seconds*interval '1 second' FROM policy
+        RETURNING id`,[requestId,nurseId]);
       const assignmentId=ins.rows[0].id;
       const updateNurse=await c.query(`UPDATE nurses SET work_status='RESERVED',updated_at=now()
         WHERE id=$1 AND work_status='AVAILABLE'`,[nurseId]);
