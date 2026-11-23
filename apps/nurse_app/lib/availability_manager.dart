@@ -197,6 +197,14 @@ class AvailabilityManager extends ChangeNotifier {
     }
   }
 
+  /// Reconcile a server-side pause or offline transition without sending another write.
+  void applyServerUnavailable() {
+    _intentAvailable = false;
+    _state = NurseReadinessState.offline;
+    _stopLoop();
+    notifyListeners();
+  }
+
   /// Immediately triggers full re-sync (on resume, login, network return, WebSocket reconnect).
   Future<void> syncNow() async {
     if (kDemoMode || !_intentAvailable || _hasActiveAssignment) return;

@@ -39,6 +39,7 @@ class NurseController extends ChangeNotifier {
   NurseStage stage = NurseStage.idle;
   Offer? offer;
   Future<Map<String, dynamic>?>? offerCommitment;
+  String? cancellationNotice;
   String? assignmentId;
   bool busy = false;
   String? error;
@@ -206,7 +207,9 @@ class NurseController extends ChangeNotifier {
           _stopNavigation();
         }
       }
-      if (isAvail && !availabilityManager.intentAvailable && stage == NurseStage.idle) {
+      if (!isAvail && availabilityManager.intentAvailable && stage == NurseStage.idle) {
+        availabilityManager.applyServerUnavailable();
+      } else if (isAvail && !availabilityManager.intentAvailable && stage == NurseStage.idle) {
         await availabilityManager.setAvailability(true);
       }
       notifyListeners();
@@ -223,6 +226,7 @@ class NurseController extends ChangeNotifier {
 
   Future<void> setAvailable(bool v) async {
     if (stage != NurseStage.idle) return;
+    if (v) cancellationNotice = null;
     Analytics.log('availability_changed', {'available': v ? 1 : 0});
     if (v) {
       OfferAlarm.requestPermissions().catchError((_) {});
@@ -266,6 +270,7 @@ class NurseController extends ChangeNotifier {
   Future<void> resync() async {
     if (kDemoMode) return;
     await loadLive();
+    await _reconcileOffer();
     if (available && stage == NurseStage.idle) {
       await availabilityManager.syncNow();
     }
@@ -275,20 +280,46 @@ class NurseController extends ChangeNotifier {
   void onLive(String type) {
     if (type == 'offer.created') {
       _fetchOffers();
-    } else if (type == 'offer.expired') {
-      if (stage == NurseStage.offer) {
-        decline(expired: true);
-      }
-    } else if (type == 'request.cancelled') {
-      if (stage == NurseStage.offer) {
-        decline(expired: true);
-      } else {
-        restoreActiveAssignment();
-      }
     } else if (type == 'catalog.changed') {
       loadLive();
     } else {
       resync();
+    }
+  }
+
+  void onLiveData(String type, Map<String, dynamic> payload) {
+    if (type == 'request.cancelled' && requestId != null && payload['requestId'] == requestId) {
+      cancellationNotice = 'أُلغيت الزيارة. إذا كنت تقود، توقف في مكان آمن قبل استخدام الهاتف.';
+      restoreActiveAssignment();
+    }
+    if (type == 'offer.closed' || type == 'offer.expired') {
+      final id = payload['offerId'];
+      if (id is String) {
+        OfferAlarm.cancelOffer(id);
+        if (stage == NurseStage.offer && offer?.id == id && !busy) {
+          offer = null;
+          stage = NurseStage.idle;
+          notifyListeners();
+          _fetchOffers();
+        }
+      }
+    }
+  }
+
+  Future<void> _reconcileOffer() async {
+    final current = offer?.id;
+    if (stage != NurseStage.offer || current == null || busy) return;
+    try {
+      final open = await api.getList('/v1/nurse/me/offers');
+      if (stage == NurseStage.offer && offer?.id == current && !busy &&
+          !open.any((entry) => (entry as Map)['id'] == current)) {
+        await OfferAlarm.cancelOffer(current);
+        offer = null;
+        stage = NurseStage.idle;
+        notifyListeners();
+      }
+    } catch (_) {
+      // A failed reconciliation does not prove the offer closed.
     }
   }
 

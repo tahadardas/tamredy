@@ -17,6 +17,7 @@ const liveEvents = [
   'catalog.changed',
   'offer.created',
   'offer.expired',
+  'offer.closed',
   'request.created',
   'request.assigned',
   'request.cancelled',
@@ -35,6 +36,7 @@ class LiveChannel {
   final TamreedyApi api;
   final VoidCallback onResync;
   final void Function(String type) onEvent;
+  final void Function(String type, Map<String, dynamic> payload)? onEventData;
   io.Socket? _socket;
   bool _refreshing = false;
   bool connected = false;
@@ -43,6 +45,7 @@ class LiveChannel {
     required this.api,
     required this.onResync,
     required this.onEvent,
+    this.onEventData,
   });
 
   Future<void> start() async {
@@ -64,7 +67,12 @@ class LiveChannel {
     // Server accepts the socket, then tells us to reconcile over REST.
     s.on('connected', (_) => onResync());
     for (final e in liveEvents) {
-      s.on(e, (_) => onEvent(e));
+      s.on(e, (data) {
+        if (data is Map) {
+          onEventData?.call(e, Map<String, dynamic>.from(data));
+        }
+        onEvent(e);
+      });
     }
     s.onDisconnect((reason) async {
       connected = false;
@@ -149,12 +157,14 @@ class RealtimeHost extends StatefulWidget {
   final TamreedyApi api;
   final VoidCallback onResync;
   final void Function(String type)? onEvent;
+  final void Function(String type, Map<String, dynamic> payload)? onEventData;
   final Widget child;
   const RealtimeHost({
     super.key,
     required this.api,
     required this.onResync,
     this.onEvent,
+    this.onEventData,
     required this.child,
   });
   @override
@@ -174,6 +184,7 @@ class _RealtimeHostState extends State<RealtimeHost>
     _live = LiveChannel(
       api: widget.api,
       onResync: widget.onResync,
+      onEventData: widget.onEventData,
       onEvent: (t) {
         widget.onEvent?.call(t);
         widget.onResync();

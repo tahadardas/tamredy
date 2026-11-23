@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import Redis from 'ioredis';
 import 'dotenv/config';
 import { FcmClient, loadServiceAccount, pushDeliverBatch, retryPendingPushes } from './push.js';
+import { deliverOutbox } from './outbox.js';
 import { doDispatch } from './dispatch.js';
 import { processBroadcast, runWinback } from './marketing.js';
 
@@ -25,87 +26,28 @@ try {
 const fcm = sa ? new FcmClient(sa) : undefined;
 console.log(`[Worker Boot] Starting Tamreedy Dispatch & Notification Engine...`);
 console.log(`[Worker Boot] Database: Connected`);
-console.log(`[Worker Boot] Redis: ${redis ? 'Configured (' + process.env.REDIS_URL + ')' : 'Not configured'}`);
+console.log(`[Worker Boot] Redis: ${redis ? 'Configured' : 'Not configured'}`);
 console.log(`[Worker Boot] Push (FCM): ${fcm ? 'CONFIGURED & READY (Project: ' + sa?.project_id + ')' : 'NOT_CONFIGURED (Push disabled, fallback REST polling & Socket.IO active)'}`);
 
-/** Flushes realtime events to Redis / Socket.IO (independent from push). */
 async function flushRealtimeOutbox(): Promise<boolean> {
   if (!redis) return false;
-  const c = await pool.connect();
-  try {
-    await c.query('BEGIN');
-    const rows = await c.query(`
-      SELECT id, event_type, aggregate_id, payload
-      FROM outbox_events
-      WHERE realtime_published_at IS NULL
-      ORDER BY id ASC
-      LIMIT 20
-      FOR UPDATE SKIP LOCKED
-    `);
-
-    if (!rows.rowCount) {
-      await c.query('COMMIT');
-      return false;
+  return deliverOutbox(pool, 'realtime', async events => {
+    for (const event of events) {
+      await redis.publish('tamreedy:events', JSON.stringify({
+        eventId: event.id, type: event.event_type, payload: event.payload,
+      }));
     }
-
-    const publishedIds: string[] = [];
-    for (const event of rows.rows) {
-      await redis.publish(
-        'tamreedy:events',
-        JSON.stringify({ eventId: event.id, type: event.event_type, payload: event.payload })
-      );
-      publishedIds.push(String(event.id));
-    }
-
-    await c.query(`UPDATE outbox_events SET realtime_published_at = now() WHERE id = ANY($1::bigint[])`, [publishedIds]);
-    await c.query('COMMIT');
-    return true;
-  } catch (e) {
-    await c.query('ROLLBACK');
-    console.error('[Realtime Outbox Error]', e);
-    return false;
-  } finally {
-    c.release();
-  }
+  });
 }
 
-/** Flushes pushes to Firebase FCM and maintains delivery ledger in notification_deliveries. */
 async function flushPushOutbox(): Promise<boolean> {
-  const c = await pool.connect();
-  try {
-    await c.query('BEGIN');
-    const rows = await c.query(`
-      SELECT id, event_type, aggregate_id, payload
-      FROM outbox_events
-      WHERE push_published_at IS NULL
-      ORDER BY id ASC
-      LIMIT 20
-      FOR UPDATE SKIP LOCKED
-    `);
-
-    if (!rows.rowCount) {
-      await c.query('COMMIT');
-      return false;
+  if (!fcm) return false;
+  return deliverOutbox(pool, 'push', async events => {
+    const stats = await pushDeliverBatch(pool, fcm, events);
+    if (stats.sent || stats.failed) {
+      console.info(`[Push Batch] FCM accepted: ${stats.sent}; failed or missing token: ${stats.failed}; pruned: ${stats.pruned}.`);
     }
-
-    if (fcm) {
-      const stats = await pushDeliverBatch(c, fcm, rows.rows);
-      if (stats.sent > 0 || stats.failed > 0) {
-        console.log(`[Push Batch] Processed: ${stats.sent} sent, ${stats.failed} failed/missing token, ${stats.pruned} pruned.`);
-      }
-    }
-
-    const ids = rows.rows.map(r => String(r.id));
-    await c.query(`UPDATE outbox_events SET push_published_at = now() WHERE id = ANY($1::bigint[])`, [ids]);
-    await c.query('COMMIT');
-    return true;
-  } catch (e) {
-    await c.query('ROLLBACK');
-    console.error('[Push Outbox Error]', e);
-    return false;
-  } finally {
-    c.release();
-  }
+  });
 }
 
 async function runWorker(): Promise<void> {

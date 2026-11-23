@@ -19,8 +19,7 @@ Future<void> main() async {
   if (kFcmEnabled && !kIsWeb && await FirebaseBoot.ensure()) {
     FirebaseMessaging.onBackgroundMessage(offerBackgroundHandler);
     FirebaseMessaging.onMessage.listen((m) {
-      final a = AlarmData.from(m.data);
-      if (a != null) OfferAlarm.show(a);
+      OfferAlarm.handle(m.data);
     });
   }
   runApp(TamreedyNurseApp());
@@ -55,6 +54,7 @@ class TamreedyNurseApp extends StatelessWidget {
             api: controller.api,
             onResync: controller.resync,
             onEvent: controller.onLive,
+            onEventData: controller.onLiveData,
             child: NurseShell(c: controller),
           ),
         ),

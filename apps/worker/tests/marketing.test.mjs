@@ -24,8 +24,8 @@ test('new-request alarm: data-only on Android, long loud tone on iOS, TTL = offe
   assert.equal(m.android.priority, 'HIGH'); assert.equal(m.android.ttl, '18s');
   assert.equal(m.apns.payload.aps.sound, 'tamreedy_alert.caf');
   assert.equal(m.apns.payload.aps['interruption-level'], 'time-sensitive');
-  assert.equal(alarmMessage('t', {}, 1000, { title: 'a', body: 'b' }).message.android.ttl, '60s'); // capped
-  assert.equal(alarmMessage('t', {}, 0, { title: 'a', body: 'b' }).message.android.ttl, '5s');
+  assert.equal(alarmMessage('t', {}, 1000, { title: 'a', body: 'b' }).message.android.ttl, '300s'); // capped
+  assert.equal(alarmMessage('t', {}, 0, { title: 'a', body: 'b' }).message.android.ttl, '0s');
 });
 
 test('broadcast: sent once to the right audience (opt-in patients only), counts recorded, dead tokens pruned', async () => {

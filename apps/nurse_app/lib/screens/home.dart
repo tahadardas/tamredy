@@ -24,6 +24,7 @@ class NurseHomeScreen extends StatelessWidget {
       nav: nav,
       onRefresh: () => c.loadLive(),
       children: [
+        if (c.cancellationNotice case final notice?) NoticeBox(notice),
         if (isBlocked)
           Container(
             margin: const EdgeInsets.only(bottom: 14),

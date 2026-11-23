@@ -7,7 +7,7 @@ void main() {
   test('a new-request push becomes an alarm that lasts exactly as long as the offer', () {
     final a = AlarmData.from({'alarm': '1', 'offerId': 'o1', 'title': 'طلب', 'body': 'افتح', 'expiresAt': now.add(const Duration(seconds: 17)).toIso8601String(), 'ttl': '30'}, now: now)!;
     expect(a.ttlSeconds, 17);
-    expect(a.notificationId, 'o1'.hashCode & 0x7fffffff);
+    expect(a.notificationId, 10217);
   });
 
   test('stale offers and normal notifications never ring', () {

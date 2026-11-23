@@ -35,8 +35,11 @@ class AlarmData {
     );
   }
 
-  int get notificationId =>
-      (offerId.isEmpty ? 7 : offerId.hashCode & 0x7fffffff);
+  int get notificationId => notificationIdFor(offerId);
+
+  static int notificationIdFor(String offerId) {
+    return offerId.codeUnits.fold(7, (value, unit) => (31 * value + unit) & 0x7fffffff);
+  }
 }
 
 /// Long, loud, insistent alarm with the signature Tamreedy tone for every nearby nurse when a request arrives:
@@ -45,6 +48,7 @@ class AlarmData {
 class OfferAlarm {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
+  static final _closedUntil = <String, DateTime>{};
   static bool disabledForTesting = false;
   static void Function()? onTap;
 
@@ -107,7 +111,9 @@ class OfferAlarm {
     if (disabledForTesting || kIsWeb || !Platform.isAndroid) return;
     try {
       await init();
-      if (!_ready) return;
+      final now = DateTime.now();
+      _closedUntil.removeWhere((_, expires) => !expires.isAfter(now));
+      if (!_ready || _closedUntil.containsKey(a.offerId)) return;
       await _plugin.show(
         a.notificationId,
         a.title,
@@ -120,6 +126,7 @@ class OfferAlarm {
             priority: Priority.max,
             category: AndroidNotificationCategory.call,
             fullScreenIntent: true,
+            onlyAlertOnce: true,
             ongoing: true,
             autoCancel: true,
             playSound: true,
@@ -153,6 +160,24 @@ class OfferAlarm {
     }
   }
 
+  static Future<void> handle(Map<String, dynamic> data) async {
+    if (data['type'] == 'offer.closed' || data['type'] == 'offer.expired') {
+      final id = data['offerId'];
+      if (id is String && id.isNotEmpty) await cancelOffer(id);
+      return;
+    }
+    final alarm = AlarmData.from(data);
+    if (alarm != null) await show(alarm);
+  }
+
+  static Future<void> cancelOffer(String offerId) async {
+    _closedUntil[offerId] = DateTime.now().add(const Duration(minutes: 5));
+    try {
+      await init();
+      if (_ready) await _plugin.cancel(AlarmData.notificationIdFor(offerId));
+    } catch (_) {}
+  }
+
   static Future<void> cancelAll() async {
     try {
       await _plugin.cancelAll();
@@ -164,6 +189,5 @@ class OfferAlarm {
 @pragma('vm:entry-point')
 Future<void> offerBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  final a = AlarmData.from(message.data);
-  if (a != null) await OfferAlarm.show(a);
+  await OfferAlarm.handle(message.data);
 }

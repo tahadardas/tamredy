@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 /** Push copy per outbox event type. Messages never contain names, addresses or
@@ -6,6 +7,10 @@ export function pushCopy(type: string, payload: Record<string, any> = {}): { tit
   switch (type) {
     case 'winback.offer': return { title: 'اشتقنا لك 💙', body: `خصم ${payload.percent ?? ''}% على طلبك القادم — صالح لفترة محدودة.` };
     case 'pack.granted': return { title: 'تم تفعيل باقتك', body: 'خصم باقتك يُطبَّق تلقائيًا على زياراتك القادمة.' };
+    case 'offer.closed':
+    case 'offer.expired': return { title: 'أُغلق العرض', body: 'لم يعد هذا العرض متاحًا.' };
+    case 'request.cancelled': return { title: 'أُلغيت الزيارة', body: 'افتح التطبيق لتحديث حالة الزيارة.' };
+    case 'cancellation.appeal.resolved': return { title: 'تمت مراجعة الاعتراض', body: 'افتح التطبيق للاطلاع على النتيجة.' };
     case 'offer.created': return { title: 'طلب جديد قريب منك', body: 'لديك عرض محدود المدة، افتح التطبيق للقبول.' };
     case 'request.assigned': return { title: 'تم قبول طلبك', body: 'تم إسناد طلبك إلى ممرض معتمد.' };
     case 'visit.depart': return { title: 'الممرض في الطريق', body: 'يمكنك متابعة وصوله من التطبيق.' };
@@ -22,7 +27,7 @@ export function pushCopy(type: string, payload: Record<string, any> = {}): { tit
  *  insistent, loud, full-screen alert with the distinctive tone; the TTL equals the offer lifetime so a stale offer is never delivered late.
  *  iOS gets a time-sensitive alert with the bundled long sound (a Critical Alert needs a special Apple entitlement). */
 export function alarmMessage(token: string, data: Record<string, string>, ttlSeconds: number, copy: { title: string; body: string }) {
-  const ttl = Math.max(5, Math.min(60, Math.round(ttlSeconds)));
+  const ttl = Math.max(0, Math.min(300, Math.floor(ttlSeconds)));
   return {
     message: {
       token,
@@ -90,6 +95,14 @@ export class FcmClient {
     return this.post(alarmMessage(deviceToken, data, ttlSeconds, copy));
   }
 
+  async sendClosureDetailed(deviceToken: string, data: Record<string, string>): Promise<PushResponse> {
+    return this.post({ message: { token: deviceToken, data,
+      android: { priority: 'HIGH', ttl: '300s' },
+      apns: { headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
+        payload: { aps: { 'content-available': 1 } } },
+    } });
+  }
+
   private async post(body: unknown): Promise<PushResponse> {
     try {
       const token = await this.accessToken();
@@ -151,7 +164,7 @@ export async function pushDeliverBatch(
     if (e.event_type === 'offer.created' && !open.has(e.payload.offerId ?? '')) return [];
     const copy = pushCopy(e.event_type, e.payload);
     if (!copy) return [];
-    const users = [...(e.payload.recipientUserIds ?? []), ...(e.payload.recipientUserId ? [e.payload.recipientUserId] : [])];
+    const users = [...new Set([...(e.payload.recipientUserIds ?? []), ...(e.payload.recipientUserId ? [e.payload.recipientUserId] : [])])];
     const alarm = alarmOn && e.event_type === 'offer.created';
     const expiresAt = e.payload.expiresAt ? new Date(e.payload.expiresAt) : null;
 
@@ -185,6 +198,16 @@ export async function pushDeliverBatch(
     byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), { token: r.token, platform: r.platform }]);
   }
 
+  const ledger = await db.query(`
+    SELECT event_id,recipient_user_id,device_token FROM notification_deliveries
+    WHERE event_id=ANY($1::bigint[]) AND channel='FCM_PUSH'
+  `, [[...new Set(planned.map(item => String(item.eventId)))]]);
+  const recorded = new Set(ledger.rows.map(row => JSON.stringify([
+    String(row.event_id), row.recipient_user_id, row.device_token,
+  ])));
+  const deliveryKey = (item: typeof planned[number], token: string | null) =>
+    JSON.stringify([String(item.eventId), item.user, token]);
+
   const deadTokens: string[] = [];
   let sentCount = 0;
   let failedCount = 0;
@@ -192,6 +215,7 @@ export async function pushDeliverBatch(
   const deliver = async (item: typeof planned[number]) => {
     const devices = byUser.get(item.user) ?? [];
     if (!devices.length) {
+      if (recorded.has(deliveryKey(item, null))) return;
       // Record token missing in delivery ledger
       await db.query(
         `INSERT INTO notification_deliveries(
@@ -204,6 +228,7 @@ export async function pushDeliverBatch(
     }
 
     for (const dev of devices) {
+      if (recorded.has(deliveryKey(item, dev.token))) continue;
       // Check if offer expired before attempting push
       if (item.expiresAt && item.expiresAt.getTime() <= Date.now()) {
         await db.query(
@@ -217,9 +242,11 @@ export async function pushDeliverBatch(
       }
 
       const ttl = item.expiresAt ? (item.expiresAt.getTime() - Date.now()) / 1000 : 20;
-      const res = item.alarm
-        ? await fcm.sendAlarmDetailed(dev.token, item.data, ttl, item.copy)
-        : await fcm.sendDetailed(dev.token, item.copy, item.data);
+      const res = ['offer.closed','offer.expired'].includes(item.data.type)
+        ? await fcm.sendClosureDetailed(dev.token,item.data)
+        : item.alarm
+          ? await fcm.sendAlarmDetailed(dev.token, item.data, ttl, item.copy)
+          : await fcm.sendDetailed(dev.token, item.copy, item.data);
 
       if (res.result === 'ok') {
         sentCount++;
@@ -267,17 +294,19 @@ export async function pushDeliverBatch(
 
 /** Retries any failed notification deliveries whose offers have not expired. */
 export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number> {
+  const lease = randomUUID();
   const pending = await db.query(`
-    SELECT id, recipient_user_id, device_token, attempts, max_attempts, payload, expires_at
-    FROM notification_deliveries
-    WHERE status = 'FAILED'
-      AND attempts < max_attempts
-      AND next_attempt_at <= now()
-      AND (expires_at IS NULL OR expires_at > now())
-    ORDER BY next_attempt_at ASC
-    LIMIT 20
-    FOR UPDATE SKIP LOCKED
-  `);
+    WITH due AS (
+      SELECT id FROM notification_deliveries
+      WHERE status='FAILED' AND attempts<max_attempts AND next_attempt_at<=statement_timestamp()
+        AND (expires_at IS NULL OR expires_at>statement_timestamp())
+        AND (retry_lease_until IS NULL OR retry_lease_until<=statement_timestamp())
+      ORDER BY next_attempt_at,id LIMIT 20 FOR UPDATE SKIP LOCKED
+    )
+    UPDATE notification_deliveries d SET retry_lease_token=$1,
+      retry_lease_until=statement_timestamp()+interval '3 minutes'
+    FROM due WHERE d.id=due.id RETURNING d.*
+  `, [lease]);
 
   if (!pending.rowCount) return 0;
 
@@ -287,8 +316,15 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
   const alarmOn = open.size > 0 && await alarmEnabled(db);
   let retriedCount = 0;
   for (const row of pending.rows) {
-    if (!row.device_token) {
-      await db.query(`UPDATE notification_deliveries SET status='ABANDONED' WHERE id=$1`, [row.id]);
+    const finish = (changes: string, values: unknown[] = []) => db.query(`
+      UPDATE notification_deliveries SET ${changes},retry_lease_token=NULL,retry_lease_until=NULL
+      WHERE id=$1 AND retry_lease_token=$2
+    `,[row.id,lease,...values]);
+    const device = row.device_token && (await db.query(
+      'SELECT 1 FROM device_tokens WHERE token=$1 AND user_id=$2',[row.device_token,row.recipient_user_id],
+    )).rowCount;
+    if (!device) {
+      await finish("status='ABANDONED'");
       continue;
     }
 
@@ -296,27 +332,34 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
     const copy = pushCopy(payload.type, payload);
     const isOffer = payload.type === 'offer.created';
     if (!copy || (isOffer && !open.has(payload.offerId))) {
-      await db.query(`UPDATE notification_deliveries SET status='ABANDONED' WHERE id=$1`, [row.id]);
+      await finish("status='ABANDONED'");
       continue;
     }
 
     const isAlarm = isOffer && alarmOn;
     const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
-    const ttl = expiresAt ? Math.max(2, (expiresAt.getTime() - Date.now()) / 1000) : 20;
+    const ttl = expiresAt ? (expiresAt.getTime() - Date.now()) / 1000 : 20;
+    if (ttl <= 0) {
+      await finish("status='ABANDONED'");
+      continue;
+    }
 
-    const res = isAlarm
-      ? await fcm.sendAlarmDetailed(row.device_token, payload, ttl, copy)
-      : await fcm.sendDetailed(row.device_token, copy, payload);
+    const res = ['offer.closed','offer.expired'].includes(payload.type)
+      ? await fcm.sendClosureDetailed(row.device_token,payload)
+      : isAlarm
+        ? await fcm.sendAlarmDetailed(row.device_token, payload, ttl, copy)
+        : await fcm.sendDetailed(row.device_token, copy, payload);
 
     if (res.result === 'ok') {
       retriedCount++;
-      await db.query(`UPDATE notification_deliveries SET status='SENT', sent_at=now(), attempts=attempts+1 WHERE id=$1`, [row.id]);
+      await finish("status='SENT',sent_at=statement_timestamp(),attempts=attempts+1");
     } else if (res.result === 'unregistered') {
-      await db.query(`UPDATE notification_deliveries SET status='UNREGISTERED', attempts=attempts+1, last_error_code='UNREGISTERED', last_error_detail=$2 WHERE id=$1`, [row.id, res.errorDetail]);
+      await finish("status='UNREGISTERED',attempts=attempts+1,last_error_code='UNREGISTERED',last_error_detail=$3",[res.errorDetail]);
       await db.query(`DELETE FROM device_tokens WHERE token=$1`, [row.device_token]);
     } else {
-      const nextDelay = (row.attempts + 1) * 5;
-      await db.query(`UPDATE notification_deliveries SET attempts=attempts+1, next_attempt_at=now()+($2||' seconds')::interval, last_error_detail=$3 WHERE id=$1`, [row.id, String(nextDelay), res.errorDetail]);
+      const delaySeconds = 5 * 2 ** Number(row.attempts);
+      await finish("attempts=attempts+1,next_attempt_at=statement_timestamp()+$3::integer*interval '1 second',last_error_detail=$4",
+        [delaySeconds,res.errorDetail]);
     }
   }
 

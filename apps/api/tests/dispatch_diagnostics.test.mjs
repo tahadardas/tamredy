@@ -28,12 +28,12 @@ test('Alarm message enforces HIGH priority and bounded TTL for immediate ring', 
   assert.equal(msg.message.data.ttl, '25');
   assert.equal(msg.message.data.title, 'طلب جديد');
 
-  // Verify TTL clamping (between 5 and 60 seconds)
-  const clampedLow = alarmMessage('token-123', {}, 2, copy);
-  assert.equal(clampedLow.message.android.ttl, '5s');
+  // Never round retention up past the remaining offer lifetime.
+  const clampedLow = alarmMessage('token-123', {}, 0.9, copy);
+  assert.equal(clampedLow.message.android.ttl, '0s');
 
-  const clampedHigh = alarmMessage('token-123', {}, 120, copy);
-  assert.equal(clampedHigh.message.android.ttl, '60s');
+  const clampedHigh = alarmMessage('token-123', {}, 900, copy);
+  assert.equal(clampedHigh.message.android.ttl, '300s');
 });
 
 test('Dispatch exclusion categorization accurately distinguishes readiness blockers', () => {

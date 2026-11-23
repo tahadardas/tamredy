@@ -23,7 +23,7 @@ function fakeFetch(statusFor = () => 200) {
 
 test('copy never contains personal data and unknown events are silent', () => {
   assert.ok(pushCopy('offer.created'));
-  assert.equal(pushCopy('request.cancelled'), null);
+  assert.equal(pushCopy('test.unknown'), null);
   for (const t of ['offer.created', 'request.assigned', 'visit.depart', 'visit.arrive', 'visit.complete', 'request.unfulfilled'])
     assert.doesNotMatch(JSON.stringify(pushCopy(t)), /\d{4}|شارع|عنوان/);
 });
@@ -62,7 +62,7 @@ test('push delivery batches token lookup and records success and pruned tokens',
   const res = await pushDeliverBatch(db, new FcmClient(sa, f), [
     { id: 1, event_type: 'request.assigned', payload: { recipientUserId: U1, requestId: 'r1' } },
     { id: 2, event_type: 'visit.arrive', payload: { recipientUserId: U2, requestId: 'r1' } },
-    { id: 3, event_type: 'request.cancelled', payload: { recipientUserId: U2 } },
+    { id: 3, event_type: 'test.unknown', payload: { recipientUserId: U2 } },
   ]);
   assert.deepEqual(res, { sent: 2, failed: 1, pruned: 1 });
   assert.equal(tokenQueries, 1);
@@ -73,9 +73,25 @@ test('push delivery batches token lookup and records success and pruned tokens',
   const normal = bodies.find(b => b.message.data.type === 'visit.arrive');
   assert.deepEqual(Object.keys(normal.message.data).sort(), ['expiresAt', 'offerId', 'requestId', 'type']); // ids only, no personal data
   assert.equal(normal.message.data.alarm, undefined);
+  const replay = await pushDeliverBatch(db, new FcmClient(sa, f), [
+    { id: 1, event_type: 'request.assigned', payload: { recipientUserId: U1, requestId: 'r1' } },
+    { id: 2, event_type: 'visit.arrive', payload: { recipientUserId: U2, requestId: 'r1' } },
+  ]);
+  assert.equal(replay.sent, 0);
+  assert.equal(f.calls.filter(x => x.url.includes('messages:send')).length, 3);
 });
 
 test('incomplete service account is rejected; absence disables push', () => {
   assert.equal(loadServiceAccount(undefined), undefined);
   assert.equal(loadServiceAccount('{"project_id":"x"}'), undefined);
+});
+
+test('offer closure is a data message addressed to the specific offer', async () => {
+  const transport = fakeFetch();
+  const client = new FcmClient(sa,transport);
+  await client.sendClosureDetailed('test-token',{type:'offer.closed',offerId:'offer-1'});
+  const call = transport.calls.find(item => item.url.includes('messages:send'));
+  const {message} = JSON.parse(call.init.body);
+  assert.deepEqual(message.data,{type:'offer.closed',offerId:'offer-1'});
+  assert.equal(message.notification,undefined);
 });

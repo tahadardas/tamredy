@@ -12,7 +12,16 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
   `, [requestId]);
 
   if (closed.rowCount) {
-    await client.query("UPDATE request_offers SET status='EXPIRED' WHERE request_id=$1 AND status='OPEN'", [requestId]);
+    await client.query(`
+      WITH expired AS (
+        UPDATE request_offers SET status='EXPIRED' WHERE request_id=$1 AND status='OPEN'
+        RETURNING id,nurse_id
+      )
+      INSERT INTO outbox_events(event_type,aggregate_id,payload)
+      SELECT 'offer.expired',$1,jsonb_build_object(
+        'requestId',$1::uuid,'offerId',e.id,'recipientUserId',n.user_id)
+      FROM expired e JOIN nurses n ON n.id=e.nurse_id
+    `,[requestId]);
     await client.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [requestId]);
     await client.query(`
       INSERT INTO request_events(request_id,event_type) VALUES($1,'request.unfulfilled');
