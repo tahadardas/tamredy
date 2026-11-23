@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { DispatchService } from '../dist/dispatch/dispatch.service.js';
+import { AppealsService } from '../dist/requests/appeals.service.js';
 import { CommitmentService } from '../dist/requests/commitment.service.js';
 import { cancelRequest } from '../dist/requests/cancellation.service.js';
 
@@ -15,7 +16,7 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   await pg.exec(read('001_core').replace(/CREATE EXTENSION[^;]*;/g, '')
     .replaceAll('geography(Point,4326)', 'double precision')
     .replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
-  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation']) {
+  for (const name of ['003_admin_reads_audit', '006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation']) {
     await pg.exec(read(name));
   }
   await pg.exec(`
@@ -124,8 +125,19 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   await query(`INSERT INTO app_settings VALUES('commitment','{"lookbackDays":90,"minAssignedVisits":1}')`);
   assert.deepEqual(await commitment.forActiveOffer(nurse,newOffer),
     {sufficient:true,lookbackDays:90,assignedVisits:1,countedCancellations:1});
-  await query(`INSERT INTO cancellation_appeals(cancellation_id,submitted_by_user_id,submitter_role,description)
-    VALUES($1,$2,'PATIENT','أطلب مراجعة التصنيف')`,[accepted.cancellationId,patient]);
+  const appeals = new AppealsService(db);
+  const admin = (await query("INSERT INTO users(phone_e164,role) VALUES('admin','ADMIN') RETURNING id")).rows[0].id;
+  await assert.rejects(appeals.submit(nurse,'PATIENT',accepted.cancellationId,'غير مخول'),error => error.getStatus()===404);
+  const appeal = await appeals.submit(patient,'PATIENT',accepted.cancellationId,'أطلب مراجعة التصنيف');
+  assert.equal(appeal.status,'SUBMITTED');
+  await assert.rejects(appeals.submit(patient,'PATIENT',accepted.cancellationId,'اعتراض مكرر'),error => error.getStatus()===409);
+  await assert.rejects(appeals.review(admin,appeal.id,{status:'APPROVED',reason:'مراجعة'}),error => error.getStatus()===409);
   assert.equal((await commitment.forActiveOffer(nurse,newOffer)).countedCancellations,0);
   assert.equal((await commitment.ownHistory(patient)).items[0].commitmentImpact,false);
+  await appeals.review(admin,appeal.id,{status:'UNDER_REVIEW',reason:'بدء المراجعة'});
+  await appeals.review(admin,appeal.id,{status:'APPROVED',reason:'قُبل العذر'});
+  assert.equal((await commitment.ownHistory(patient)).items[0].classification,'EXCUSED');
+  assert.equal((await cancel({...payload,policyAcknowledged:true})).commitmentImpact,true);
+  assert.equal((await query('SELECT previous_classification FROM cancellation_classification_events')).rows[0].previous_classification,
+    'EN_ROUTE_COUNTED');
 });

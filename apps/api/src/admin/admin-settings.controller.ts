@@ -28,6 +28,7 @@ const VALIDATORS: Record<string, (v: any) => unknown> = {
       return { radiusM, seconds: Math.trunc(num(w?.seconds, 5, 120, 'BAD_SECONDS')) };
     }) };
   },
+  appeals: v => ({ submissionWindowDays: Math.trunc(num(v?.submissionWindowDays ?? 14, 1, 90, 'BAD_APPEAL_WINDOW')) }),
   commitment: v => ({
     lookbackDays: Math.trunc(num(v?.lookbackDays ?? 90, 1, 365, 'BAD_COMMITMENT_WINDOW')),
     minAssignedVisits: Math.trunc(num(v?.minAssignedVisits ?? 5, 1, 100, 'BAD_COMMITMENT_MINIMUM')),

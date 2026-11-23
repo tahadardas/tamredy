@@ -49,11 +49,16 @@ export async function cancelRequest(
     requestId, reason, note, dto.expectedVersion ?? null, dto.policyAcknowledged === true,
   ])).digest('hex');
 
-  const previous = (await client.query(`SELECT * FROM request_cancellations
-    WHERE cancelled_by_user_id=$1 AND idempotency_key=$2`, [userId, key])).rows[0];
+  const previous = (await client.query(`SELECT c.*,
+      coalesce(change.previous_classification,c.classification) AS original_classification,
+      coalesce(change.previous_impact,c.commitment_impact) AS original_impact
+    FROM request_cancellations c LEFT JOIN LATERAL (
+      SELECT previous_classification,previous_impact FROM cancellation_classification_events
+      WHERE cancellation_id=c.id ORDER BY id LIMIT 1
+    ) change ON true WHERE c.cancelled_by_user_id=$1 AND c.idempotency_key=$2`, [userId, key])).rows[0];
   if (previous) {
     if (previous.payload_digest !== digest) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
-    return response(previous, true);
+    return response({...previous, classification: previous.original_classification, commitment_impact: previous.original_impact}, true);
   }
   if (request.status === 'CANCELLED') {
     if (!legacy) conflict('REQUEST_ALREADY_CANCELLED');
