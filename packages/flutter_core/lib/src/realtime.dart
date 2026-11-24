@@ -23,6 +23,7 @@ const liveEvents = [
   'request.cancelled',
   'request.unfulfilled',
   'request.schedule_released',
+  'safety.event_changed',
   'safety.checkin_due',
   'safety.checkin_reminder',
   'visit.depart',

@@ -41,12 +41,12 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 35. توثيق المريض والحد من إساءة الاستخدام | NOT_STARTED | |
 | 36. Safety PIN والتحقق من الزيارة | NOT_STARTED | |
 | 37. الإنهاء الآمن للزيارة | NOT_STARTED | |
-| 38. نظام الحوادث الأمنية | NOT_STARTED | |
+| 38. نظام الحوادث الأمنية | IN_PROGRESS | Migration 030 and restricted staff case actions tested. Shift scoping, dashboard and evidence access pending. |
 | 39. ملف الأدلة الرقمية | NOT_STARTED | |
 | 40. منع التسجيل السري للصوت والصورة | NOT_STARTED | |
 | 41. قاعدة البيانات | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 42. حماية البيانات وسياسة الاحتفاظ | NOT_STARTED | |
-| 43. الصلاحيات | NOT_STARTED | |
+| 43. الصلاحيات | IN_PROGRESS | Migration 030 and restricted staff case actions tested. Shift scoping, dashboard and evidence access pending. |
 | 44. واجهات API | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 45. الإشعارات والتصعيد | NOT_STARTED | |
 | 46. مشاركة الزيارة مع شخص موثوق | NOT_STARTED | |

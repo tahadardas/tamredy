@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 5,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement incident records and authorized staff acknowledgement/escalation for durable SOS and check-in alerts. Verify PostgreSQL concurrency and then connect mobile UI.",
+  "nextAction": "Connect Guardian mobile with explicit server receipt states, then build the staff dashboard, shifts/assignments and timed escalations. Test real PostGIS and use a staffed pilot before enabling.",
   "productionDeploymentAuthorized": false
 }

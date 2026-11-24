@@ -6,6 +6,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { runSafetyCheckin } from '../../worker/src/safety-checkins.ts';
 import { CheckinsRepository } from '../dist/safety/checkins.repository.js';
 import { CheckinsService } from '../dist/safety/checkins.service.js';
+import { StaffCasesRepository } from '../dist/safety/staff-cases.repository.js';
+import { StaffCasesService } from '../dist/safety/staff-cases.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -23,7 +25,11 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     CREATE FUNCTION ST_SetSRID(text, integer) RETURNS text LANGUAGE sql AS $$ SELECT $1 $$;
   `);
   await db.exec((await read('028_guardian_foundation')).replaceAll('geography(Point,4326)', 'geography'));
+  await db.exec(await read('003_admin_reads_audit'));
+  await db.exec(await read('004_auth_otp_refresh'));
+  await db.exec(await read('005_password_accounts_push'));
   await db.exec(await read('029_guardian_checkins'));
+  await db.exec(await read('030_guardian_staff_cases'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -95,5 +101,42 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     points: [{ ...point, sequence: 2, capturedAt: new Date(Date.now() + 10_000).toISOString() }],
   }), { status: 400 });
   assert.equal((await svc.event(nurse, sos.id)).state, 'RECEIVED');
+  const ops = new StaffCasesService(new StaffCasesRepository(adapter));
+  const plainAdmin = await makeUser('admin', 'ADMIN');
+  const operator = await makeUser('operator', 'ADMIN');
+  const otherOperator = await makeUser('operator-b', 'ADMIN');
+  const supervisor = await makeUser('supervisor', 'ADMIN');
+  await db.query(`INSERT INTO safety_staff_grants(user_id,permission,granted_by)
+    VALUES($1,'SAFETY_OPERATOR',$4),($2,'SAFETY_OPERATOR',$4),($3,'SAFETY_SUPERVISOR',$4)`,
+  [operator, otherOperator, supervisor, plainAdmin]);
+  await assert.rejects(ops.list(plainAdmin), { status: 403 });
+  const queue = await ops.list(operator);
+  assert.deepEqual(queue.map(entry => entry.kind).sort(), ['CHECKIN_MISSED','SAFE_EXIT_REQUESTED','SOS']);
+  const entry = queue.find(row => row.kind === 'SOS');
+  await assert.rejects(ops.detail(operator, entry.id), { status: 404 });
+  const acknowledgement = { clientActionId: randomUUID(), expectedVersion: 1 };
+  const ack = await ops.act(operator, entry.id, 'ACKNOWLEDGED', acknowledgement);
+  assert.equal(ack.state, 'ACKNOWLEDGED');
+  assert.deepEqual(await ops.act(operator, entry.id, 'ACKNOWLEDGED', acknowledgement), ack);
+  await assert.rejects(ops.act(otherOperator, entry.id, 'ACKNOWLEDGED', {
+    clientActionId: randomUUID(), expectedVersion: 1,
+  }), { status: 404 });
+  assert.equal((await ops.detail(operator, entry.id)).silent, true);
+  assert.equal((await svc.event(nurse, sos.id)).state, 'ACKNOWLEDGED');
+  await assert.rejects(ops.act(operator, entry.id, 'RESOLVED', {
+    clientActionId: randomUUID(), expectedVersion: 2, note: 'تم التحقق',
+  }), { status: 403 });
+  await ops.act(operator, entry.id, 'ESCALATED', {
+    clientActionId: randomUUID(), expectedVersion: 2, note: 'تم رفع البلاغ للمشرف',
+  });
+  await assert.rejects(ops.act(supervisor, entry.id, 'RESOLVED', {
+    clientActionId: randomUUID(), expectedVersion: 2, note: 'تم التحقق',
+  }), { status: 409 });
+  await ops.act(supervisor, entry.id, 'RESOLVED', {
+    clientActionId: randomUUID(), expectedVersion: 3, note: 'تم التحقق من السلامة',
+  });
+  assert.equal((await svc.event(nurse, sos.id)).state, 'RESOLVED');
+  assert.equal((await ops.detail(supervisor, entry.id)).actions.length, 3);
+  assert.equal((await db.query("SELECT id FROM audit_log WHERE action='safety.case_resolved'")).rows.length, 1);
   assert.equal((await db.query("SELECT id FROM outbox_events WHERE event_type='safety.sos_received'")).rows.length, 1);
 });

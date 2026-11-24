@@ -260,3 +260,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Initial policy prompts after 20 minutes, reminds after two minutes and allows three more minutes. One extension adds five minutes. These are initial configuration values, pending operational validation.
 - GUARDIAN_CHECKINS_ENABLED defaults off. It gates worker polling. Check-in signals are queued but app presentation, staff acknowledgement and escalation are not wired yet. No deployment.
 - API and Worker built. PGlite lifecycle and three route audits passed. Real PostGIS and concurrency tests remain pending.
+
+### Guardian staff case handling
+
+- Migration 030 adds explicit safety staff grants, the SOS/check-in case queue and its action history. It enqueues newly recorded incidents transactionally and backfills existing reports.
+- Added GET /v1/admin/safety/events, GET /v1/admin/safety/events/:id and POST actions acknowledge, escalate, resolve under that path. Existing staff auth plus an active safety grant is required. Operator queue previews are redacted; operators can open only their assigned cases. Supervisors can resolve with an action note.
+- Action writes lock the case, validate the version and persist the actor, note and idempotency key. SOS changes propagate to the reporting nurse through the existing private realtime mechanism. Queue and detail reads and changes are audited.
+- API build and four targeted tests passed. The lifecycle test covers non-granted admin denial, operator isolation, replay, stale version, escalation, supervisor resolution and nurse-visible state.
+- No staff grants were provisioned. Dashboard, shift presence enforcement, supervisor handover, external delivery and human-response verification remain pending. No deployment.
