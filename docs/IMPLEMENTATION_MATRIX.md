@@ -31,7 +31,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 25. حالات الاستغاثة | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 26. المناوبات ومركز السلامة | NOT_STARTED | |
 | 27. نظام إدارة المناوبات | NOT_STARTED | |
-| 28. جهات الاتصال الموثوقة | NOT_STARTED | |
+| 28. جهات الاتصال الموثوقة | IN_PROGRESS | Migration 032, shared editor, auditable staff verification and scope reset tested. Recipient portal and automatic escalation pending. |
 | 29. دليل أرقام الطوارئ | NOT_STARTED | |
 | 30. تتبع مسارات الزيارات — Safety Location Evidence | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 31. تخزين نقاط GPS | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |

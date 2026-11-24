@@ -46,6 +46,13 @@ class _GuardianSheet extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SectionTitle('سلامة الممرض'),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => TrustedContactsScreen(api: nurse.api),
+                  )),
+                  icon: const Icon(Icons.contact_phone_outlined),
+                  label: const Text('جهات الاتصال الموثوقة'),
+                ),
                 _SosPanel(guardian: safety),
                 const SizedBox(height: 16),
                 if (safety.sessionId != null) ...[

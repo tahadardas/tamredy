@@ -292,3 +292,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - API uses the existing session and batch routes. Start/status return the next accepted sequence; a completed checkout prevents reopening that session. No migration added.
 - API build and four backend checks passed. Flutter tests cover mocked GPS, failed upload, retained point after restart, replay and foreground pause. Android GPS and Keystore tests remain pending.
 - No continuous background collection or new Android permissions. No deployment. Trusted contacts, safe exit and staffed operations remain.
+
+### Guardian phase 6 — trusted contacts and consent ledger
+
+- Migration 032 adds trusted_contacts and trusted_contact_consents. Up to three priorities per account and unique active phone numbers are enforced by the database.
+- Added owner-scoped GET/POST /v1/me/trusted-contacts, PUT/DELETE /v1/me/trusted-contacts/:id, and POST /v1/admin/safety/trusted-contacts/:id/consent for active supervisors.
+- The shared contact editor supports both apps, manually entered numbers, preferences, priority and separate location scope. A new contact remains pending. Editing the phone, method or location scope resets consent; removing the contact revokes it and preserves audit evidence.
+- The supervisor records the recipient decision after independent phone verification. The consent endpoint checks the observed phone and requires a verification reference. Recipient self-service, operational verification channel, and automatic messaging/sharing are not connected.
+- API build and targeted PGlite/route checks passed. Local demo suites compile both apps. No deployment. Continue with safe abort and staffed operations.

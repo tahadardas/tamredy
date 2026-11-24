@@ -8,6 +8,8 @@ import { CheckinsRepository } from '../dist/safety/checkins.repository.js';
 import { CheckinsService } from '../dist/safety/checkins.service.js';
 import { StaffCasesRepository } from '../dist/safety/staff-cases.repository.js';
 import { StaffCasesService } from '../dist/safety/staff-cases.service.js';
+import { TrustedContactsRepository } from '../dist/trusted-contacts/trusted-contacts.repository.js';
+import { TrustedContactsService } from '../dist/trusted-contacts/trusted-contacts.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -31,6 +33,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('029_guardian_checkins'));
   await db.exec(await read('030_guardian_staff_cases'));
   await db.exec(await read('031_guardian_sos_trigger_time'));
+  await db.exec(await read('032_trusted_contacts'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -113,6 +116,32 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.query(`INSERT INTO safety_staff_grants(user_id,permission,granted_by)
     VALUES($1,'SAFETY_OPERATOR',$4),($2,'SAFETY_OPERATOR',$4),($3,'SAFETY_SUPERVISOR',$4)`,
   [operator, otherOperator, supervisor, plainAdmin]);
+  const contacts = new TrustedContactsService(new TrustedContactsRepository(adapter));
+  const nominated = {
+    name: 'أحمد', phone: '+963987654321', relationship: 'أخ',
+    priority: 1, communication: 'CALL', requestLocation: true,
+  };
+  const contact = await contacts.save(nurse, nominated);
+  assert.equal(contact.consent_state, 'PENDING');
+  assert.equal(contact.location_allowed, false);
+  assert.deepEqual(await contacts.list(outsider), []);
+  await assert.rejects(contacts.save(outsider, nominated, contact.id), { status: 404 });
+  await assert.rejects(contacts.save(nurse, { ...nominated, priority: 2 }), { status: 409 });
+  const confirmation = {
+    decision: 'ACCEPTED', allowsLocation: true,
+    verificationReference: 'verification-1', verifiedPhone: nominated.phone,
+  };
+  await assert.rejects(contacts.consent(plainAdmin, contact.id, confirmation), { status: 403 });
+  await assert.rejects(contacts.consent(supervisor, contact.id, {
+    ...confirmation, verifiedPhone: '+963987654322',
+  }), { status: 409 });
+  assert.equal((await contacts.consent(supervisor, contact.id, confirmation)).location_allowed, true);
+  const changed = await contacts.save(nurse, { ...nominated, phone: '+963987654322' }, contact.id);
+  assert.equal(changed.consent_state, 'PENDING');
+  assert.equal(changed.location_allowed, false);
+  await contacts.remove(nurse, contact.id);
+  assert.deepEqual(await contacts.list(nurse), []);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM trusted_contact_consents WHERE contact_id=$1', [contact.id])).rows[0].n, 3);
   await assert.rejects(ops.list(plainAdmin), { status: 403 });
   const queue = await ops.list(operator);
   assert.deepEqual(queue.map(entry => entry.kind).sort(), ['CHECKIN_MISSED','SAFE_EXIT_REQUESTED','SOS']);

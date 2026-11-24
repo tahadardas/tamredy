@@ -18,3 +18,4 @@ export 'package:latlong2/latlong.dart' show LatLng;
 export 'src/theme.dart';
 export 'src/widgets.dart';
 export 'src/design/aero_design.dart';
+export 'src/trusted_contacts_screen.dart';
