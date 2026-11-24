@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import { runSafetyCheckin } from '../../worker/src/safety-checkins.ts';
+import { CheckinsRepository } from '../dist/safety/checkins.repository.js';
+import { CheckinsService } from '../dist/safety/checkins.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -20,6 +23,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     CREATE FUNCTION ST_SetSRID(text, integer) RETURNS text LANGUAGE sql AS $$ SELECT $1 $$;
   `);
   await db.exec((await read('028_guardian_foundation')).replaceAll('geography(Point,4326)', 'geography'));
+  await db.exec(await read('029_guardian_checkins'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -34,9 +38,11 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     INSERT INTO request_assignments(request_id,nurse_id) SELECT r.id,n.id FROM r CROSS JOIN n RETURNING id
   `, [requester, nurse])).rows[0].id;
 
-  const svc = new SafetyService(new SafetyRepository({
-    query: db.query.bind(db), transaction: db.transaction.bind(db),
-  }));
+  const adapter = { query: db.query.bind(db), transaction: db.transaction.bind(db) };
+  const repo = new SafetyRepository(adapter);
+  const svc = new SafetyService(repo);
+  const checkins = new CheckinsService(repo, new CheckinsRepository(adapter));
+  const pool = { connect: async () => ({ query: adapter.query, release() {} }) };
   await assert.rejects(svc.start(outsider, assignment), { status: 404 });
   const session = await svc.start(nurse, assignment);
   assert.equal((await svc.start(nurse, assignment)).id, session.id);
@@ -52,8 +58,39 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal((await svc.sos(nurse, dto)).id, sos.id);
   await assert.rejects(svc.sos(nurse, { ...dto, silent: false }), { status: 409 });
   await assert.rejects(svc.event(outsider, sos.id), { status: 404 });
+  assert.ok(session.policy_version_id);
+  assert.equal(await runSafetyCheckin(pool), false);
+  const forceDue = () => db.query("UPDATE safety_sessions SET next_checkin_at=now()-interval '1 second' WHERE id=$1", [session.id]);
+  await forceDue();
+  assert.equal(await runSafetyCheckin(pool), true);
+  const first = (await checkins.pending(nurse, session.id)).checkin;
+  assert.ok(first);
+  assert.equal((await checkins.pending(outsider, session.id)).checkin, null);
+  await assert.rejects(checkins.respond(outsider, session.id, {
+    checkinId: first.id, clientResponseId: randomUUID(), response: 'OK',
+  }), { status: 404 });
+  const moreTime = { checkinId: first.id, clientResponseId: randomUUID(), response: 'MORE_TIME' };
+  assert.equal((await checkins.respond(nurse, session.id, moreTime)).response, 'MORE_TIME');
+  assert.equal((await checkins.respond(nurse, session.id, moreTime)).response, 'MORE_TIME');
+  await assert.rejects(checkins.respond(nurse, session.id, { ...moreTime, clientResponseId: randomUUID() }), { status: 409 });
+  await db.query("UPDATE safety_checkins SET remind_at=now()-interval '1 minute',deadline_at=now()+interval '1 minute' WHERE id=$1", [first.id]);
+  assert.equal(await runSafetyCheckin(pool), true);
+  assert.equal(await runSafetyCheckin(pool), false);
+  await db.query("UPDATE safety_checkins SET remind_at=now()-interval '2 minutes',deadline_at=now()-interval '1 minute' WHERE id=$1", [first.id]);
+  assert.equal(await runSafetyCheckin(pool), true);
+  await forceDue();
+  assert.equal(await runSafetyCheckin(pool), true);
+  const second = (await checkins.pending(nurse, session.id)).checkin;
+  await checkins.respond(nurse, session.id, { checkinId: second.id, clientResponseId: randomUUID(), response: 'SAFE_EXIT' });
+  assert.deepEqual((await db.query('SELECT kind FROM safety_alerts ORDER BY kind')).rows,
+    [{ kind: 'CHECKIN_MISSED' }, { kind: 'SAFE_EXIT_REQUESTED' }]);
+  await forceDue();
+  assert.equal(await runSafetyCheckin(pool), true);
+  const third = (await checkins.pending(nurse, session.id)).checkin;
   await svc.checkout(nurse, session.id);
   assert.equal(await svc.status(nurse), null);
+  assert.equal((await db.query('SELECT state FROM safety_checkins WHERE id=$1', [third.id])).rows[0].state, 'CANCELLED');
+  assert.equal(await runSafetyCheckin(pool), false);
   await assert.rejects(svc.upload(nurse, session.id, {
     points: [{ ...point, sequence: 2, capturedAt: new Date(Date.now() + 10_000).toISOString() }],
   }), { status: 400 });

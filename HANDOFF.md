@@ -251,3 +251,12 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - A recording session starts only for the assigned nurse once the visit is underway. GPS batches preserve capture and receipt times, reject altered sequence replays and reject new captures after checkout. Initial capture window is capped server-side at 12 hours.
 - SOS creation, RECEIVED history and outbox are atomic and idempotent. RECEIVED means server persisted only. Checkout does not close the SOS. No operations consumer, human acknowledgement, escalation or nurse UI is connected.
 - API built. PGlite lifecycle and three route audits passed. Geography was substituted in the test harness. Real PostGIS testing, check-ins, policy versions, incident workflows, staff handling and retention remain pending. No deployment.
+
+### Guardian phase 5 — policy versions and safety check-ins
+
+- Migration 029 adds safety_policies, safety_policy_versions, safety_checkins, safety_checkin_responses and safety_alerts. New sessions pin the current standard policy; pre-migration sessions are not enrolled retroactively.
+- Added nurse-only GET/POST /v1/nurse/safety/sessions/:id/checkin. Owner-scoped responses support OK, MORE_TIME, HELP and SAFE_EXIT with idempotency and one extension per prompt.
+- Worker queues the prompt, reminder and missed-check-in alert atomically. Help and safe-exit responses record alerts for future staff review; they do not end the visit. Checkout cancels pending prompts. Missed prompts trigger no penalties.
+- Initial policy prompts after 20 minutes, reminds after two minutes and allows three more minutes. One extension adds five minutes. These are initial configuration values, pending operational validation.
+- GUARDIAN_CHECKINS_ENABLED defaults off. It gates worker polling. Check-in signals are queued but app presentation, staff acknowledgement and escalation are not wired yet. No deployment.
+- API and Worker built. PGlite lifecycle and three route audits passed. Real PostGIS and concurrency tests remain pending.

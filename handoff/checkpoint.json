@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 5,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement versioned safety policies, check-ins and durable expiry/escalation. Then implement staffed incident handling and test actual PostGIS.",
+  "nextAction": "Implement incident records and authorized staff acknowledgement/escalation for durable SOS and check-in alerts. Verify PostgreSQL concurrency and then connect mobile UI.",
   "productionDeploymentAuthorized": false
 }

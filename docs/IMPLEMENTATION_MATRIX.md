@@ -36,7 +36,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 30. تتبع مسارات الزيارات — Safety Location Evidence | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 31. تخزين نقاط GPS | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 32. العمل عند ضعف الإنترنت | NOT_STARTED | |
-| 33. التحقق الدوري من السلامة — Safety Check-In | NOT_STARTED | |
+| 33. التحقق الدوري من السلامة — Safety Check-In | IN_PROGRESS | Migration 029, server policy and worker prompt/reminder/alert tested. Mobile and human workflows pending. |
 | 34. سياسة الممرضات والعمل الليلي | NOT_STARTED | |
 | 35. توثيق المريض والحد من إساءة الاستخدام | NOT_STARTED | |
 | 36. Safety PIN والتحقق من الزيارة | NOT_STARTED | |

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsInt, IsISO8601, IsNumber, IsUUID, Matches, Max, Min, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsISO8601, IsNumber, IsUUID, Matches, Max, Min, ValidateIf, ValidateNested } from 'class-validator';
 
 export class StartSafetySessionDto {
   @IsUUID() assignmentId!: string;
@@ -23,4 +23,12 @@ export class ReportSosDto {
   @IsUUID() clientEventId!: string;
   @ValidateIf((_, value) => value !== undefined) @IsUUID() sessionId?: string;
   @IsBoolean() silent!: boolean;
+}
+
+export const checkinResponses = ['OK','MORE_TIME','HELP','SAFE_EXIT'] as const;
+
+export class SafetyCheckinResponseDto {
+  @IsUUID() checkinId!: string;
+  @IsUUID() clientResponseId!: string;
+  @IsIn(checkinResponses) response!: (typeof checkinResponses)[number];
 }

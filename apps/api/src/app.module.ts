@@ -50,6 +50,8 @@ import { SavedPlacesController } from './saved-places/saved-places.controller.js
 import { SavedPlacesRepository } from './saved-places/saved-places.repository.js';
 import { SavedPlacesService } from './saved-places/saved-places.service.js';
 
+import { CheckinsService } from './safety/checkins.service.js';
+import { CheckinsRepository } from './safety/checkins.repository.js';
 import { SafetyController } from './safety/safety.controller.js';
 import { SafetyRepository } from './safety/safety.repository.js';
 import { SafetyService } from './safety/safety.service.js';
@@ -64,7 +66,7 @@ import { SafetyService } from './safety/safety.service.js';
   controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService
   ],
 })
 export class AppModule {}

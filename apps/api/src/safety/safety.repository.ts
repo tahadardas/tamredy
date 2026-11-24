@@ -28,8 +28,11 @@ export class SafetyRepository {
   }
 
   async start(client: PoolClient, id: string) {
-    const inserted = await client.query(`INSERT INTO safety_sessions(assignment_id)
-      VALUES($1) ON CONFLICT(assignment_id) DO NOTHING RETURNING *`, [id]);
+    const inserted = await client.query(`INSERT INTO safety_sessions(assignment_id,policy_version_id,next_checkin_at)
+      SELECT $1,v.id,now()+v.interval_seconds*interval '1 second'
+      FROM safety_policy_versions v JOIN safety_policies p ON p.id=v.policy_id
+      WHERE p.code='STANDARD' AND v.effective_at<=now()
+      ORDER BY v.effective_at DESC LIMIT 1 ON CONFLICT(assignment_id) DO NOTHING RETURNING *`, [id]);
     return inserted.rows[0] ?? (await client.query('SELECT * FROM safety_sessions WHERE assignment_id=$1', [id])).rows[0];
   }
 
@@ -54,7 +57,8 @@ export class SafetyRepository {
   }
 
   async checkout(client: PoolClient, id: string) {
-    return (await client.query(`UPDATE safety_sessions SET checked_out_at=coalesce(checked_out_at,now())
+    await client.query(`UPDATE safety_checkins SET state='CANCELLED' WHERE session_id=$1 AND state='PENDING'`, [id]);
+    return (await client.query(`UPDATE safety_sessions SET checked_out_at=coalesce(checked_out_at,now()),next_checkin_at=NULL
       WHERE id=$1 RETURNING *`, [id])).rows[0];
   }
 
