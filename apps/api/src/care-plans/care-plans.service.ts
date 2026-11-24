@@ -153,8 +153,25 @@ export class CarePlansService {
     });
   }
 
-  /** Lists care plans for a patient */
-  async listCarePlans(patientUserId: string) {
+  /** Lists care plans for a patient or all care plans for admin */
+  async listCarePlans(patientUserId: string, role?: string) {
+    if (role === 'ADMIN') {
+      const res = await this.db.query(`
+        SELECT cp.*, s.title_ar AS service_title, s.code AS service_code,
+               b.display_name AS beneficiary_name,
+               u.display_name AS patient_name, u.phone_e164 AS patient_phone,
+               (SELECT count(*)::int FROM care_plan_occurrences o WHERE o.care_plan_id = cp.id AND o.status = 'COMPLETED') AS completed_occurrences,
+               (SELECT count(*)::int FROM care_plan_occurrences o WHERE o.care_plan_id = cp.id) AS total_occurrences,
+               (SELECT scheduled_for FROM care_plan_occurrences o WHERE o.care_plan_id = cp.id AND o.status = 'PENDING' ORDER BY scheduled_for ASC LIMIT 1) AS next_visit_at
+        FROM care_plans cp
+        JOIN services s ON s.id = cp.primary_service_id
+        JOIN beneficiaries b ON b.id = cp.beneficiary_id
+        JOIN users u ON u.id = cp.patient_user_id
+        ORDER BY cp.created_at DESC
+      `);
+      return { plans: res.rows };
+    }
+
     const res = await this.db.query(`
       SELECT cp.*, s.title_ar AS service_title, s.code AS service_code,
              b.display_name AS beneficiary_name,
@@ -168,19 +185,24 @@ export class CarePlansService {
       ORDER BY cp.created_at DESC
     `, [patientUserId]);
 
-    return res.rows;
+    return { plans: res.rows };
   }
 
   /** Gets detailed care plan with occurrences */
-  async getCarePlan(patientUserId: string, planId: string) {
+  async getCarePlan(patientUserId: string, planId: string, role?: string) {
+    const isSpecialAdmin = role === 'ADMIN';
+    const whereClause = isSpecialAdmin ? 'cp.id = $1' : 'cp.id = $1 AND cp.patient_user_id = $2';
+    const params = isSpecialAdmin ? [planId] : [planId, patientUserId];
     const planRes = await this.db.query(`
       SELECT cp.*, s.title_ar AS service_title, s.code AS service_code, s.price_amount,
-             b.display_name AS beneficiary_name
+             b.display_name AS beneficiary_name,
+             u.display_name AS patient_name, u.phone_e164 AS patient_phone
       FROM care_plans cp
       JOIN services s ON s.id = cp.primary_service_id
       JOIN beneficiaries b ON b.id = cp.beneficiary_id
-      WHERE cp.id = $1 AND cp.patient_user_id = $2
-    `, [planId, patientUserId]);
+      JOIN users u ON u.id = cp.patient_user_id
+      WHERE ${whereClause}
+    `, params);
 
     if (!planRes.rowCount) throw new NotFoundException({ code: 'CARE_PLAN_NOT_FOUND' });
 

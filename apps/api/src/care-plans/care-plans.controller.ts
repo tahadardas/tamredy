@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { IsDateString, IsIn, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
-import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
+import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from '../auth/auth.guard.js';
 import { CarePlansService } from './care-plans.service.js';
 
 class CreateCarePlanInputDto {
@@ -69,8 +69,8 @@ export class CarePlansController {
 
   @Get()
   async list(@Request() r: AuthRequest) {
-    requireRole(r.user!, 'PATIENT');
-    return this.carePlans.listCarePlans(r.user!.id);
+    requireAnyRole(r.user!, ['PATIENT', 'ADMIN']);
+    return this.carePlans.listCarePlans(r.user!.id, r.user!.role);
   }
 
   @Get(':id')
@@ -78,8 +78,8 @@ export class CarePlansController {
     @Request() r: AuthRequest,
     @Param('id') planId: string,
   ) {
-    requireRole(r.user!, 'PATIENT');
-    return this.carePlans.getCarePlan(r.user!.id, planId);
+    requireAnyRole(r.user!, ['PATIENT', 'ADMIN']);
+    return this.carePlans.getCarePlan(r.user!.id, planId, r.user!.role);
   }
 
   @Post(':id/pause')

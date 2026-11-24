@@ -10,7 +10,8 @@ export class AdminBookingService {
    */
   async getPolicies() {
     const res = await this.db.query(`SELECT value FROM app_settings WHERE key = 'booking_policies'`);
-    return res.rows[0]?.value ?? {
+    const val = (res.rows[0]?.value ?? {}) as Record<string, any>;
+    return {
       instantEnabled: true,
       openMarketplaceEnabled: true,
       scheduledBookingEnabled: true,
@@ -23,6 +24,14 @@ export class AdminBookingService {
       recoveryCooldownMinutes: 15,
       recoveryMaxDaily: 8,
       recoveryAggregationSeconds: 60,
+      ...val,
+      // Provide snake_case aliases for frontend form inputs
+      instant_search_timeout_seconds: val.instant_search_timeout_seconds ?? val.instantSearchTimeoutSeconds ?? 60,
+      open_marketplace_default_duration_minutes: val.open_marketplace_default_duration_minutes ?? val.openRequestDurationMinutes ?? 120,
+      max_wait_extension_minutes: val.max_wait_extension_minutes ?? 120,
+      max_active_proposals_per_nurse: val.max_active_proposals_per_nurse ?? val.maxConcurrentProposalsPerNurse ?? 5,
+      quiet_recovery_cooldown_minutes: val.quiet_recovery_cooldown_minutes ?? val.recoveryCooldownMinutes ?? 15,
+      quiet_recovery_daily_limit: val.quiet_recovery_daily_limit ?? val.recoveryMaxDaily ?? 8,
     };
   }
 
@@ -31,7 +40,24 @@ export class AdminBookingService {
    */
   async updatePolicies(userId: string, update: Record<string, unknown>) {
     const current = await this.getPolicies();
-    const merged = { ...current, ...update };
+    const merged: Record<string, any> = { ...current, ...update };
+
+    // Synchronize both naming conventions if present
+    if (update.instant_search_timeout_seconds !== undefined) {
+      merged.instantSearchTimeoutSeconds = update.instant_search_timeout_seconds;
+    }
+    if (update.open_marketplace_default_duration_minutes !== undefined) {
+      merged.openRequestDurationMinutes = update.open_marketplace_default_duration_minutes;
+    }
+    if (update.max_active_proposals_per_nurse !== undefined) {
+      merged.maxConcurrentProposalsPerNurse = update.max_active_proposals_per_nurse;
+    }
+    if (update.quiet_recovery_cooldown_minutes !== undefined) {
+      merged.recoveryCooldownMinutes = update.quiet_recovery_cooldown_minutes;
+    }
+    if (update.quiet_recovery_daily_limit !== undefined) {
+      merged.recoveryMaxDaily = update.quiet_recovery_daily_limit;
+    }
 
     await this.db.query(
       `INSERT INTO app_settings(key, value)
@@ -40,11 +66,18 @@ export class AdminBookingService {
       [JSON.stringify(merged)],
     );
 
-    // Audit settings change
+    // Audit settings change in outbox_events with a valid UUID aggregate_id
     await this.db.query(
       `INSERT INTO outbox_events(event_type, aggregate_id, payload)
-       VALUES('admin.booking_policies.updated', 'booking_policies', $1::jsonb)`,
+       VALUES('admin.booking_policies.updated', gen_random_uuid(), $1::jsonb)`,
       [JSON.stringify({ updatedBy: userId, policies: merged, timestamp: new Date() })],
+    );
+
+    // Also record in administrative audit_log
+    await this.db.query(
+      `INSERT INTO audit_log(actor_user_id, action, target_type, target_id, detail)
+       VALUES($1, 'settings.changed', 'booking_policies', gen_random_uuid(), $2::jsonb)`,
+      [userId, JSON.stringify({ key: 'booking_policies', value: merged })],
     );
 
     return merged;
