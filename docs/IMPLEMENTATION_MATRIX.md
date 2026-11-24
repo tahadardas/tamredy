@@ -29,7 +29,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 23. زر SOS العائم | IN_PROGRESS | Nurse safety sheet and server receipt states implemented behind a build flag. Offline persistence, emergency access on nested screens, and physical tests pending. |
 | 24. الاستغاثة الصامتة — Silent SOS | IN_PROGRESS | Nurse safety sheet and server receipt states implemented behind a build flag. Offline persistence, emergency access on nested screens, and physical tests pending. |
 | 25. حالات الاستغاثة | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
-| 26. المناوبات ومركز السلامة | NOT_STARTED | |
+| 26. المناوبات ومركز السلامة | IN_PROGRESS | Arabic case console and scoped dashboard counts implemented. Shift roster, map and automatic escalation pending. |
 | 27. نظام إدارة المناوبات | NOT_STARTED | |
 | 28. جهات الاتصال الموثوقة | IN_PROGRESS | Migration 032, shared editor, auditable staff verification and scope reset tested. Recipient portal and automatic escalation pending. |
 | 29. دليل أرقام الطوارئ | IN_PROGRESS | Migration 034, supervisor admin UI and app directory. No actual numbers verified or published. |

@@ -9,6 +9,16 @@ export type StaffAction = 'ACKNOWLEDGED' | 'ESCALATED' | 'RESOLVED';
 export class StaffCasesService {
   constructor(private readonly repository: StaffCasesRepository) {}
 
+  dashboard(actor: string) {
+    return this.repository.transaction(async client => {
+      const grant = await this.repository.grant(client, actor);
+      if (!grant) forbidden();
+      const supervisor = grant === 'SAFETY_SUPERVISOR';
+      const counts = await this.repository.dashboard(client, actor, supervisor);
+      return { canResolve: supervisor, counts, coverage: 'NOT_CONFIGURED' };
+    });
+  }
+
   list(actor: string) {
     return this.repository.transaction(async client => {
       const grant = await this.repository.grant(client, actor);

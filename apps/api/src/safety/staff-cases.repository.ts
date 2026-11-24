@@ -16,6 +16,16 @@ export class StaffCasesRepository {
       WHERE user_id=$1 AND revoked_at IS NULL FOR SHARE`, [actor])).rows[0]?.permission;
   }
 
+  async dashboard(client: PoolClient, actor: string, supervisor: boolean) {
+    return (await client.query(`SELECT count(*) FILTER (WHERE c.state='RECEIVED')::int AS received,
+      count(*) FILTER (WHERE c.state='ACKNOWLEDGED')::int AS acknowledged,
+      count(*) FILTER (WHERE c.state='ESCALATED')::int AS escalated,
+      count(*) FILTER (WHERE c.state<>'RESOLVED' AND c.emergency_event_id IS NOT NULL)::int AS open_sos,
+      count(*) FILTER (WHERE c.state<>'RESOLVED' AND a.kind='CHECKIN_MISSED')::int AS missed_checkins,
+      max(c.updated_at) AS last_update FROM safety_cases c LEFT JOIN safety_alerts a ON a.id=c.alert_id
+      WHERE $2 OR c.assigned_user_id=$1 OR c.state='RECEIVED'`, [actor,supervisor])).rows[0];
+  }
+
   async list(client: PoolClient, actor: string, supervisor: boolean) {
     return (await client.query(`SELECT c.id,c.state,c.version,c.opened_at,c.updated_at,
       coalesce(a.kind,'SOS') AS kind,

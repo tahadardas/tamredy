@@ -178,6 +178,12 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.deepEqual(await contacts.list(nurse), []);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM trusted_contact_consents WHERE contact_id=$1', [contact.id])).rows[0].n, 3);
   await assert.rejects(ops.list(plainAdmin), { status: 403 });
+  await assert.rejects(ops.dashboard(plainAdmin), { status: 403 });
+  const summary = await ops.dashboard(operator);
+  assert.equal(summary.canResolve, false);
+  assert.equal(summary.coverage, 'NOT_CONFIGURED');
+  assert.equal(summary.counts.open_sos, 1);
+  assert.equal(summary.counts.missed_checkins, 1);
   const queue = await ops.list(operator);
   assert.deepEqual(queue.map(entry => entry.kind).sort(), ['CHECKIN_MISSED','SAFE_EXIT_REQUESTED','SOS']);
   const entry = queue.find(row => row.kind === 'SOS');
@@ -185,6 +191,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   const acknowledgement = { clientActionId: randomUUID(), expectedVersion: 1 };
   const ack = await ops.act(operator, entry.id, 'ACKNOWLEDGED', acknowledgement);
   assert.equal(ack.state, 'ACKNOWLEDGED');
+  assert.equal((await ops.dashboard(otherOperator)).counts.open_sos, 0);
+  assert.equal((await ops.dashboard(supervisor)).counts.open_sos, 1);
   assert.deepEqual(await ops.act(operator, entry.id, 'ACKNOWLEDGED', acknowledgement), ack);
   await assert.rejects(ops.act(otherOperator, entry.id, 'ACKNOWLEDGED', {
     clientActionId: randomUUID(), expectedVersion: 1,

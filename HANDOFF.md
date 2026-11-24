@@ -316,3 +316,10 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Patient and nurse screens display active, unexpired entries and can open the number in the system dialer. The offline view is visibly dated and uses a cache of at most seven days, still subject to entry expiry. Removed the unverified hardcoded number from the patient copy.
 - Workspace built, PGlite verified draft exclusion, supervisor restriction, expiry and deactivation, and route audits passed. Actual source verification, live numbers, Android dialer and physical offline checks remain pending.
 - No new phone or SMS permissions, no calls initiated and no deployment. Next phase is staffed operations and shift coverage.
+
+### Guardian phase 7 — operations console
+
+- Admin Web now provides an Arabic operations queue with counts, status filters, manual refresh and a 20-second visible-tab poll. Staff can acknowledge, escalate with a note and, for supervisors, resolve with a note.
+- Added GET /v1/admin/safety/dashboard. Counts are scoped to the staff grant. Existing event endpoints provide the audit trail and enforce server-side grants, ownership and version checks. The UI reuses its action key for an unchanged retry.
+- The dashboard labels shift coverage as not configured. Automatic escalation and handover are not active. Current event list is limited to 100 rows.
+- Workspace build and the four targeted Guardian/route tests passed. No migration, staff provisioning, browser field test or deployment. Continue with shift roster, heartbeat, assignment and timed escalation.

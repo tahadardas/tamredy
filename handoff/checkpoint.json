@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 7,
   "status": "IN_PROGRESS",
-  "nextAction": "Build the Guardian operations console, shift coverage and timed escalation. Publish real directory entries only after verification by an authorized supervisor.",
+  "nextAction": "Implement safety shift roster and presence, primary/backup routing, handover, and timed escalation. Verify with staffed drills before deployment.",
   "productionDeploymentAuthorized": false
 }
