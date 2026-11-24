@@ -89,6 +89,12 @@ import { EvidenceService } from './safety/evidence.service.js';
 
 import { RetentionController } from './safety/retention.controller.js';
 import { RetentionService } from './safety/retention.js';
+import {
+  VerificationProvider,
+  TestVerificationProvider,
+  SmsVerificationProvider,
+  WhatsAppVerificationProvider,
+} from './auth/verification-provider.js';
 
 @Module({
   imports: [
@@ -100,7 +106,19 @@ import { RetentionService } from './safety/retention.js';
   controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController,RetentionController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,
+    TestVerificationProvider,SmsVerificationProvider,WhatsAppVerificationProvider,
+    {
+      provide: VerificationProvider,
+      useFactory: (testP: TestVerificationProvider, smsP: SmsVerificationProvider, waP: WhatsAppVerificationProvider) => {
+        const prov = (process.env.VERIFICATION_PROVIDER ?? '').toUpperCase();
+        if (prov === 'WHATSAPP') return waP;
+        if (prov === 'SMS') return smsP;
+        if (process.env.NODE_ENV !== 'production') return testP;
+        return smsP;
+      },
+      inject: [TestVerificationProvider, SmsVerificationProvider, WhatsAppVerificationProvider],
+    }
   ],
 })
 export class AppModule {}

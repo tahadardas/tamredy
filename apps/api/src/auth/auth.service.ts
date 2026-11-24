@@ -1,8 +1,9 @@
 import { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual, createHash, scryptSync } from 'node:crypto';
-import { Injectable, UnauthorizedException, HttpException, ForbiddenException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, HttpException, ForbiddenException, Optional } from '@nestjs/common';
 import jwt from 'jsonwebtoken';
 import { DbService } from '../db/db.service.js';
 import { invalid } from '../common/errors.js';
+import { VerificationProvider, VerificationChannel } from './verification-provider.js';
 
 export const OTP_TTL_SECONDS = 300;
 export const OTP_MAX_ATTEMPTS = 5;
@@ -55,7 +56,11 @@ const safeEq = (a: string, b: string) => a.length === b.length && timingSafeEqua
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly db: DbService, private readonly sms: SmsProvider) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly sms: SmsProvider,
+    @Optional() private readonly verificationProvider?: VerificationProvider,
+  ) {}
 
   /** Upserts device session for trusted persistent logins. */
   async upsertDeviceSession(
@@ -113,7 +118,7 @@ export class AuthService {
   }
 
   /** Starts a login. Always answers the same way so phone numbers cannot be enumerated. */
-  async requestOtp(phone: string): Promise<{ expiresInSeconds: number }> {
+  async requestOtp(phone: string, channel: VerificationChannel = 'SMS'): Promise<{ expiresInSeconds: number; channel: VerificationChannel }> {
     if (authMode() !== 'otp') throw new HttpException({ code: 'OTP_DISABLED_PASSWORD_MODE' }, 404);
     if (!PHONE.test(phone)) invalid('phone must be E.164, e.g. +963911111111');
     const recent = await this.db.query(`SELECT count(*)::int AS n FROM otp_challenges WHERE phone_e164=$1 AND created_at>now()-interval '10 minutes'`, [phone]);
@@ -121,8 +126,12 @@ export class AuthService {
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     await this.db.query(`INSERT INTO otp_challenges(phone_e164,code_hash,expires_at) VALUES($1,$2,now()+($3||' seconds')::interval)`,
       [phone, hashCode(phone, code), String(OTP_TTL_SECONDS)]);
-    await this.sms.send(phone, `رمز تمريضي: ${code}`);
-    return { expiresInSeconds: OTP_TTL_SECONDS };
+    if (this.verificationProvider) {
+      await this.verificationProvider.sendOtp(phone, code, 'auth');
+    } else {
+      await this.sms.send(phone, `رمز تمريضي: ${code}`);
+    }
+    return { expiresInSeconds: OTP_TTL_SECONDS, channel };
   }
 
   async verifyOtp(phone: string, code: string, deviceMeta?: { deviceId?: string; deviceName?: string; platform?: string }) {

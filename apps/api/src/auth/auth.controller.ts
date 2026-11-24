@@ -1,8 +1,12 @@
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
-import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import { AuthService } from './auth.service.js';
+import { VerificationChannel } from './verification-provider.js';
 
-class OtpRequestDto { @IsString() @MaxLength(20) phone!: string; }
+class OtpRequestDto {
+  @IsString() @MaxLength(20) phone!: string;
+  @IsOptional() @IsIn(['SMS', 'WHATSAPP', 'TEST']) channel?: VerificationChannel;
+}
 class OtpVerifyDto {
   @IsString() @MaxLength(20) phone!: string;
   @IsString() @Matches(/^\d{6}$/) code!: string;
@@ -34,7 +38,7 @@ export class AuthController {
   @Post('login') @HttpCode(200) login(@Body() b: LoginDto) {
     return this.auth.login(b.phone, b.password, { deviceId: b.deviceId, deviceName: b.deviceName, platform: b.platform });
   }
-  @Post('otp/request') @HttpCode(202) request(@Body() b: OtpRequestDto) { return this.auth.requestOtp(b.phone); }
+  @Post('otp/request') @HttpCode(202) request(@Body() b: OtpRequestDto) { return this.auth.requestOtp(b.phone, b.channel); }
   @Post('otp/verify') @HttpCode(200) verify(@Body() b: OtpVerifyDto) {
     return this.auth.verifyOtp(b.phone, b.code, { deviceId: b.deviceId, deviceName: b.deviceName, platform: b.platform });
   }
