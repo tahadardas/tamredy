@@ -568,10 +568,14 @@ class PatientController extends ChangeNotifier {
   }
 
   /// Center the picker on the device location.
-  Future<void> useCurrentLocation() async {
+  Future<void> useCurrentLocation({
+    void Function(LatLng point, String label, double accuracy)? onLocated,
+  }) async {
+    final apply = onLocated ?? (point, label, accuracy) =>
+        selectVisitLocation(point, label, accuracyMeters: accuracy);
     error = null;
     if (kDemoMode) {
-      selectVisitLocation(kDamascus, 'موقعي الحالي');
+      apply(kDamascus, 'موقعي الحالي', 0);
       return;
     }
     try {
@@ -601,11 +605,7 @@ class PatientController extends ChangeNotifier {
           timeLimit: Duration(seconds: 10),
         ),
       );
-      selectVisitLocation(
-        LatLng(fix.latitude, fix.longitude),
-        'موقعي الحالي',
-        accuracyMeters: fix.accuracy,
-      );
+      apply(LatLng(fix.latitude, fix.longitude), 'موقعي الحالي', fix.accuracy);
       return;
     } catch (_) {
       error = 'تعذر تحديد موقعك الحالي. تأكد من تفعيل الـ GPS أو اختر منطقتك من القائمة.';
@@ -621,11 +621,12 @@ class PatientController extends ChangeNotifier {
     LatLng point,
     String label, {
     double accuracyMeters = 0,
+    String addressDetails = '',
   }) {
     position = point;
     address = label;
     accuracy = accuracyMeters;
-    extraAddress = '';
+    extraAddress = addressDetails;
     notifyListeners();
   }
 

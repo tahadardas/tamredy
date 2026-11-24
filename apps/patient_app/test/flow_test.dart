@@ -65,6 +65,29 @@ void main() {
     c.dispose();
   });
 
+  testWidgets('home address confirmation updates the draft without submitting', (tester) async {
+    tester.view.physicalSize = const Size(430, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final previousMaps = mapsEnabled;
+    mapsEnabled = false;
+    addTearDown(() => mapsEnabled = previousMaps);
+    final c = PatientController();
+    await tester.pumpWidget(TamreedyPatientApp(controller: c));
+    await tester.tap(find.text('تحديد عنوان الزيارة'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('استخدم موقعي الحالي'));
+    await tester.pumpAndSettle();
+    expect(c.position, isNull);
+    await tester.tap(find.text('تأكيد عنوان الزيارة'));
+    await tester.pumpAndSettle();
+    expect(c.position, isNotNull);
+    expect(c.stage, VisitStage.none);
+    expect(find.text('موقعي الحالي'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
   testWidgets('home shows services and opens service details', (tester) async {
     tester.view.physicalSize = const Size(430, 1600);
     tester.view.devicePixelRatio = 1;

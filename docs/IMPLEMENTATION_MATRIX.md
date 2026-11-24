@@ -12,7 +12,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 6. الشاشة الرئيسية للمريض | IN_PROGRESS | Patient home map, draggable service sheet and RTL drawer implemented. Physical device review pending. |
 | 7. القائمة الجانبية للمريض | IN_PROGRESS | Patient home map, draggable service sheet and RTL drawer implemented. Physical device review pending. |
 | 8. تسجيل الدخول وإنشاء الحساب واستعادة كلمة المرور | IN_PROGRESS | Manual recovery and owner-bound sessions exercised in password.test.mjs and device-session.test.mjs. Production DNS, configured support and device verification pending. |
-| 9. محرك اختيار العناوين — Location Experience | NOT_STARTED | |
+| 9. محرك اختيار العناوين — Location Experience | IN_PROGRESS | Home address selection, local draft and booking handoff covered by patient flow tests. Physical GPS and structured address fields pending. |
 | 10. الأماكن المحفوظة | NOT_STARTED | |
 | 11. رحلة إنشاء الطلب | NOT_STARTED | |
 | 12. طريقة الدفع | NOT_STARTED | |

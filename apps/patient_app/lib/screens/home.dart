@@ -121,11 +121,20 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: ListView(
                       controller: controller,
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
                       children: [
                         const Center(child: Icon(Icons.drag_handle)),
                         const SectionTitle('طلب تمريض منزلي'),
                         if (c.stage != VisitStage.none) ActiveOrderBanner(c: c),
+                        OutlinedButton.icon(
+                          onPressed: c.stage != VisitStage.none || c.busy ? null : () {
+                            Navigator.of(context).push(MaterialPageRoute<void>(
+                              builder: (_) => LocationScreen(c: c, addressOnly: true),
+                            ));
+                          },
+                          icon: const Icon(Icons.location_on_outlined),
+                          label: Text(c.position == null ? 'تحديد عنوان الزيارة' : c.visitAddress),
+                        ),
                         const SectionTitle('ما الخدمة التي تحتاجها؟'),
                         if (c.serviceState == ServiceLoadState.loading)
                           const ServiceSkeletonGrid()

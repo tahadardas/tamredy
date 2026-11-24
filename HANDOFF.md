@@ -198,3 +198,10 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Existing service, tracking, code claim and emergency notice actions remain. The map shows a visit pin only when the controller has a point.
 - Patient Flutter suite passed 7 tests, including service-to-booking and navigation/keyboard layout. Physical GPS and accessibility remain unverified.
 - No endpoints or migrations added in this slice. Continue phase 3 with saved places, visit-address flow and authoritative wallet data.
+
+### Guardian phase 3 — confirm visit address from home
+
+- The patient can choose and confirm a visit address before selecting a service. Draft edits stay local until confirmation. Booking reopens the confirmed point and address details.
+- If the region catalogue fails, production shows a retry and allows GPS or manual pin selection. Sample regions are limited to demo mode.
+- Patient Flutter suite passed 8 tests, including confirmation without submitting a request, booking, and navigation layout.
+- No endpoints or migrations added. Saved places, wallet data, and device verification remain.

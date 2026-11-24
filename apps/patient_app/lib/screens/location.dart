@@ -3,7 +3,7 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
 import '../main.dart';
 
-/// Used only if the server list cannot be loaded, so the patient is never stuck.
+/// Sample areas used by the local demo.
 const _fallback = [
   {'g': 'دمشق', 'n': 'المزة', 'lat': 33.5000, 'lng': 36.2500},
   {'g': 'دمشق', 'n': 'المالكي', 'lat': 33.5200, 'lng': 36.2800},
@@ -18,7 +18,8 @@ const _fallback = [
 /// until the pin is on the building. Large text, one decision per step.
 class LocationScreen extends StatefulWidget {
   final PatientController c;
-  const LocationScreen({super.key, required this.c});
+  final bool addressOnly;
+  const LocationScreen({super.key, required this.c, this.addressOnly = false});
   @override
   State<LocationScreen> createState() => _LocationScreenState();
 }
@@ -37,29 +38,49 @@ class _LocationScreenState extends State<LocationScreen> {
   bool _loading = true, _onMap = false, _locating = false;
   LatLng? _mapStart;
   bool _needsMapSelection = false;
+  late LatLng? _point;
+  late String _address;
+  late double _accuracy;
+  late String _details;
+  bool _regionsUnavailable = false;
 
   @override
   void initState() {
     super.initState();
     c.error = null; // an unrelated earlier error must not show here
+    _point = c.position;
+    _address = c.address;
+    _accuracy = c.accuracy;
+    _details = c.extraAddress;
+    _mapStart = _point;
+    _onMap = _point != null;
     _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     var list = <_Area>[];
-    try {
-      final d = await c.api.getMap('/v1/catalog/regions');
-      for (final g in d['governorates'] as List) {
-        for (final a in (g['areas'] as List)) {
-          list.add(_Area(g['name'] as String, a['name'] as String, (a['lat'] as num?)?.toDouble(), (a['lng'] as num?)?.toDouble()));
+    var unavailable = false;
+    if (kDemoMode) {
+      list = [
+        for (final f in _fallback)
+          _Area(f['g']! as String, f['n']! as String, f['lat']! as double, f['lng']! as double),
+      ];
+    } else {
+      try {
+        final d = await c.api.getMap('/v1/catalog/regions');
+        for (final g in d['governorates'] as List) {
+          for (final a in (g['areas'] as List)) {
+            list.add(_Area(g['name'] as String, a['name'] as String, (a['lat'] as num?)?.toDouble(), (a['lng'] as num?)?.toDouble()));
+          }
         }
+      } catch (_) {
+        unavailable = true;
       }
-    } catch (_) {
-      list = [for (final f in _fallback) _Area(f['g']! as String, f['n']! as String, f['lat']! as double, f['lng']! as double)];
     }
     if (!mounted) return;
     setState(() {
+      _regionsUnavailable = unavailable;
       _areas = list;
       _govs = {for (final a in list) a.gov}.toList();
       _loading = false;
@@ -69,11 +90,11 @@ class _LocationScreenState extends State<LocationScreen> {
   void _pickArea(_Area a) {
     final hasCoordinates = a.lat != null && a.lng != null;
     final point = hasCoordinates ? LatLng(a.lat!, a.lng!) : kDamascus;
-    c.selectVisitLocation(
-      point,
-      hasCoordinates ? '${a.name}، ${a.gov}' : 'حدّد موقع الزيارة على الخريطة',
-    );
     setState(() {
+      _point = point;
+      _address = hasCoordinates ? '${a.name}، ${a.gov}' : 'حدّد موقع الزيارة على الخريطة';
+      _accuracy = 0;
+      _details = '';
       _mapStart = point;
       _needsMapSelection = !hasCoordinates;
       _onMap = true;
@@ -83,16 +104,19 @@ class _LocationScreenState extends State<LocationScreen> {
   Future<void> _useMyLocation() async {
     setState(() => _locating = true);
     c.error = null;
-    await c.useCurrentLocation();
-    if (!mounted) return;
-    setState(() => _locating = false);
-    if (c.position != null && c.error == null) {
+    await c.useCurrentLocation(onLocated: (point, label, accuracy) {
+      if (!mounted) return;
       setState(() {
-        _mapStart = c.position;
+        _point = point;
+        _address = label;
+        _accuracy = accuracy;
+        _details = '';
+        _mapStart = point;
         _needsMapSelection = false;
         _onMap = true;
       });
-    }
+    });
+    if (mounted) setState(() => _locating = false);
   }
 
   Widget _bigButton(String label, IconData icon, VoidCallback? onTap) => Padding(
@@ -199,7 +223,15 @@ class _LocationScreenState extends State<LocationScreen> {
             ),
           ),
         if (_loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-        if (!_loading && shown.isEmpty)
+        if (!_loading && _regionsUnavailable) ...[
+          const NoticeBox('تعذر تحميل المناطق. يمكنك تحديد العنوان مباشرة على الخريطة.'),
+          TextButton(onPressed: _load, child: const Text('إعادة تحميل المناطق')),
+        ],
+        TextButton(
+          onPressed: () => _pickArea(const _Area('', '', null, null)),
+          child: const Text('تحديد عنوان على الخريطة'),
+        ),
+        if (!_loading && !_regionsUnavailable && shown.isEmpty)
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text('لا توجد منطقة بهذا الاسم. جرّب كتابة جزء من الاسم أو استخدم موقعك الحالي.', style: tamText(size: 17)),
@@ -245,7 +277,7 @@ class _LocationScreenState extends State<LocationScreen> {
               children: [
                 const Icon(Icons.location_on, color: TamreedyColors.teal, size: 28),
                 const SizedBox(width: 8),
-                Expanded(child: Text(c.address, style: tamText(size: 19, weight: FontWeight.w800, color: TamreedyColors.navy))),
+                Expanded(child: Text(_address, style: tamText(size: 19, weight: FontWeight.w800, color: TamreedyColors.navy))),
                 TextButton(
                   onPressed: () => setState(() => _onMap = false),
                   child: Text('تغيير', style: tamText(size: 16, weight: FontWeight.w800, color: TamreedyColors.teal)),
@@ -262,13 +294,21 @@ class _LocationScreenState extends State<LocationScreen> {
         onChanged: (point, address) {
           if (c.busy || (_needsMapSelection && point == _mapStart)) return;
           _needsMapSelection = false;
-          c.setPicked(point, address);
+          setState(() {
+            if (_point != point) {
+              _point = point;
+              _address = 'الموقع المحدد على الخريطة';
+              _accuracy = 0;
+            }
+            if (address.isNotEmpty) _address = address;
+          });
         },
       ),
       const SizedBox(height: 10),
       TamCard(
-        child: TextField(
-          onChanged: (v) => c.extraAddress = v,
+        child: TextFormField(
+          initialValue: _details,
+          onChanged: (v) => _details = v,
           style: tamText(size: 16),
           decoration: InputDecoration(
             labelText: 'رقم البناء أو الطابق أو أقرب معلم (اختياري)',
@@ -279,10 +319,15 @@ class _LocationScreenState extends State<LocationScreen> {
       ),
       if (c.error != null)
         Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(c.error!, style: tamText(size: 14, color: TamreedyColors.danger))),
-      _bigButton('هذا بيتي — أرسل الطلب', Icons.check_circle_outline, c.busy || _needsMapSelection
+      _bigButton(widget.addressOnly ? 'تأكيد عنوان الزيارة' : 'هذا بيتي — أرسل الطلب', Icons.check_circle_outline, c.busy || _needsMapSelection || _point == null
           ? null
           : () async {
               final nav = Navigator.of(context);
+              c.selectVisitLocation(_point!, _address, accuracyMeters: _accuracy, addressDetails: _details);
+              if (widget.addressOnly) {
+                nav.pop();
+                return;
+              }
               final ok = await c.submit();
               if (ok && mounted) {
                 c.setTab(1);
@@ -297,9 +342,9 @@ class _LocationScreenState extends State<LocationScreen> {
     listenable: c,
     builder: (context, _) => TamScaffold(
       title: _onMap ? 'ثبّت مكان بيتك' : 'أين تريد الزيارة؟',
-      subtitle: _onMap ? 'خطوة أخيرة قبل إرسال الطلب' : 'اختر موقعك الحالي أو منطقتك',
+      subtitle: _onMap ? 'تأكد من موضع دبوس الزيارة' : 'اختر موقعك الحالي أو منطقتك',
       showBack: true,
-      nav: patientNavBar(context, c, 0),
+      nav: widget.addressOnly ? null : patientNavBar(context, c, 0),
       children: [_onMap ? _mapStep() : _chooseStep()],
     ),
   );
