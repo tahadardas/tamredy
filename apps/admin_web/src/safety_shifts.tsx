@@ -84,6 +84,28 @@ function fromDamascus(input: string) {
   return new Date([...candidates][0]).toISOString();
 }
 
+function getShiftPreset(kind: 'DAY' | 'NIGHT', offsetDays = 0) {
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offsetDays);
+  if (kind === 'DAY') {
+    const s = new Date(target.getFullYear(), target.getMonth(), target.getDate(), 8, 0);
+    const e = new Date(target.getFullYear(), target.getMonth(), target.getDate(), 20, 0);
+    return {
+      shiftKind: 'DAY' as const,
+      startsAt: damascusInput(s),
+      endsAt: damascusInput(e),
+    };
+  } else {
+    const s = new Date(target.getFullYear(), target.getMonth(), target.getDate(), 20, 0);
+    const e = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1, 8, 0);
+    return {
+      shiftKind: 'NIGHT' as const,
+      startsAt: damascusInput(s),
+      endsAt: damascusInput(e),
+    };
+  }
+}
+
 export type ShiftCoverageProps = {
   coverage: 'UNCOVERED' | 'PARTIAL' | 'COVERED';
   shifts: Coverage[];
@@ -199,6 +221,35 @@ export function SafetyShifts({onPresence}: {onPresence: () => Promise<void>}) {
       >
         {roster?.staff && (
           <form onSubmit={save} className="form">
+            {/* Quick Presets */}
+            <div style={{gridColumn: '1 / -1', marginBottom: '8px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
+              <span style={{fontSize: '12px', color: '#64748b', fontWeight: 600}}>تعبئة سريعة للتوقيت:</span>
+              <button
+                type="button"
+                className="pill"
+                style={{fontSize: '11px', padding: '4px 10px'}}
+                onClick={() => setForm({...form, ...getShiftPreset('DAY', 0)})}
+              >
+                ☀️ نهار اليوم (08:00 - 20:00)
+              </button>
+              <button
+                type="button"
+                className="pill"
+                style={{fontSize: '11px', padding: '4px 10px'}}
+                onClick={() => setForm({...form, ...getShiftPreset('NIGHT', 0)})}
+              >
+                🌙 ليل اليوم (20:00 - 08:00)
+              </button>
+              <button
+                type="button"
+                className="pill"
+                style={{fontSize: '11px', padding: '4px 10px'}}
+                onClick={() => setForm({...form, ...getShiftPreset('DAY', 1)})}
+              >
+                ☀️ نهار الغد (08:00 - 20:00)
+              </button>
+            </div>
+
             <label>
               المحافظة
               <select
