@@ -69,7 +69,11 @@ class TamreedyApi {
     return url;
   }
 
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      resetOnError: false,
+    ),
+  );
   final _random = Random();
 
   /// Single Flight completer to prevent multiple concurrent refresh operations
@@ -129,10 +133,15 @@ class TamreedyApi {
             debugPrint('[HTTP ERROR] ${e.response?.statusCode ?? 'NET'} ${e.requestOptions.path} [trace:$traceId]: ${e.message}');
           }
 
-          // Single-flight silent refresh on 401 Unauthorized
+          // Single-flight silent refresh on 401 Unauthorized (exclude only non-recoverable auth endpoints)
+          final path = e.requestOptions.path;
+          final isUnrecoverableAuthRoute = path.endsWith('/refresh') ||
+              path.endsWith('/login') ||
+              path.contains('/otp/');
+
           if (e.response?.statusCode == 401 &&
               e.requestOptions.extra['retried'] != true &&
-              !e.requestOptions.path.startsWith('/v1/auth/')) {
+              !isUnrecoverableAuthRoute) {
             final refreshed = await _refreshSingleFlight();
             if (refreshed) {
               final opts = e.requestOptions..extra['retried'] = true;
