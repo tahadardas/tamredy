@@ -760,6 +760,70 @@ class NurseController extends ChangeNotifier {
     }
   }
 
+  // Open Marketplace
+  List<dynamic> marketplaceRequests = [];
+  List<dynamic> myProposals = [];
+  bool isLoadingMarketplace = false;
+
+  Future<void> loadMarketplaceRequests({double? maxDistanceKm}) async {
+    if (kDemoMode) return;
+    isLoadingMarketplace = true;
+    notifyListeners();
+    try {
+      marketplaceRequests = await api.getMarketplaceRequests(maxDistanceKm: maxDistanceKm);
+    } catch (_) {
+      // Keep existing list on error
+    } finally {
+      isLoadingMarketplace = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadMyProposals() async {
+    if (kDemoMode) return;
+    try {
+      myProposals = await api.getMyProposals();
+      notifyListeners();
+    } catch (_) {
+      // Keep existing
+    }
+  }
+
+  Future<bool> submitProposal(
+    String reqId, {
+    int? estimatedMinutes,
+    String? specificTime,
+    String? note,
+  }) async {
+    try {
+      await api.submitProposal(
+        reqId,
+        estimatedMinutes: estimatedMinutes,
+        specificTime: specificTime,
+        note: note,
+      );
+      await loadMarketplaceRequests();
+      await loadMyProposals();
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر إرسال عرض الجاهزية');
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> withdrawProposal(String proposalId, {String? reason}) async {
+    try {
+      await api.withdrawProposal(proposalId, reason: reason);
+      await loadMyProposals();
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر سحب العرض');
+      notifyListeners();
+      return false;
+    }
+  }
+
   void backToAvailable() {
     bill = null;
     collectMsg = null;

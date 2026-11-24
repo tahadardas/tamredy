@@ -117,13 +117,24 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
 
     const waveConfig = await loadWaves(c);
     if (wave > waveConfig.length) {
-      console.log(`[Dispatch] Request ${requestId} exhausted all ${waveConfig.length} waves with no acceptance. Marking UNFULFILLED.`);
-      await c.query(`UPDATE care_requests SET status='UNFULFILLED', version=version+1, updated_at=now() WHERE id=$1`, [requestId]);
+      console.log(`[Dispatch] Request ${requestId} exhausted all ${waveConfig.length} waves with no acceptance. Marking UNFULFILLED (AWAITING_RECOVERY_CHOICE).`);
+      await c.query('SAVEPOINT recovery_choice_sp');
+      try {
+        await c.query(`UPDATE care_requests SET status='UNFULFILLED', marketplace_status='AWAITING_RECOVERY_CHOICE', version=version+1, updated_at=now() WHERE id=$1`, [requestId]);
+        await c.query('RELEASE SAVEPOINT recovery_choice_sp');
+      } catch {
+        await c.query('ROLLBACK TO SAVEPOINT recovery_choice_sp');
+        await c.query(`UPDATE care_requests SET status='UNFULFILLED', version=version+1, updated_at=now() WHERE id=$1`, [requestId]);
+      }
       await c.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [requestId]);
       await c.query(`UPDATE request_offers SET status='EXPIRED' WHERE request_id=$1 AND status='OPEN'`, [requestId]);
       await c.query(`
         INSERT INTO outbox_events(event_type, aggregate_id, payload)
         VALUES('request.unfulfilled', $1, $2::jsonb)
+      `, [requestId, JSON.stringify({ requestId, recipientUserId: request.requester_user_id })]);
+      await c.query(`
+        INSERT INTO outbox_events(event_type, aggregate_id, payload)
+        VALUES('request.instant.search.expired', $1, $2::jsonb)
       `, [requestId, JSON.stringify({ requestId, recipientUserId: request.requester_user_id })]);
       await c.query('COMMIT');
       return true;

@@ -4,6 +4,7 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
 import 'payment.dart';
 import 'chat.dart';
+import 'proposals_view.dart';
 
 /// The amount due, shown to the patient immediately when the nurse closes the visit.
 class BillCard extends StatelessWidget {
@@ -136,58 +137,176 @@ class TrackScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = c.service;
-    if (c.stage == VisitStage.unfulfilled) {
+
+    // 1. Open Marketplace State
+    if (c.stage == VisitStage.openMarketplace) {
+      final remainingMins = c.openExpiresAt?.difference(DateTime.now()).inMinutes;
+      final expiryLabel = remainingMins != null && remainingMins > 0
+          ? 'متبقي نحو $remainingMins دقيقة على انتهاء النشر'
+          : 'ينتهي النشر قريباً';
+
       return TamScaffold(
-        title: 'لم يتم العثور على ممرض',
-        subtitle: 'تعذر توفير كادر متاح حالياً',
+        title: 'السوق المفتوح',
+        subtitle: 'طلبك منشور لاستقبال عروض الجاهزية',
         nav: nav,
         children: [
+          TamMap(height: 180, patient: c.position ?? kDamascus),
+          const SizedBox(height: 12),
           TamCard(
-            padding: const EdgeInsets.fromLTRB(20, 32, 20, 28),
+            padding: const EdgeInsets.all(20),
             child: Column(
               children: [
                 Container(
-                  width: 80,
-                  height: 80,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFFFCA5A5), width: 2),
+                    color: AeroColors.aeroTintLight,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AeroColors.accentTeal.withValues(alpha: 0.3)),
                   ),
-                  child: const Icon(
-                    Icons.person_off_outlined,
-                    size: 42,
-                    color: Color(0xFFDC2626),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.storefront_rounded, color: AeroColors.accentTeal, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        'منشور في سوق الطلبات',
+                        style: aeroText(size: 12, weight: FontWeight.w700, color: AeroColors.accentTeal),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 Text(
-                  'نعتذر منك، لم يُجب أحد على طلبك',
+                  c.activeProposalsCount > 0
+                      ? 'وصلك ${c.activeProposalsCount} عروض جاهزية!'
+                      : 'بانتظار عروض الممرضين المؤهلين',
+                  style: tamText(size: 18, weight: FontWeight.w800, color: TamreedyColors.navy),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  c.activeProposalsCount > 0
+                      ? 'يمكنك الاطلاع على وقت الوصول المقترح لكل ممرض وتأكيد المناسب لك فوراً.'
+                      : 'يتم إشعار الكوادر التمريضية المرخصة في منطقتك. ستصلك عروضهم هنا فور تقديمها.',
+                  textAlign: TextAlign.center,
+                  style: tamText(size: 13, color: TamreedyColors.subtext, height: 1.5),
+                ),
+                const SizedBox(height: 20),
+                KeyValueRow('نوع الخدمة', s?.title ?? '—'),
+                KeyValueRow('موقع الزيارة', c.address),
+                KeyValueRow('صلاحية النشر', expiryLabel),
+                const SizedBox(height: 20),
+                if (c.activeProposalsCount > 0) ...[
+                  AeroButton(
+                    'استعراض العروض المقدمة (${c.activeProposalsCount})',
+                    leadingIcon: const Icon(Icons.people_alt_rounded, color: Colors.white, size: 20),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => ProposalsViewScreen(c: c)),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.timer_outlined, size: 18),
+                        label: const Text('تمديد الوقت (+30د)'),
+                        onPressed: c.busy ? null : () => c.extendWaitWindow(additionalMinutes: 30),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        label: const Text('تحديث العروض'),
+                        onPressed: c.busy ? null : () => c.loadProposals(),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SoftButton(
+                  'إلغاء الطلب (مجاناً)',
+                  onPressed: c.busy ? null : () => showCancellationSheet(context, c),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    // 2. Unfulfilled / Search Timeout State
+    if (c.stage == VisitStage.unfulfilled) {
+      return TamScaffold(
+        title: 'لم نجد ممرضاً متاحاً فوراً',
+        subtitle: 'تعذر توفير كادر فوري في هذه اللحظة',
+        nav: nav,
+        children: [
+          TamCard(
+            padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+            child: Column(
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: AeroColors.warning.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AeroColors.warning.withValues(alpha: 0.4), width: 2),
+                  ),
+                  child: const Icon(
+                    Icons.hourglass_empty_rounded,
+                    size: 36,
+                    color: AeroColors.warning,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'الممرضون الأقرب إليك منشغلون حالياً',
                   style: tamText(
-                    size: 19,
+                    size: 18,
                     weight: FontWeight.w800,
                     color: TamreedyColors.navy,
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Text(
-                  'جميع الكوادر التمريضية القريبة منك مشغولة حالياً بزيارات أخرى، أو خارج نطاق التغطية اللحظية. يمكنك إعادة المحاولة الآن أو اختيار وقت لاحق.',
+                  'جميع الكوادر التمريضية القريبة منك مشغولة حالياً بزيارات أخرى. اختر الخيار الأنسب لك:',
                   textAlign: TextAlign.center,
-                  style: tamText(size: 13, color: TamreedyColors.subtext, height: 1.6),
+                  style: tamText(size: 13, color: TamreedyColors.subtext, height: 1.5),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
                 KeyValueRow('نوع الخدمة', s?.title ?? '—'),
                 KeyValueRow('موقع الزيارة', c.address),
-                const SizedBox(height: 24),
-                PrimaryButton(
-                  'إعادة المحاولة الآن',
+                const SizedBox(height: 20),
+
+                // Recovery Action 1: Keep Open
+                AeroButton(
+                  'إبقاء الطلب مفتوحاً لاستقبال العروض',
+                  leadingIcon: const Icon(Icons.storefront_rounded, color: Colors.white, size: 20),
                   onPressed: c.busy ? null : () async {
-                    await c.retryRequest();
+                    await c.switchToOpenMarketplace();
                   },
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
+
+                // Recovery Action 2: Retry Instant
+                AeroButton(
+                  'إعادة البحث الفوري الآن',
+                  variant: AeroButtonVariant.secondary,
+                  leadingIcon: const Icon(Icons.refresh_rounded, color: AeroColors.primaryNavy, size: 20),
+                  onPressed: c.busy ? null : () async {
+                    await c.retryInstantDispatch();
+                  },
+                ),
+                const SizedBox(height: 10),
+
+                // Recovery Action 3: Cancel / Back
                 SoftButton(
-                  'العودة إلى الرئيسية',
+                  'إلغاء الطلب والعودة للرئيسية',
                   onPressed: () {
                     c.resetToHome();
                   },

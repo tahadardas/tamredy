@@ -112,6 +112,16 @@ import { VoiceController } from './voice/voice.controller.js';
 import { VoiceService } from './voice/voice.service.js';
 import { NotificationsController } from './notifications/notifications.controller.js';
 import { NotificationsService } from './notifications/notifications.service.js';
+import { MarketplaceController } from './marketplace/marketplace.controller.js';
+import { ProposalsController } from './marketplace/proposals.controller.js';
+import { BookingModeController } from './marketplace/booking-mode.controller.js';
+import { MarketplaceEligibilityService } from './marketplace/marketplace-eligibility.service.js';
+import { MarketplaceService } from './marketplace/marketplace.service.js';
+import { ProposalsService } from './marketplace/proposals.service.js';
+import { AssignmentService } from './marketplace/assignment.service.js';
+import { BookingModeService } from './marketplace/booking-mode.service.js';
+import { AdminBookingController } from './admin/admin-booking.controller.js';
+import { AdminBookingService } from './admin/admin-booking.service.js';
 import {
   VerificationProvider,
   TestVerificationProvider,
@@ -126,10 +136,10 @@ import {
       limit: 120,
     }]),
   ],
-  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController,RetentionController,ChatController,TrustController,NurseCalendarController,CarePlansController,HealthRecordsController,ClinicalReportsController,FavoritesController,PackagesController,NurseFinancialController,VoiceController,NotificationsController],
+  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController,RetentionController,ChatController,TrustController,NurseCalendarController,CarePlansController,HealthRecordsController,ClinicalReportsController,FavoritesController,PackagesController,NurseFinancialController,VoiceController,NotificationsController,MarketplaceController,ProposalsController,BookingModeController,AdminBookingController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,ChatService,TrustService,NurseCalendarService,CarePlansService,HealthRecordsService,ClinicalReportsService,FavoritesService,PackagesService,LedgerService,NurseFinancialService,VoiceService,NotificationsService,
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,ChatService,TrustService,NurseCalendarService,CarePlansService,HealthRecordsService,ClinicalReportsService,FavoritesService,PackagesService,LedgerService,NurseFinancialService,VoiceService,NotificationsService,MarketplaceEligibilityService,MarketplaceService,ProposalsService,AssignmentService,BookingModeService,AdminBookingService,
     TestVerificationProvider,SmsVerificationProvider,WhatsAppVerificationProvider,
     {
       provide: VerificationProvider,

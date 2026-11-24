@@ -98,11 +98,30 @@ export class RequestsService {
       const promo = await this.promos.resolve(client, userId, primaryServiceId, combinedRule.basePrice, dto.promoCode, true);
       const auto = promo ? null : await this.autos.pick(client, userId);
 
-      const r = await client.query(`INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,status,price_amount,currency_code,commission_bps,pricing,promo_id,promo_snapshot)
-        VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
-        RETURNING id,status,version,price_amount,currency_code`,[
+      const isOpenMode = dto.bookingMode === 'OPEN';
+      const bookingMode = isOpenMode ? 'OPEN' : (appointment ? 'SCHEDULED' : 'INSTANT');
+      let initialStatus = 'OFFERING';
+      if (isOpenMode) initialStatus = 'OPEN_FOR_PROPOSALS';
+      else if (appointment) initialStatus = 'SCHEDULED';
+
+      const now = new Date();
+      const openDurationMins = dto.openDurationMinutes ?? 120;
+      const openExpiresAt = isOpenMode ? new Date(now.getTime() + openDurationMins * 60000) : null;
+      const latestArrivalAt = isOpenMode
+        ? (dto.latestAcceptableArrivalAt ? new Date(dto.latestAcceptableArrivalAt) : new Date(openExpiresAt!.getTime() + 60 * 60000))
+        : null;
+
+      const r = await client.query(`INSERT INTO care_requests(
+        requester_user_id, beneficiary_id, service_id, location, location_source, address_text,
+        status, price_amount, currency_code, commission_bps, pricing, promo_id, promo_snapshot,
+        booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at
+      )
+      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19)
+      RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
         userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,maxCommissionBps,
-        JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, appointment ? 'SCHEDULED' : 'OFFERING'
+        JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
+        bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'SCHEDULED' : 'SEARCHING'),
+        isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null, latestArrivalAt?.toISOString() ?? null
       ]);
       const request = r.rows[0];
 
@@ -137,28 +156,40 @@ export class RequestsService {
         ]);
       }
       await client.query('UPDATE request_create_keys SET request_id=$1 WHERE user_id=$2 AND key=$3',[request.id,userId,key]);
-      const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
-      if (!appointment && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
-        const search = await client.query(`UPDATE care_requests SET
-          search_started_at=statement_timestamp(),
-          search_expires_at=statement_timestamp()+$2::integer*interval '1 second',
-          search_radius_meters=$3,
-          search_max_heartbeat_seconds=$4, search_max_location_seconds=$5, search_max_accuracy_meters=$6
-          WHERE id=$1 RETURNING search_started_at, search_expires_at`,
-        [request.id, policy.offerDurationSeconds ?? 60, policy.radiusMeters ?? 10000,
-          policy.maxHeartbeatAgeSeconds ?? 60, policy.maxLocationAgeSeconds ?? 120,
-          policy.maxLocationAccuracyMeters ?? 100]);
-        Object.assign(request, search.rows[0]);
+
+      if (isOpenMode) {
+        await client.query(
+          `INSERT INTO outbox_events(event_type, aggregate_id, payload)
+           VALUES('marketplace.request.published', $1, $2::jsonb)`,
+          [request.id, JSON.stringify({ requestId: request.id, recipientUserId: userId, openExpiresAt })],
+        );
+        await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'marketplace.request.published']);
+      } else {
+        const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
+        if (!appointment && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
+          const search = await client.query(`UPDATE care_requests SET
+            search_started_at=statement_timestamp(),
+            search_expires_at=statement_timestamp()+$2::integer*interval '1 second',
+            search_radius_meters=$3,
+            search_max_heartbeat_seconds=$4, search_max_location_seconds=$5, search_max_accuracy_meters=$6
+            WHERE id=$1 RETURNING search_started_at, search_expires_at`,
+          [request.id, policy.offerDurationSeconds ?? 60, policy.radiusMeters ?? 10000,
+            policy.maxHeartbeatAgeSeconds ?? 60, policy.maxLocationAgeSeconds ?? 120,
+            policy.maxLocationAccuracyMeters ?? 100]);
+          Object.assign(request, search.rows[0]);
+        }
+        if (appointment) await saveSchedule(client, request.id, appointment);
+        else await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
+        await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
+        await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
       }
-      if (appointment) await saveSchedule(client, request.id, appointment);
-      else await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
-      await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
-      await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
       return {...request, ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
     });
   }
   async findOne(userId: string, requestId: string) {
-    const found = await this.db.query(`SELECT id,requester_user_id,beneficiary_id,service_id,status,version,price_amount,currency_code,created_at
+    const found = await this.db.query(`SELECT id,requester_user_id,beneficiary_id,service_id,status,version,price_amount,currency_code,created_at,
+       booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at,
+       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = care_requests.id AND mp.status = 'PENDING') AS active_proposals_count
        FROM care_requests WHERE id=$1 AND requester_user_id=$2`,[requestId,userId]);
     if(!found.rowCount) missing();
     const items = await this.db.query(`
@@ -176,6 +207,8 @@ export class RequestsService {
     // A correlated lookup per row would be a N+1 anti-pattern.
     const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,
       cr.created_at,cr.version,
+      cr.booking_mode, cr.marketplace_status, cr.open_expires_at, cr.latest_acceptable_arrival_at,
+      (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING') AS active_proposals_count,
       to_char(cr.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at,
       s.title_ar AS service_title,b.display_name AS beneficiary_name,
       a.nurse_id AS assigned_nurse_id

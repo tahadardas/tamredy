@@ -12,6 +12,7 @@ import { runSafetyCheckin } from './safety-checkins.js';
 import { releaseScheduledVisit } from './scheduling.js';
 import { doDispatch } from './dispatch.js';
 import { processBroadcast, runWinback } from './marketing.js';
+import { runSmartRecoveryJob } from './smart-recovery.js';
 
 const dbUrl = process.env.DATABASE_URL;
 if (!dbUrl) throw new Error('DATABASE_URL required');
@@ -79,7 +80,12 @@ async function runWorker(): Promise<void> {
   }
 
   let lastSafetyRetention = 0;
+  let lastSmartRecovery = 0;
   async function runBackgroundJobs(): Promise<boolean> {
+    if (Date.now() - lastSmartRecovery > 10000) {
+      lastSmartRecovery = Date.now();
+      await runSmartRecoveryJob(pool).catch(error => console.error('[SmartRecovery Error]', error));
+    }
     if (Date.now() - lastDepartureCheck > 5000) {
       lastDepartureCheck = Date.now();
       await notifyDelayedDepartures(pool);

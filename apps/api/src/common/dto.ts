@@ -14,6 +14,9 @@ export class RequestItemInputDto {
 
 export class CreateRequestDto extends LocationDto {
   @IsOptional() @IsISO8601({ strict: true }) @Matches(/(?:Z|[+-]\d{2}:\d{2})$/i) scheduledAt?: string;
+  @IsOptional() @IsIn(['INSTANT', 'OPEN', 'SCHEDULED']) bookingMode?: 'INSTANT' | 'OPEN' | 'SCHEDULED';
+  @IsOptional() @IsISO8601({ strict: true }) latestAcceptableArrivalAt?: string;
+  @IsOptional() @IsNumber() @Min(15) @Max(1440) openDurationMinutes?: number;
   @IsUUID() beneficiaryId!: string;
   @IsOptional() @IsUUID() serviceId?: string;
   @IsOptional() @IsArray() serviceIds?: string[];

@@ -17,6 +17,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
     await db.exec(sql);
   }
   await db.exec(`
+    ALTER TABLE care_requests ADD COLUMN IF NOT EXISTS marketplace_status text;
     CREATE TABLE IF NOT EXISTS care_request_items (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       request_id uuid NOT NULL,

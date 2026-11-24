@@ -11,6 +11,7 @@ import 'screens/home.dart';
 import 'screens/onboarding.dart';
 import 'screens/visit.dart';
 import 'screens/earnings.dart';
+import 'screens/marketplace.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -147,7 +148,7 @@ class _NurseShellState extends State<NurseShell> {
       switch (c.tab) {
         case 1:
           return c.stage == NurseStage.idle
-              ? NurseHistoryScreen(c: c, nav: nav)
+              ? NurseMarketplaceScreen(c: c, nav: nav)
               : VisitFlowScreen(c: c, nav: nav);
         case 2:
           return EarningsScreen(c: c, nav: nav);

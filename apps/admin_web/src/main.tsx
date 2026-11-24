@@ -18,7 +18,7 @@ import {SafetyOperations} from './pages_safety_operations';
 import {SafetyDirectory} from './pages_safety_directory';
 import {DispatchMonitor} from './pages_dispatch';
 import {CancellationAppeals} from './pages_appeals';
-import {AppointmentsSchedule, SupportReports, LedgerAudit, BITelemetry} from './pages_expansion';
+import {AppointmentsSchedule, SupportReports, LedgerAudit, BITelemetry, BookingMarketplaceAdmin} from './pages_expansion';
 
 export type NavItem = {
   id: string;
@@ -47,6 +47,7 @@ export const navCategories: NavCategory[] = [
       {id: 'map', label: 'مراقبة ميدانية', icon: 'pin', title: 'المراقبة الميدانية المباشرة', desc: 'عرض توزيع الحالات والزيارات والممرضين'},
       {id: 'requests', label: 'إدارة الطلبات', icon: 'doc', title: 'إدارة ومتابعة الطلبات', desc: 'تصفية وبحث ومراقبة مراحل الإسناد والخدمة'},
       {id: 'appointments', label: 'الزيارات المجدولة', icon: 'doc', title: 'الزيارات المجدولة وخطط الرعاية', desc: 'إدارة الزيارات المسبقة وخطط الرعاية الدورية'},
+      {id: 'marketplace', label: 'السوق المفتوح', icon: 'cart', title: 'سوق الطلبات المفتوح واستعادة الطلبات', desc: 'متابعة الطلبات المفتوحة، عروض الممرضين، إعدادات الاستعادة الذكية، والتحليلات'},
       {id: 'appeals', label: 'الاعتراضات', icon: 'doc', title: 'اعتراضات الإلغاء', desc: 'مراجعة الاعتراضات واتخاذ القرارات'},
     ],
   },
@@ -349,6 +350,7 @@ function App() {
     requests: <Requests live={live} />,
     appeals: <CancellationAppeals live={live} />,
     appointments: <AppointmentsSchedule live={live} />,
+    marketplace: <BookingMarketplaceAdmin live={live} />,
     applications: <Applications live={live} />,
     nurses: <Nurses live={live} />,
     credentials: <Credentials live={live} />,

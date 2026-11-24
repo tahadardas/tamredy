@@ -312,6 +312,16 @@ class ActiveOrderBanner extends StatelessWidget {
         icon = Icons.radar;
         statusColor = TamreedyColors.teal;
         break;
+      case VisitStage.openMarketplace:
+        statusTitle = c.activeProposalsCount > 0
+            ? 'وصلك ${c.activeProposalsCount} عروض جاهزية!'
+            : 'منشور في السوق المفتوح';
+        statusSub = c.activeProposalsCount > 0
+            ? 'اضغط لاستعراض العروض واختيار الممرض'
+            : 'بانتظار تقديم الممرضين المؤهلين لعروضهم';
+        icon = Icons.storefront_rounded;
+        statusColor = AeroColors.accentTeal;
+        break;
       case VisitStage.assigned:
         statusTitle = 'تم إسناد الزيارة';
         statusSub = 'بانتظار تأكيد انطلاق الممرض';
@@ -750,7 +760,62 @@ class _ServiceScreenState extends State<ServiceScreen> {
               else
                 KeyValueRow('اسم المستفيد', c.beneficiary.isEmpty ? 'غير محدد' : c.beneficiary),
               const Divider(color: TamreedyColors.border, height: 1),
-              const KeyValueRow('الوقت المطلوب', 'فوراً (أقرب ممرض متاح)'),
+              InkWell(
+                onTap: () {
+                  showAeroModalBottomSheet(
+                    context: context,
+                    builder: (_) => AeroBookingModePickerSheet(
+                      initialMode: c.bookingMode == 'OPEN'
+                          ? AeroBookingMode.openMarketplace
+                          : c.bookingMode == 'SCHEDULED'
+                              ? AeroBookingMode.scheduled
+                              : AeroBookingMode.instant,
+                      onSelectMode: (mode) {
+                        setState(() {
+                          c.bookingMode = switch (mode) {
+                            AeroBookingMode.openMarketplace => 'OPEN',
+                            AeroBookingMode.scheduled => 'SCHEDULED',
+                            AeroBookingMode.instant => 'INSTANT',
+                          };
+                        });
+                      },
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('طريقة الحجز والوقت', style: tamText(size: 12, color: TamreedyColors.subtext)),
+                            const SizedBox(height: 2),
+                            Text(
+                              c.bookingMode == 'OPEN'
+                                  ? 'السوق المفتوح (استقبال عروض الجاهزية)'
+                                  : c.bookingMode == 'SCHEDULED'
+                                      ? 'حجز موعد مسبق'
+                                      : 'طلب فوري (أقرب ممرض متاح)',
+                              style: tamText(size: 13, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Row(
+                        children: [
+                          Text('تغيير', style: aeroText(size: 12, weight: FontWeight.w600, color: AeroColors.accentTeal)),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.arrow_forward_ios_rounded, size: 13, color: AeroColors.accentTeal),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),

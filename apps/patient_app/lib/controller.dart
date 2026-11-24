@@ -82,7 +82,7 @@ class WalletTx {
   const WalletTx(this.title, this.sub, this.amount);
 }
 
-enum VisitStage { none, scheduled, interrupted, searching, assigned, enRoute, arrived, inService, completed, unfulfilled }
+enum VisitStage { none, scheduled, interrupted, searching, openMarketplace, assigned, enRoute, arrived, inService, completed, unfulfilled }
 
 const List<ServiceItem> kSampleServices = [
   ServiceItem(
@@ -209,6 +209,12 @@ class PatientController extends ChangeNotifier {
   Timer? _timer;
   bool busy = false;
   String? error;
+
+  // Smart Booking & Open Marketplace
+  String bookingMode = 'INSTANT';
+  String? marketplaceStatus;
+  int activeProposalsCount = 0;
+  DateTime? openExpiresAt;
 
   ServiceLoadState serviceState = kDemoMode ? ServiceLoadState.loaded : ServiceLoadState.initial;
   String? serviceError;
@@ -740,6 +746,8 @@ class PatientController extends ChangeNotifier {
           'nonEmergencyConfirmed': true,
           if (service!.requiresPrescription) 'prescriptionConfirmed': true,
           if (promoCode.isNotEmpty) 'promoCode': promoCode,
+          'bookingMode': bookingMode,
+          if (bookingMode == 'OPEN') 'openDurationMinutes': 60,
         },
         {'Idempotency-Key': _idemKey!},
       );
@@ -750,7 +758,11 @@ class PatientController extends ChangeNotifier {
       extraAddress = '';
       _idemKey = null;
       scheduledAt = appointment;
-      stage = r['status'] == 'SCHEDULED' ? VisitStage.scheduled : VisitStage.searching;
+      stage = r['status'] == 'SCHEDULED'
+          ? VisitStage.scheduled
+          : (bookingMode == 'OPEN' || r['marketplace_status'] == 'OPEN_FOR_PROPOSALS')
+              ? VisitStage.openMarketplace
+              : VisitStage.searching;
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
       return true;
@@ -804,14 +816,22 @@ class PatientController extends ChangeNotifier {
         final lng = num.tryParse('${req['nurse_lng']}');
         nursePos = (lat != null && lng != null) ? LatLng(lat.toDouble(), lng.toDouble()) : null;
 
+        bookingMode = req['booking_mode']?.toString() ?? 'INSTANT';
+        marketplaceStatus = req['marketplace_status']?.toString();
+        activeProposalsCount = (num.tryParse('${req['active_proposals_count']}') ?? 0).toInt();
+        openExpiresAt = DateTime.tryParse('${req['open_expires_at']}')?.toLocal();
+
         stage = switch (status) {
           'SCHEDULED' => VisitStage.scheduled,
-          'REQUESTED' || 'OFFERING' => VisitStage.searching,
+          'REQUESTED' || 'OFFERING' => (marketplaceStatus == 'OPEN_FOR_PROPOSALS' || bookingMode == 'OPEN')
+              ? VisitStage.openMarketplace
+              : VisitStage.searching,
           'ASSIGNED' => VisitStage.assigned,
           'EN_ROUTE' => VisitStage.enRoute,
           'ARRIVED' => VisitStage.arrived,
           'IN_SERVICE' => VisitStage.inService,
           'COMPLETED' => VisitStage.completed,
+          'UNFULFILLED' => VisitStage.unfulfilled,
           _ => VisitStage.none,
         };
 
@@ -929,6 +949,11 @@ class PatientController extends ChangeNotifier {
       final d = await api.getMap('/v1/requests/$id/tracking');
       if (id != requestId) return null;
       final status = '${d['status']}';
+      bookingMode = d['booking_mode']?.toString() ?? bookingMode;
+      marketplaceStatus = d['marketplace_status']?.toString();
+      activeProposalsCount = (num.tryParse('${d['active_proposals_count']}') ?? 0).toInt();
+      openExpiresAt = DateTime.tryParse('${d['open_expires_at']}')?.toLocal();
+
       stage = switch (status) {
         'SCHEDULED' => VisitStage.scheduled,
         'ASSIGNED' => VisitStage.assigned,
@@ -939,7 +964,9 @@ class PatientController extends ChangeNotifier {
         'UNFULFILLED' => VisitStage.unfulfilled,
         'ESCALATED' => VisitStage.interrupted,
         'CANCELLED' => VisitStage.none,
-        _ => VisitStage.searching,
+        _ => (marketplaceStatus == 'OPEN_FOR_PROPOSALS' || bookingMode == 'OPEN')
+            ? VisitStage.openMarketplace
+            : VisitStage.searching,
       };
       if (stage == VisitStage.unfulfilled || stage == VisitStage.interrupted || stage == VisitStage.none) {
         _timer?.cancel();
@@ -978,8 +1005,122 @@ class PatientController extends ChangeNotifier {
     route = null;
     nursePos = null;
     bill = null;
+    bookingMode = 'INSTANT';
+    marketplaceStatus = null;
+    activeProposalsCount = 0;
+    openExpiresAt = null;
     tab = 0;
     notifyListeners();
+  }
+
+  // =========================================================================
+  // Smart Booking & Open Marketplace Methods
+  // =========================================================================
+
+  Future<bool> switchToOpenMarketplace({int durationMinutes = 60}) async {
+    final id = requestId;
+    if (id == null) return false;
+    busy = true;
+    notifyListeners();
+    try {
+      final res = await api.switchRequestToOpenMarketplace(id, durationMinutes: durationMinutes);
+      bookingMode = 'OPEN';
+      marketplaceStatus = 'OPEN_FOR_PROPOSALS';
+      openExpiresAt = DateTime.tryParse('${res['open_expires_at']}')?.toLocal();
+      stage = VisitStage.openMarketplace;
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر تحويل الطلب إلى السوق المفتوح');
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> retryInstantDispatch() async {
+    final id = requestId;
+    if (id == null) return false;
+    busy = true;
+    notifyListeners();
+    try {
+      await api.retryInstantDispatch(id);
+      bookingMode = 'INSTANT';
+      marketplaceStatus = null;
+      stage = VisitStage.searching;
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر إعادة محاولة البحث الفوري');
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> extendWaitWindow({int additionalMinutes = 60}) async {
+    final id = requestId;
+    if (id == null) return false;
+    try {
+      final res = await api.extendWaitWindow(id, additionalMinutes: additionalMinutes);
+      openExpiresAt = DateTime.tryParse('${res['open_expires_at']}')?.toLocal();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر تمديد فترة الانتظار');
+      return false;
+    }
+  }
+
+  Future<List<dynamic>> loadProposals() async {
+    final id = requestId;
+    if (id == null) return [];
+    try {
+      final res = await api.getRequestProposals(id);
+      activeProposalsCount = res.where((p) => p['status'] == 'PENDING').length;
+      notifyListeners();
+      return res;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<bool> acceptProposal(String proposalId) async {
+    final reqId = requestId;
+    if (reqId == null) return false;
+    busy = true;
+    notifyListeners();
+    try {
+      await api.acceptProposal(reqId, proposalId);
+      stage = VisitStage.assigned;
+      marketplaceStatus = 'COMPLETED';
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      await _poll();
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر قبول العرض. قد يكون العرض ملغى أو تم قبوله مسبقاً.');
+      return false;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> declineProposal(String proposalId, {String? reason}) async {
+    final reqId = requestId;
+    if (reqId == null) return false;
+    try {
+      await api.declineProposal(reqId, proposalId, reason: reason);
+      await loadProposals();
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   Future<void> retryRequest() async {

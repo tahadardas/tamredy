@@ -21,6 +21,12 @@ export function pushCopy(type: string, payload: Record<string, any> = {}): { tit
     case 'payment.partial': return { title: 'تم تسجيل دفعة جزئية', body: 'افتح التطبيق لمعرفة المبلغ المتبقي.' };
     case 'payment.paid': return { title: 'تم الدفع بالكامل', body: 'شكرًا لك، يسعدنا تقييمك للخدمة.' };
     case 'request.unfulfilled': return { title: 'تعذر العثور على ممرض', body: 'لم يتوفر ممرض الآن، يمكنك إعادة المحاولة.' };
+    case 'marketplace.proposal.created': return { title: 'عرض استعداد جديد', body: 'لديك عرض جديد لتنفيذ طلبك. يمكنك مراجعة مقدم الخدمة ووقت الوصول المقترح.' };
+    case 'marketplace.proposal.accepted': return { title: 'تم تأكيد زيارتك', body: 'وافق المريض على عرضك. يمكنك الاطلاع على بيانات الزيارة وتأكيد الانطلاق.' };
+    case 'marketplace.proposal.withdrawn': return { title: 'تم سحب العرض', body: 'قام الممرض بسحب عرضه السابق.' };
+    case 'marketplace.recovery.alert': return { title: 'فرص تمريضية متاحة', body: 'توجد طلبات تمريضية مفتوحة تتوافق مع اختصاصك ومناطق عملك.' };
+    case 'marketplace.request.published': return { title: 'طلب رعاية مفتوح', body: 'تم نشر طلب رعاية جديد في نطاقك، يمكنك إرسال عرض استعداد.' };
+    case 'request.instant.search.expired': return { title: 'لم نجد ممرضاً متاحاً حالياً', body: 'يمكنك إبقاء طلبك مفتوحاً ليستعرضه الممرضون المؤهلون.' };
     default: return null;
   }
 }

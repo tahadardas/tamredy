@@ -23,3 +23,5 @@ export 'widgets/aero_schedule_picker_sheet.dart';
 export 'widgets/aero_observations_sheet.dart';
 export 'widgets/aero_notifications_center.dart';
 export 'widgets/aero_cards.dart';
+export 'widgets/aero_smart_booking_sheets.dart';
+export 'widgets/aero_proposal_card.dart';

@@ -145,4 +145,94 @@ void main() {
     await tester.tap(find.text('طلب زيارة مباشرة'));
     expect(requested, true);
   });
+
+  testWidgets('AeroBookingModePickerSheet selects mode properly', (WidgetTester tester) async {
+    AeroBookingMode? selected;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AeroBookingModePickerSheet(
+            initialMode: AeroBookingMode.instant,
+            onSelectMode: (m) => selected = m,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('اختر طريقة الحجز'), findsOneWidget);
+    expect(find.text('طلب فوري الآن'), findsOneWidget);
+    expect(find.text('السوق المفتوح'), findsOneWidget);
+    expect(find.text('حجز موعد مسبق'), findsOneWidget);
+
+    await tester.tap(find.text('السوق المفتوح'));
+    await tester.pump();
+    expect(selected, AeroBookingMode.openMarketplace);
+  });
+
+  testWidgets('AeroInstantTimeoutSheet triggers recovery actions', (WidgetTester tester) async {
+    bool keepOpen = false;
+    bool retry = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AeroInstantTimeoutSheet(
+            onKeepOpenInMarketplace: () => keepOpen = true,
+            onRetryInstant: () => retry = true,
+            onScheduleVisit: () {},
+            onCancelRequest: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('لم نجد ممرضاً متاحاً فوراً'), findsOneWidget);
+    expect(find.text('إبقاء الطلب مفتوحاً لاستقبال العروض'), findsOneWidget);
+    expect(find.text('إعادة البحث الفوري الآن'), findsOneWidget);
+
+    await tester.tap(find.text('إبقاء الطلب مفتوحاً لاستقبال العروض'));
+    await tester.pump();
+    expect(keepOpen, true);
+  });
+
+  testWidgets('AeroProposalCard displays nurse details and accepts proposal', (WidgetTester tester) async {
+    bool accepted = false;
+    bool declined = false;
+
+    final proposal = AeroProposalData(
+      id: 'prop-123',
+      nurseId: 'nurse-456',
+      nurseName: 'سارة الأحمد',
+      ratingAvg: 4.9,
+      completedVisitsCount: 142,
+      estimatedArrivalMinutes: 30,
+      nurseNote: 'قادمة ومعي المعدات المعقمة',
+      priceAmount: 150000,
+      currencyCode: 'ل.س',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AeroProposalCard(
+            proposal: proposal,
+            onAccept: () => accepted = true,
+            onDecline: () => declined = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('سارة الأحمد'), findsOneWidget);
+    expect(find.text('4.9'), findsOneWidget);
+    expect(find.text(' (142 زيارة)'), findsOneWidget);
+    expect(find.text('150000 ل.س'), findsOneWidget);
+    expect(find.text('يصل خلال 30 دقيقة تقريباً'), findsOneWidget);
+    expect(find.text('قادمة ومعي المعدات المعقمة'), findsOneWidget);
+
+    await tester.tap(find.text('قبول وتأكيد الزيارة'));
+    await tester.pump();
+    expect(accepted, true);
+  });
 }

@@ -402,4 +402,77 @@ class TamreedyApi {
     Map<String, dynamic>? body,
   ]) async =>
       Map<String, dynamic>.from((await dio.delete(path, data: body)).data as Map);
+
+  // =========================================================================
+  // Smart Booking & Open Marketplace Endpoints
+  // =========================================================================
+
+  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm}) =>
+      getList(maxDistanceKm != null
+          ? '/v1/marketplace/requests?maxDistanceKm=$maxDistanceKm'
+          : '/v1/marketplace/requests');
+
+  Future<Map<String, dynamic>> getMarketplaceRequest(String requestId) =>
+      getMap('/v1/marketplace/requests/$requestId');
+
+  Future<Map<String, dynamic>> submitProposal(
+    String requestId, {
+    int? estimatedMinutes,
+    String? specificTime,
+    String? note,
+  }) =>
+      post('/v1/marketplace/requests/$requestId/proposals', {
+        if (estimatedMinutes != null) 'estimatedArrivalMinutes': estimatedMinutes,
+        if (specificTime != null) 'specificArrivalTime': specificTime,
+        if (note != null && note.isNotEmpty) 'nurseNote': note,
+      });
+
+  Future<Map<String, dynamic>> withdrawProposal(String proposalId, {String? reason}) =>
+      post('/v1/marketplace/proposals/$proposalId/withdraw', {
+        if (reason != null) 'withdrawalReason': reason,
+      });
+
+  Future<List<dynamic>> getMyProposals() => getList('/v1/marketplace/proposals/mine');
+
+  Future<List<dynamic>> getRequestProposals(String requestId) =>
+      getList('/v1/requests/$requestId/proposals');
+
+  Future<Map<String, dynamic>> acceptProposal(String requestId, String proposalId) =>
+      post('/v1/requests/$requestId/proposals/$proposalId/accept');
+
+  Future<Map<String, dynamic>> declineProposal(String requestId, String proposalId, {String? reason}) =>
+      post('/v1/requests/$requestId/proposals/$proposalId/decline', {
+        if (reason != null) 'declineReason': reason,
+      });
+
+  Future<Map<String, dynamic>> switchRequestToOpenMarketplace(
+    String requestId, {
+    int durationMinutes = 60,
+  }) =>
+      post('/v1/requests/$requestId/booking-mode', {
+        'targetBookingMode': 'OPEN',
+        'durationMinutes': durationMinutes,
+      });
+
+  Future<Map<String, dynamic>> retryInstantDispatch(String requestId) =>
+      post('/v1/requests/$requestId/retry-dispatch');
+
+  Future<Map<String, dynamic>> switchRequestToScheduled(
+    String requestId, {
+    required DateTime scheduledStartAt,
+    DateTime? scheduledEndAt,
+  }) =>
+      post('/v1/requests/$requestId/booking-mode', {
+        'targetBookingMode': 'SCHEDULED',
+        'scheduledStartAt': scheduledStartAt.toIso8601String(),
+        if (scheduledEndAt != null) 'scheduledEndAt': scheduledEndAt.toIso8601String(),
+      });
+
+  Future<Map<String, dynamic>> extendWaitWindow(
+    String requestId, {
+    int additionalMinutes = 60,
+  }) =>
+      post('/v1/requests/$requestId/open/extend', {
+        'additionalMinutes': additionalMinutes,
+      });
 }
