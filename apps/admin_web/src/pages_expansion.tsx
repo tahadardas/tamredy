@@ -426,60 +426,130 @@ export function LedgerAudit({live}: {live: Live}) {
 }
 
 export function BITelemetry({live}: {live: Live}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [data, setData] = useState<any>({
+    gmv: 0,
+    netRevenue: 0,
+    fulfillmentPct: 0,
+    rebookingPct: 0,
+    totalRequests: 0,
+    distribution: {
+      instantPct: 0,
+      scheduledPct: 0,
+      openPct: 0,
+      instantCount: 0,
+      scheduledCount: 0,
+      openCount: 0,
+    },
+    retention: {
+      favoritesCount: 0,
+      directAcceptPct: 0,
+      activePlansCount: 0,
+      activePackagesCount: 0,
+    },
+  });
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await getJson('/v1/admin/bi/telemetry');
+      if (res) setData(res);
+      setError('');
+    } catch (e) {
+      setError(msgOf(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [live?.token]);
+
   return (
     <Panel title="مؤشرات نمو الأعمال والتحليلات — Business Intelligence & Retention">
-      <div className="summary-cards" style={{display: 'flex', gap: '16px', marginBottom: '16px'}}>
-        <div className="card" style={{flex: 1, padding: '14px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
-          <span style={{fontSize: '12px', color: '#64748b'}}>إجمالي قيمة الحجوزات (GMV)</span>
-          <h3 style={{margin: '4px 0 0', color: '#074577'}}>14,850,000 ل.س</h3>
+      {error && <p className="hint err" role="alert">{error}</p>}
+      
+      <div className="summary-cards" style={{display: 'flex', gap: '16px', marginBottom: '16px', flexWrap: 'wrap'}}>
+        <div className="card" style={{flex: '1 1 200px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0'}}>
+          <span style={{fontSize: '12px', color: '#64748b', fontWeight: 600}}>إجمالي قيمة الحجوزات (GMV)</span>
+          <h3 style={{margin: '6px 0 0', color: '#074577', fontSize: '20px'}}>
+            {loading ? '...' : `${Number(data.gmv || 0).toLocaleString('ar-SY')} ل.س`}
+          </h3>
+          <small style={{color: '#94a3b8', fontSize: '11px'}}>إجمالي الحجوزات المكتملة</small>
         </div>
-        <div className="card" style={{flex: 1, padding: '14px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
-          <span style={{fontSize: '12px', color: '#64748b'}}>إيراد المنصة الصافي (Net Revenue)</span>
-          <h3 style={{margin: '4px 0 0', color: '#079D90'}}>2,227,500 ل.س</h3>
+        <div className="card" style={{flex: '1 1 200px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0'}}>
+          <span style={{fontSize: '12px', color: '#64748b', fontWeight: 600}}>إيراد المنصة الصافي (Net Revenue)</span>
+          <h3 style={{margin: '6px 0 0', color: '#079D90', fontSize: '20px'}}>
+            {loading ? '...' : `${Number(data.netRevenue || 0).toLocaleString('ar-SY')} ل.س`}
+          </h3>
+          <small style={{color: '#94a3b8', fontSize: '11px'}}>العمولات المحصلة للمنصة</small>
         </div>
-        <div className="card" style={{flex: 1, padding: '14px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
-          <span style={{fontSize: '12px', color: '#64748b'}}>نسبة الإيفاء بالطلبات (Fulfillment)</span>
-          <h3 style={{margin: '4px 0 0', color: '#059669'}}>96.4%</h3>
+        <div className="card" style={{flex: '1 1 200px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0'}}>
+          <span style={{fontSize: '12px', color: '#64748b', fontWeight: 600}}>نسبة الإيفاء بالطلبات (Fulfillment)</span>
+          <h3 style={{margin: '6px 0 0', color: '#059669', fontSize: '20px'}}>
+            {loading ? '...' : `${data.fulfillmentPct}%`}
+          </h3>
+          <small style={{color: '#94a3b8', fontSize: '11px'}}>من إجمالي الطلبات المنفذة</small>
         </div>
-        <div className="card" style={{flex: 1, padding: '14px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
-          <span style={{fontSize: '12px', color: '#64748b'}}>معدل إعادة الحجز والولاء (Rebooking)</span>
-          <h3 style={{margin: '4px 0 0', color: '#7c3aed'}}>48.2%</h3>
+        <div className="card" style={{flex: '1 1 200px', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0'}}>
+          <span style={{fontSize: '12px', color: '#64748b', fontWeight: 600}}>معدل إعادة الحجز والولاء (Rebooking)</span>
+          <h3 style={{margin: '6px 0 0', color: '#7c3aed', fontSize: '20px'}}>
+            {loading ? '...' : `${data.rebookingPct}%`}
+          </h3>
+          <small style={{color: '#94a3b8', fontSize: '11px'}}>المرضى ذوو الحجوزات المتكررة</small>
         </div>
       </div>
 
-      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px'}}>
-        <div className="card" style={{padding: '16px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px'}}>
-          <h4 style={{margin: '0 0 12px', color: '#074577'}}>توزيع الطلبات بحسب نمط الحجز</h4>
-          <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between'}}>
-              <span>طلبات فورية (Open Dispatch)</span>
-              <strong>74%</strong>
+      <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginTop: '16px'}}>
+        <div className="card" style={{padding: '18px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)'}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px'}}>
+            <h4 style={{margin: 0, color: '#074577', fontSize: '15px'}}>توزيع الطلبات بحسب نمط الحجز</h4>
+            <span className="chip" style={{fontSize: '11px'}}>{data.totalRequests} طلب مسجل</span>
+          </div>
+          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px'}}>
+              <div>
+                <span style={{fontWeight: 600, color: '#1e293b'}}>طلبات فورية (Open Dispatch)</span>
+                <small style={{display: 'block', color: '#64748b', fontSize: '11px'}}>{data.distribution.instantCount} طلب فوري</small>
+              </div>
+              <strong style={{color: '#074577', fontSize: '15px'}}>{data.distribution.instantPct}%</strong>
             </div>
-            <div style={{display: 'flex', justifyContent: 'space-between'}}>
-              <span>مواعيد مسبقة (Smart Scheduling)</span>
-              <strong>18%</strong>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px'}}>
+              <div>
+                <span style={{fontWeight: 600, color: '#1e293b'}}>مواعيد مسبقة (Smart Scheduling)</span>
+                <small style={{display: 'block', color: '#64748b', fontSize: '11px'}}>{data.distribution.scheduledCount} موعد محدد</small>
+              </div>
+              <strong style={{color: '#079D90', fontSize: '15px'}}>{data.distribution.scheduledPct}%</strong>
             </div>
-            <div style={{display: 'flex', justifyContent: 'space-between'}}>
-              <span>خطط رعاية دورية (Recurring Care)</span>
-              <strong>8%</strong>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px'}}>
+              <div>
+                <span style={{fontWeight: 600, color: '#1e293b'}}>السوق المفتوح (Open Marketplace)</span>
+                <small style={{display: 'block', color: '#64748b', fontSize: '11px'}}>{data.distribution.openCount} طلب عروض</small>
+              </div>
+              <strong style={{color: '#f59e0b', fontSize: '15px'}}>{data.distribution.openPct}%</strong>
             </div>
           </div>
         </div>
 
-        <div className="card" style={{padding: '16px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px'}}>
-          <h4 style={{margin: '0 0 12px', color: '#074577'}}>مؤشرات الاحتفاظ والولاء (Retention)</h4>
-          <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between'}}>
-              <span>إجمالي الممرضين في قوائم المفضلة</span>
-              <strong>412 إضافة</strong>
+        <div className="card" style={{padding: '18px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)'}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px'}}>
+            <h4 style={{margin: 0, color: '#074577', fontSize: '15px'}}>مؤشرات الاحتفاظ والولاء (Retention)</h4>
+            <span className="chip on" style={{fontSize: '11px'}}>بيانات حية ومباشرة</span>
+          </div>
+          <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px'}}>
+              <span style={{fontWeight: 600, color: '#1e293b'}}>إجمالي الممرضين في قوائم المفضلة</span>
+              <strong style={{color: '#074577', fontSize: '15px'}}>{data.retention.favoritesCount} إضافة</strong>
             </div>
-            <div style={{display: 'flex', justifyContent: 'space-between'}}>
-              <span>نسبة قبول الطلب المباشر للمفضلين</span>
-              <strong>91.5%</strong>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px'}}>
+              <span style={{fontWeight: 600, color: '#1e293b'}}>نسبة قبول الطلب المباشر للمفضلين</span>
+              <strong style={{color: '#059669', fontSize: '15px'}}>{data.retention.directAcceptPct}%</strong>
             </div>
-            <div style={{display: 'flex', justifyContent: 'space-between'}}>
-              <span>باقات الرعاية المشتركة المفعلة</span>
-              <strong>64 باقة</strong>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: '#f8fafc', borderRadius: '6px'}}>
+              <span style={{fontWeight: 600, color: '#1e293b'}}>خطط الرعاية وباقات الزيارات النشطة</span>
+              <strong style={{color: '#7c3aed', fontSize: '15px'}}>{data.retention.activePlansCount + data.retention.activePackagesCount} باقة وخطة</strong>
             </div>
           </div>
         </div>

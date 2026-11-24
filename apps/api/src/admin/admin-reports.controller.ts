@@ -41,6 +41,99 @@ export class AdminReportsController {
     return {revenueToday: rev.rows[0].revenue_today, weekly: weekly.rows};
   }
 
+  @Get('bi/telemetry') async biTelemetry(@Request() r: AuthRequest) {
+    requireRole(r.user!, 'ADMIN');
+
+    // Financials & request completion
+    const fin = (await this.db.query(`
+      SELECT coalesce(sum(price_amount), 0)::bigint AS gmv,
+             coalesce(sum(price_amount * commission_bps / 10000), 0)::bigint AS net_revenue,
+             count(*) FILTER (WHERE status = 'COMPLETED')::int AS completed_count,
+             count(*) FILTER (WHERE status IN ('COMPLETED', 'CANCELLED', 'UNFULFILLED', 'EXPIRED'))::int AS finished_count,
+             count(*)::int AS total_requests
+      FROM care_requests
+    `)).rows[0];
+
+    const gmv = Number(fin.gmv || 0);
+    const netRevenue = Number(fin.net_revenue || 0);
+    const completedCount = Number(fin.completed_count || 0);
+    const finishedCount = Number(fin.finished_count || 0);
+    const fulfillmentPct = finishedCount > 0 ? Math.round((completedCount / finishedCount) * 1000) / 10 : (completedCount > 0 ? 100 : 0);
+
+    // Rebooking rate
+    const rebooking = (await this.db.query(`
+      WITH p AS (
+        SELECT requester_user_id, count(*)::int AS cnt
+        FROM care_requests
+        GROUP BY requester_user_id
+      )
+      SELECT count(*) FILTER (WHERE cnt > 1)::int AS repeat_users,
+             count(*)::int AS total_users
+      FROM p
+    `)).rows[0];
+    const totalUsers = Number(rebooking.total_users || 0);
+    const repeatUsers = Number(rebooking.repeat_users || 0);
+    const rebookingPct = totalUsers > 0 ? Math.round((repeatUsers / totalUsers) * 1000) / 10 : 0;
+
+    // Request distribution by booking mode
+    const modes = (await this.db.query(`
+      SELECT coalesce(booking_mode, 'INSTANT') AS mode, count(*)::int AS count
+      FROM care_requests
+      GROUP BY coalesce(booking_mode, 'INSTANT')
+    `)).rows;
+
+    let instantCount = 0;
+    let scheduledCount = 0;
+    let openCount = 0;
+    for (const m of modes) {
+      if (m.mode === 'INSTANT') instantCount += Number(m.count);
+      else if (m.mode === 'SCHEDULED') scheduledCount += Number(m.count);
+      else if (m.mode === 'OPEN') openCount += Number(m.count);
+    }
+    const modeSum = instantCount + scheduledCount + openCount;
+    const instantPct = modeSum > 0 ? Math.round((instantCount / modeSum) * 100) : 0;
+    const scheduledPct = modeSum > 0 ? Math.round((scheduledCount / modeSum) * 100) : 0;
+    const openPct = modeSum > 0 ? Math.round((openCount / modeSum) * 100) : 0;
+
+    // Retention: favorites and packages
+    const favCount = Number((await this.db.query(`SELECT count(*)::int AS cnt FROM patient_favorite_nurses`).catch(() => ({ rows: [{ cnt: 0 }] }))).rows[0].cnt);
+    const activePlans = Number((await this.db.query(`SELECT count(*)::int AS cnt FROM care_plans WHERE status = 'ACTIVE'`).catch(() => ({ rows: [{ cnt: 0 }] }))).rows[0].cnt);
+    const activePackages = Number((await this.db.query(`SELECT count(*)::int AS cnt FROM user_package_grants WHERE remaining_visits > 0`).catch(() => ({ rows: [{ cnt: 0 }] }))).rows[0].cnt);
+
+    // Direct nurse request acceptance rate
+    const directReqs = (await this.db.query(`
+      SELECT count(*)::int AS total_direct,
+             count(*) FILTER (WHERE status IN ('ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE', 'COMPLETED'))::int AS accepted_direct
+      FROM care_requests
+      WHERE dispatch_mode = 'DIRECT_NURSE'
+    `).catch(() => ({ rows: [{ total_direct: 0, accepted_direct: 0 }] }))).rows[0];
+    const totalDirect = Number(directReqs.total_direct || 0);
+    const acceptedDirect = Number(directReqs.accepted_direct || 0);
+    const directAcceptPct = totalDirect > 0 ? Math.round((acceptedDirect / totalDirect) * 1000) / 10 : 0;
+
+    return {
+      gmv,
+      netRevenue,
+      fulfillmentPct,
+      rebookingPct,
+      totalRequests: Number(fin.total_requests || 0),
+      distribution: {
+        instantPct,
+        scheduledPct,
+        openPct,
+        instantCount,
+        scheduledCount,
+        openCount,
+      },
+      retention: {
+        favoritesCount: favCount,
+        directAcceptPct,
+        activePlansCount: activePlans,
+        activePackagesCount: activePackages,
+      },
+    };
+  }
+
   @Get('nurses/summary') async nursesSummary(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
     const q = await this.db.query(`SELECT count(*)::int AS total,
