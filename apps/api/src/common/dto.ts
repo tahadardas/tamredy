@@ -1,10 +1,11 @@
-import { IsBoolean, IsIn, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsISO8601, Matches, IsIn, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 export class LocationDto {
   @IsLatitude() latitude!: number;
   @IsLongitude() longitude!: number;
   @IsNumber() @Min(0) @Max(1000) accuracyMeters!: number;
 }
 export class CreateRequestDto extends LocationDto {
+  @IsOptional() @IsISO8601({ strict: true }) @Matches(/(?:Z|[+-]\d{2}:\d{2})$/i) scheduledAt?: string;
   @IsUUID() beneficiaryId!: string;
   @IsUUID() serviceId!: string;
   @IsIn(['GPS_CONFIRMED','MANUAL_PIN']) locationSource!: string;

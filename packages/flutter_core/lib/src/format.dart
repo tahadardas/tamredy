@@ -20,6 +20,8 @@ String formatCountdown(Duration d) {
 /// Maps a backend request status to Arabic copy.
 String requestStatusAr(String status) {
   switch (status) {
+    case 'SCHEDULED':
+      return 'مجدولة';
     case 'DRAFT':
     case 'REQUESTED':
     case 'OFFERING':

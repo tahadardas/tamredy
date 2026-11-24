@@ -5,6 +5,7 @@ import 'dotenv/config';
 import { FcmClient, loadServiceAccount, pushDeliverBatch, retryPendingPushes } from './push.js';
 import { notifyDelayedDepartures } from './departure-reminders.js';
 import { deliverOutbox } from './outbox.js';
+import { releaseScheduledVisit } from './scheduling.js';
 import { doDispatch } from './dispatch.js';
 import { processBroadcast, runWinback } from './marketing.js';
 
@@ -90,6 +91,7 @@ async function runWorker(): Promise<void> {
   }
 
   await Promise.all([
+    ...(process.env.SCHEDULED_VISITS_ENABLED === 'true' ? [poll('Scheduled Visits', () => releaseScheduledVisit(pool))] : []),
     poll('Dispatch', () => doDispatch(pool)),
     poll('Realtime', flushRealtimeOutbox),
     poll('Push', flushPushOutbox),

@@ -11,6 +11,8 @@ import { estimateV2, ruleFromRow } from '../pricing/pricing.js';
 import { FeesService } from '../pricing/fees.service.js';
 import { AutoDiscountService } from '../pricing/auto-discounts.service.js';
 
+import { saveSchedule, validateAppointment } from '../scheduling/scheduling.js';
+
 @Injectable()
 export class RequestsService {
   constructor(private readonly db: DbService, private readonly promos: PromoService, private readonly fees: FeesService = new FeesService(), private readonly autos: AutoDiscountService = new AutoDiscountService()) {}
@@ -24,6 +26,7 @@ export class RequestsService {
       const k = await client.query('SELECT * FROM request_create_keys WHERE user_id=$1 AND key=$2 FOR UPDATE',[userId,key]);
       if (k.rows[0].request_hash !== digest) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
       if (k.rows[0].request_id) return this.findOne(userId, k.rows[0].request_id);
+      const appointment = validateAppointment(dto.scheduledAt);
       const orders = (await client.query(`SELECT value FROM app_settings WHERE key='orders'`)).rows[0]?.value;
       if (orders && orders.accepting === false) throw new ServiceUnavailableException({ code: 'ORDERS_PAUSED', message: orders.pausedMessage ?? '' });
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
@@ -41,15 +44,15 @@ export class RequestsService {
       // No code used -> the best automatic discount (off-peak / loyalty / visit pack), if any feature is switched on.
       const auto=promo?null:await this.autos.pick(client,userId);
       const r = await client.query(`INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,status,price_amount,currency_code,commission_bps,pricing,promo_id,promo_snapshot)
-        VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,'OFFERING',$8,$9,$10,$11::jsonb,$12,$13::jsonb)
+        VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
         RETURNING id,status,version,price_amount,currency_code`,[
         userId,dto.beneficiaryId,dto.serviceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,s.price_amount,s.currency_code,s.commission_bps,
-        JSON.stringify({...rule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null
+        JSON.stringify({...rule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, appointment ? 'SCHEDULED' : 'OFFERING'
       ]);
       const request = r.rows[0];
       await client.query('UPDATE request_create_keys SET request_id=$1 WHERE user_id=$2 AND key=$3',[request.id,userId,key]);
       const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
-      if (process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
+      if (!appointment && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
         const search = await client.query(`UPDATE care_requests SET
           search_started_at=statement_timestamp(),
           search_expires_at=statement_timestamp()+$2::integer*interval '1 second',
@@ -61,10 +64,11 @@ export class RequestsService {
           policy.maxLocationAccuracyMeters ?? 100]);
         Object.assign(request, search.rows[0]);
       }
-      await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
+      if (appointment) await saveSchedule(client, request.id, appointment);
+      else await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
       await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
       await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
-      return {...request,estimate:estimateV2(rule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
+      return {...request, ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),estimate:estimateV2(rule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
     });
   }
   async findOne(userId: string, requestId: string) {
@@ -98,7 +102,7 @@ export class RequestsService {
       FROM care_requests r LEFT JOIN request_assignments a ON a.request_id=r.id AND a.status='ACTIVE'
       WHERE r.id=$1 AND r.requester_user_id=$2`,[requestId,userId])).rows[0];
     if (!row) missing();
-    const canCancel = ['OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(row.status);
+    const canCancel = ['SCHEDULED','OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(row.status);
     const classification = canCancel ? cancellationClassification({
       status: row.status, departed: row.departed,
       etaAvailable: row.eta_available === true, thresholdMet: row.threshold_met === true,

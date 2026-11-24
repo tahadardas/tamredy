@@ -22,6 +22,7 @@ const liveEvents = [
   'request.assigned',
   'request.cancelled',
   'request.unfulfilled',
+  'request.schedule_released',
   'visit.depart',
   'visit.arrive',
   'visit.start',

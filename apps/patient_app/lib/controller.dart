@@ -82,7 +82,7 @@ class WalletTx {
   const WalletTx(this.title, this.sub, this.amount);
 }
 
-enum VisitStage { none, searching, assigned, enRoute, arrived, inService, completed, unfulfilled }
+enum VisitStage { none, scheduled, searching, assigned, enRoute, arrived, inService, completed, unfulfilled }
 
 const List<ServiceItem> kSampleServices = [
   ServiceItem(
@@ -204,6 +204,7 @@ class PatientController extends ChangeNotifier {
 
   VisitStage stage = VisitStage.none;
   String? requestId;
+  DateTime? scheduledAt;
   String? _idemKey;
   Timer? _timer;
   bool busy = false;
@@ -667,7 +668,7 @@ class PatientController extends ChangeNotifier {
       [address, extraAddress.trim()].where((part) => part.isNotEmpty).join(' • ');
 
   /// Creates the request, then follows its lifecycle.
-  Future<bool> submit() async {
+  Future<bool> submit({DateTime? appointment}) async {
     if (service == null || busy) return false;
     _searchStart = DateTime.now();
     Analytics.log('request_submitted', {
@@ -729,6 +730,7 @@ class PatientController extends ChangeNotifier {
         '/v1/requests',
         {
           'beneficiaryId': beneficiaryId,
+          if (appointment != null) 'scheduledAt': appointment.toUtc().toIso8601String(),
           'serviceId': service!.id,
           'latitude': visitPoint.latitude,
           'longitude': visitPoint.longitude,
@@ -747,7 +749,8 @@ class PatientController extends ChangeNotifier {
       accuracy = accuracyMeters.toDouble();
       extraAddress = '';
       _idemKey = null;
-      stage = VisitStage.searching;
+      scheduledAt = appointment;
+      stage = r['status'] == 'SCHEDULED' ? VisitStage.scheduled : VisitStage.searching;
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
       return true;
@@ -770,6 +773,7 @@ class PatientController extends ChangeNotifier {
         final req = Map<String, dynamic>.from(res['request'] as Map);
         requestId = req['id']?.toString();
         final status = '${req['status']}';
+        scheduledAt = DateTime.tryParse('${req['scheduledAt']}')?.toLocal();
         address = req['address_text']?.toString() ?? 'الموقع المحدد على الخريطة';
         extraAddress = '';
         if (req['patient_lat'] != null && req['patient_lng'] != null) {
@@ -801,6 +805,7 @@ class PatientController extends ChangeNotifier {
         nursePos = (lat != null && lng != null) ? LatLng(lat.toDouble(), lng.toDouble()) : null;
 
         stage = switch (status) {
+          'SCHEDULED' => VisitStage.scheduled,
           'REQUESTED' || 'OFFERING' => VisitStage.searching,
           'ASSIGNED' => VisitStage.assigned,
           'EN_ROUTE' => VisitStage.enRoute,
@@ -925,6 +930,7 @@ class PatientController extends ChangeNotifier {
       if (id != requestId) return null;
       final status = '${d['status']}';
       stage = switch (status) {
+        'SCHEDULED' => VisitStage.scheduled,
         'ASSIGNED' => VisitStage.assigned,
         'EN_ROUTE' => VisitStage.enRoute,
         'ARRIVED' => VisitStage.arrived,
@@ -967,6 +973,7 @@ class PatientController extends ChangeNotifier {
     _demoMove?.cancel();
     stage = VisitStage.none;
     requestId = null;
+    scheduledAt = null;
     route = null;
     nursePos = null;
     bill = null;

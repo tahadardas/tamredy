@@ -12,6 +12,7 @@ x-api-env: &api-env
   JWT_ISSUER: tamreedy-api
   JWT_AUDIENCE: tamreedy-mobile
   API_PORT: "3000"
+  SCHEDULED_VISITS_ENABLED: ${SCHEDULED_VISITS_ENABLED:-false}
   OPEN_DISPATCH_ENABLED: ${OPEN_DISPATCH_ENABLED:-false}
   UPLOADS_DIR: /data/uploads
   DOCS_ENC_KEY: ${DOCS_ENC_KEY:-}   # 64 hex chars; if empty, derived from JWT_SECRET (then never rotate JWT_SECRET)
@@ -82,6 +83,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://tamreedy:${POSTGRES_PASSWORD}@db:5432/tamreedy
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      SCHEDULED_VISITS_ENABLED: ${SCHEDULED_VISITS_ENABLED:-false}
+      OPEN_DISPATCH_ENABLED: ${OPEN_DISPATCH_ENABLED:-false}
       # An EMPTY file disables push; put the Firebase service-account JSON in it to enable FCM.
       FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm.json
     volumes: ["./secrets/fcm.json:/run/secrets/fcm.json:ro"]

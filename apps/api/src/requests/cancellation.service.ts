@@ -14,7 +14,7 @@ type Evidence = {
 };
 
 export function cancellationClassification(evidence: Evidence, legacy: boolean) {
-  if (evidence.status === 'OFFERING') return 'BEFORE_ASSIGNMENT';
+  if (['SCHEDULED', 'OFFERING'].includes(evidence.status)) return 'BEFORE_ASSIGNMENT';
   if (evidence.status === 'ASSIGNED') return 'BEFORE_DEPARTURE';
   if (evidence.status !== 'EN_ROUTE') return 'LEGACY_UNCLASSIFIED';
   if (!evidence.departed || !evidence.etaAvailable) return 'ETA_UNAVAILABLE';
@@ -66,7 +66,7 @@ export async function cancelRequest(
   }
   if (request.status === 'ARRIVED') conflict('ARRIVAL_REVIEW_REQUIRED');
   if (request.status === 'IN_SERVICE') conflict('EARLY_TERMINATION_REQUIRED');
-  if (!['OFFERING', 'ASSIGNED', 'EN_ROUTE', 'UNFULFILLED'].includes(request.status)) {
+  if (!['SCHEDULED', 'OFFERING', 'ASSIGNED', 'EN_ROUTE', 'UNFULFILLED'].includes(request.status)) {
     conflict('REQUEST_CANNOT_BE_CANCELLED');
   }
   if (dto.expectedVersion !== undefined && dto.expectedVersion !== request.version) {

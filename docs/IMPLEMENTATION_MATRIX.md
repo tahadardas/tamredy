@@ -16,7 +16,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 10. الأماكن المحفوظة | IMPLEMENTED | Migration 026, owner-scoped API, mobile editor and picker. PGlite lifecycle and Flutter selection tested. Physical verification pending. |
 | 11. رحلة إنشاء الطلب | IN_PROGRESS | Booking review and selected beneficiary are covered by patient flow and submission tests. Scheduling and tracking review pending. |
 | 12. طريقة الدفع | NOT_STARTED | |
-| 13. طلب الخدمة الآن أو لاحقًا | NOT_STARTED | |
+| 13. طلب الخدمة الآن أو لاحقًا | IMPLEMENTED | Migration 027 and feature-gated scheduling. Worker release and expiry tested in PGlite. Android and live verification pending. |
 | 14. شاشة البحث عن ممرض | NOT_STARTED | |
 | 15. شاشة تتبع الممرض | IN_PROGRESS | Active request recovery and coalesced tracking verified in Flutter. Physical tracking pending. |
 | 16. سياسة الإلغاء المعتمدة | NOT_STARTED | |

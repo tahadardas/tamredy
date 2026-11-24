@@ -4,12 +4,17 @@ import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { CreateRequestDto } from '../common/dto.js';
 import { RequestsService } from './requests.service.js';
 import { validatedPage } from '../common/page-query.js';
+import { schedulePolicy, schedulingEnabled } from '../scheduling/scheduling.js';
 @Controller('v1/requests') @UseGuards(AuthGuard)
 export class RequestsController {
   constructor(private readonly service:RequestsService) {}
   @Post()
   create(@Request() r:AuthRequest,@Body() body:CreateRequestDto,@Headers('idempotency-key') key:string) {
     requireRole(r.user!,'PATIENT');return this.service.create(r.user!.id,body,key);
+  }
+  @Get('scheduling') scheduling(@Request() r: AuthRequest) {
+    requireRole(r.user!, 'PATIENT');
+    return { enabled: schedulingEnabled(), ...schedulePolicy };
   }
   @Get('mine') list(@Request() r:AuthRequest,@Query('limit') limit?:string,@Query('cursor') cursor?:string){requireRole(r.user!,'PATIENT');return this.service.list(r.user!.id,validatedPage(limit,cursor,`patient:${r.user!.id}`));}
   @Get(':id') details(@Request() r:AuthRequest,@Param('id') id:string){requireRole(r.user!,'PATIENT');return this.service.findOne(r.user!.id,id);}

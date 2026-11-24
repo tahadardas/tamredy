@@ -197,6 +197,21 @@ class TrackScreen extends StatelessWidget {
         ],
       );
     }
+    if (c.stage == VisitStage.scheduled) {
+      return TamScaffold(
+        title: 'زيارة مجدولة',
+        subtitle: 'يبدأ البحث عن ممرض قبل الموعد بـ15 دقيقة',
+        nav: nav,
+        children: [
+          TamMap(height: 200, patient: c.position),
+          if (c.scheduledAt case final DateTime appointment)
+            KeyValueRow('الموعد', '${MaterialLocalizations.of(context).formatMediumDate(appointment)} • ${TimeOfDay.fromDateTime(appointment).format(context)}'),
+          KeyValueRow('عنوان الزيارة', c.visitAddress),
+          const NoticeBox('بانتظار بدء البحث عن ممرض. سنخبرك عند تأكيد الإسناد.'),
+          SoftButton('إلغاء الطلب', onPressed: c.busy ? null : () => showCancellationSheet(context, c)),
+        ],
+      );
+    }
     if (c.stage == VisitStage.searching) {
       return TamScaffold(
         title: 'جارٍ البحث عن ممرض',

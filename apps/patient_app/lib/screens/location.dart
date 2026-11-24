@@ -44,6 +44,7 @@ class _LocationScreenState extends State<LocationScreen> {
   late double _accuracy;
   late String _details;
   bool _regionsUnavailable = false;
+  DateTime? _appointment;
 
   @override
   void initState() {
@@ -309,12 +310,22 @@ class _LocationScreenState extends State<LocationScreen> {
     if (service == null) return;
     if (!kDemoMode && c.selectedBeneficiaryId == null) await c.loadBeneficiary();
     if (!mounted || c.busy) return;
+    Map<String, dynamic> scheduling = {};
+    if (!kDemoMode) {
+      try {
+        scheduling = await c.api.getMap('/v1/requests/scheduling');
+      } catch (_) {
+        // Immediate booking remains available when capability lookup fails.
+      }
+    }
+    if (!mounted) return;
+    DateTime? appointment = _appointment;
     final estimate = c.est ?? estimatePrice(service.rule);
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) => SafeArea(
+      builder: (context) => StatefulBuilder(builder: (context, update) => SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -322,6 +333,29 @@ class _LocationScreenState extends State<LocationScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SectionTitle('مراجعة طلب الزيارة'),
+              if (scheduling['enabled'] == true) ...[
+                KeyValueRow('موعد الزيارة', appointment == null ? 'الآن' :
+                  '${MaterialLocalizations.of(context).formatMediumDate(appointment!)} • ${TimeOfDay.fromDateTime(appointment!).format(context)}'),
+                OutlinedButton(
+                  onPressed: () async {
+                    final now = DateTime.now();
+                    final day = await showDatePicker(context: context, firstDate: now, lastDate: now.add(const Duration(days: 30)));
+                    if (day == null || !context.mounted) return;
+                    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(now.add(const Duration(hours: 1))));
+                    if (time == null || !context.mounted) return;
+                    final chosen = DateTime(day.year, day.month, day.day, time.hour, time.minute);
+                    if (chosen.isBefore(DateTime.now().add(const Duration(minutes: 30))) ||
+                        chosen.isAfter(DateTime.now().add(const Duration(days: 30)))) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اختر موعدًا بعد 30 دقيقة وحتى 30 يومًا.')));
+                      return;
+                    }
+                    update(() => appointment = chosen);
+                  },
+                  child: const Text('تحديد موعد'),
+                ),
+                if (appointment != null)
+                  TextButton(onPressed: () => update(() => appointment = null), child: const Text('طلب الزيارة الآن')),
+              ],
               KeyValueRow('الخدمة', service.title),
               KeyValueRow('المستفيد', c.beneficiary.isEmpty ? 'غير محدد' : c.beneficiary),
               KeyValueRow('عنوان الزيارة', c.visitAddress),
@@ -341,9 +375,10 @@ class _LocationScreenState extends State<LocationScreen> {
           ),
         ),
       ),
-    );
+    ));
     if (confirmed != true || !mounted) return;
-    if (await c.submit() && mounted) {
+    _appointment = appointment;
+    if (await c.submit(appointment: appointment) && mounted) {
       c.setTab(1);
       navigator.popUntil((route) => route.isFirst);
     }

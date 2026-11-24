@@ -37,13 +37,18 @@ export class MeController {
       LEFT JOIN users u ON u.id = n.user_id
       LEFT JOIN nurse_locations nl ON nl.nurse_id = a.nurse_id
       WHERE cr.requester_user_id = $1
-        AND cr.status IN ('REQUESTED', 'OFFERING', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
+        AND cr.status IN ('SCHEDULED', 'REQUESTED', 'OFFERING', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
       ORDER BY cr.created_at DESC LIMIT 1
     `, [r.user!.id]);
 
     if (!q.rowCount) {
       return { hasActive: false, request: null };
     }
-    return { hasActive: true, request: q.rows[0] };
+    const request = q.rows[0];
+    if (request.status === 'SCHEDULED') {
+      const schedule = await this.db.query('SELECT appointment_at FROM scheduled_visits WHERE request_id=$1', [request.id]);
+      request.scheduledAt = schedule.rows[0]?.appointment_at;
+    }
+    return { hasActive: true, request };
   }
 }

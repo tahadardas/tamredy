@@ -234,3 +234,12 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - History now separates network errors from empty results and offers reload. A completed visit opens its existing server invoice without mutating the current booking. Non-completed requests show their real state.
 - Three non-demo tests passed, including reconnect and tracking coalescing. The patient demo suite passed nine tests during the tracking changes.
 - Existing tracking, active request, history and bill APIs reused. No new endpoints or migrations. Scheduling and device verification remain pending before claiming phase 4 complete.
+
+### Guardian phase 4 — scheduled visits
+
+- Migration 027 adds scheduled_visits and extends request and cancellation states. Existing immediate orders still create dispatch jobs immediately.
+- GET /v1/requests/scheduling exposes server capability. POST /v1/requests accepts optional scheduledAt with timezone. Mobile shows date and time only when enabled.
+- SCHEDULED_VISITS_ENABLED defaults off. The current policy accepts times from 30 minutes to 30 days ahead, starts search 15 minutes before the appointment and marks unreleased missed appointments unfulfilled. It does not reserve a nurse.
+- API and Worker must use the same rollout flag. The worker also reads the Open Dispatch flag and current dispatch settings at release. Apply migration 027 before enabling. Drain pending scheduled visits before turning the flag off.
+- Worker integration exercised no early job, one due job, open search initialization, expiry, and cancelled exclusion using PGlite. Real PostGIS concurrency and Android verification remain pending.
+- No deployment performed. Continue phase 4 verification, then implement phase 5 Guardian backend.
