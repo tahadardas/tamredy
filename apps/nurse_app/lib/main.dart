@@ -5,6 +5,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'alarm.dart';
 import 'controller.dart';
+import 'guardian.dart';
+import 'screens/guardian.dart';
 import 'screens/home.dart';
 import 'screens/onboarding.dart';
 import 'screens/visit.dart';
@@ -85,7 +87,31 @@ class NurseShell extends StatelessWidget {
   const NurseShell({super.key, required this.c});
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
+  Widget build(BuildContext context) {
+    final content = _buildTabs();
+    if (!guardianEnabled) return content;
+    return ColoredBox(
+      color: AeroColors.lightCanvas,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton.icon(
+                onPressed: () => openGuardian(context, c),
+                icon: const Icon(Icons.health_and_safety_outlined, color: Colors.red),
+                label: const Text('السلامة والاستغاثة'),
+              ),
+            ),
+            Expanded(child: content),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabs() => ListenableBuilder(
     listenable: c,
     builder: (context, _) {
       final nav = TamBottomNav(items: nurseNav, index: c.tab, onTap: c.setTab);

@@ -6,6 +6,8 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 import 'alarm.dart';
 import 'availability_manager.dart';
 
+import 'guardian.dart';
+
 enum NurseStage { idle, offer, assigned, enRoute, arrived, inService, completed }
 
 class Offer {
@@ -33,6 +35,7 @@ class VisitRecord {
 /// Nurse app state. Uses AvailabilityManager for all readiness, telemetry, and background sync.
 class NurseController extends ChangeNotifier {
   final TamreedyApi api = TamreedyApi();
+  late final guardian = GuardianController(api);
   late final AvailabilityManager availabilityManager;
 
   int tab = 0;
@@ -278,7 +281,15 @@ class NurseController extends ChangeNotifier {
 
   /// Realtime event handler from WebSocket / Socket.io
   void onLive(String type) {
-    if (type == 'offer.created') {
+    if (type.startsWith('safety.')) {
+      if (guardianEnabled) {
+        if (type == 'safety.event_changed') {
+          guardian.refreshSos();
+        } else {
+          guardian.refreshSession();
+        }
+      }
+    } else if (type == 'offer.created') {
       _fetchOffers();
     } else if (type == 'catalog.changed') {
       loadLive();
@@ -759,6 +770,7 @@ class NurseController extends ChangeNotifier {
     _routeTimer?.cancel();
     _demoMove?.cancel();
     availabilityManager.dispose();
+    if (guardianEnabled) guardian.dispose();
     super.dispose();
   }
 }

@@ -9,9 +9,9 @@ import { SafetyService } from './safety.service.js';
 export class SafetyController {
   constructor(private readonly safety: SafetyService, private readonly checkins: CheckinsService) {}
 
-  @Get('safety/me/status') status(@Request() req: AuthRequest) {
+  @Get('safety/me/status') async status(@Request() req: AuthRequest) {
     requireRole(req.user!, 'NURSE');
-    return this.safety.status(req.user!.id);
+    return { session: await this.safety.status(req.user!.id) };
   }
 
   @Post('nurse/safety/sessions/start') start(@Request() req: AuthRequest, @Body() dto: StartSafetySessionDto) {

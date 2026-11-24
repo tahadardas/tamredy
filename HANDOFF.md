@@ -268,3 +268,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Action writes lock the case, validate the version and persist the actor, note and idempotency key. SOS changes propagate to the reporting nurse through the existing private realtime mechanism. Queue and detail reads and changes are audited.
 - API build and four targeted tests passed. The lifecycle test covers non-granted admin denial, operator isolation, replay, stale version, escalation, supervisor resolution and nurse-visible state.
 - No staff grants were provisioned. Dashboard, shift presence enforcement, supervisor handover, external delivery and human-response verification remain pending. No deployment.
+
+### Guardian phase 6 — nurse safety entry and server receipt states
+
+- Flutter nurse builds can expose an in-app safety strip and sheet with silent SOS, explicit server receipt vs staff acknowledgement, check-in responses and confirmed checkout.
+- The feature is hidden by default (GUARDIAN_MOBILE_ENABLED=false and disabled for demo). Keep it disabled for public releases until a staffed safety workflow is ready.
+- Retrying an unconfirmed SOS in the current process reuses its client event ID. The screen does not claim server receipt before a valid response. The screen can refresh the known report and applies private realtime events.
+- GET /v1/safety/me/status now returns an explicit session envelope. No migration or new endpoint. API and four targeted tests passed. Five nurse demo tests and the mocked SOS fail/retry/acknowledgement test passed.
+- Pending: account-scoped encrypted offline persistence, visit GPS collection, trusted contacts and safe-exit flow. No physical Android verification and no deployment.

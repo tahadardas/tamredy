@@ -25,9 +25,9 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 19. الملف الشخصي والإعدادات | NOT_STARTED | |
 | 20. تصميم تطبيق الممرض | NOT_STARTED | |
 | 21. Tamreedy Guardian — المعمارية الأساسية | NOT_STARTED | |
-| 22. شاشة الطوارئ والسلامة | NOT_STARTED | |
-| 23. زر SOS العائم | NOT_STARTED | |
-| 24. الاستغاثة الصامتة — Silent SOS | NOT_STARTED | |
+| 22. شاشة الطوارئ والسلامة | IN_PROGRESS | Nurse safety sheet and server receipt states implemented behind a build flag. Offline persistence, emergency access on nested screens, and physical tests pending. |
+| 23. زر SOS العائم | IN_PROGRESS | Nurse safety sheet and server receipt states implemented behind a build flag. Offline persistence, emergency access on nested screens, and physical tests pending. |
+| 24. الاستغاثة الصامتة — Silent SOS | IN_PROGRESS | Nurse safety sheet and server receipt states implemented behind a build flag. Offline persistence, emergency access on nested screens, and physical tests pending. |
 | 25. حالات الاستغاثة | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 26. المناوبات ومركز السلامة | NOT_STARTED | |
 | 27. نظام إدارة المناوبات | NOT_STARTED | |
