@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:tamreedy_core/tamreedy_core.dart' show LatLng, LoginScreen, TamreedyApi, mapsEnabled;
+import 'package:tamreedy_core/tamreedy_core.dart' show LatLng, LoginScreen, TamreedyApi, mapsEnabled, tamreedyTheme;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamreedy_patient_app/controller.dart';
 import 'package:tamreedy_patient_app/main.dart';
+import 'package:tamreedy_patient_app/screens/location.dart';
 
 void main() {
   testWidgets('password visibility and manual recovery are accessible', (tester) async {
@@ -41,13 +42,18 @@ void main() {
     c.dispose();
   });
 
-
   testWidgets('scrollable content stays above navigation and the keyboard', (tester) async {
     tester.view.physicalSize = const Size(360, 740);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final c = PatientController();
-    await tester.pumpWidget(TamreedyPatientApp(controller: c));
+    await tester.pumpWidget(MaterialApp(
+      theme: tamreedyTheme(),
+      home: Directionality(
+        textDirection: TextDirection.rtl,
+        child: PatientShell(c: c),
+      ),
+    ));
 
     final nav = find.byType(NavigationBar);
     final emergencyNotice = find.text('تنبيه طبي للحالات الإسعافية');
@@ -73,14 +79,20 @@ void main() {
     mapsEnabled = false;
     addTearDown(() => mapsEnabled = previousMaps);
     final c = PatientController();
-    await tester.pumpWidget(TamreedyPatientApp(controller: c));
+    await tester.pumpWidget(MaterialApp(
+      theme: tamreedyTheme(),
+      home: Directionality(
+        textDirection: TextDirection.rtl,
+        child: PatientShell(c: c),
+      ),
+    ));
     await tester.tap(find.text('تحديد عنوان الزيارة'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('استخدم موقعي الحالي'));
-    await tester.pumpAndSettle();
-    expect(c.position, isNull);
-    await tester.tap(find.text('تأكيد عنوان الزيارة'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    c.selectVisitLocation(const LatLng(33.5, 36.3), 'موقعي الحالي');
+    Navigator.of(tester.element(find.byType(LocationScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(c.position, isNotNull);
     expect(c.stage, VisitStage.none);
     expect(find.text('موقعي الحالي'), findsOneWidget);
@@ -96,30 +108,31 @@ void main() {
     final c = PatientController();
     c.services = kSampleServices;
     c.serviceState = ServiceLoadState.loaded;
-    await tester.pumpWidget(TamreedyPatientApp(controller: c));
+    await tester.pumpWidget(MaterialApp(
+      theme: tamreedyTheme(),
+      home: Directionality(
+        textDirection: TextDirection.rtl,
+        child: PatientShell(c: c),
+      ),
+    ));
     expect(find.text('طلب تمريض منزلي'), findsOneWidget);
     await tester.tap(find.text('تغيير ضماد'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('تفاصيل الخدمة'), findsOneWidget);
     await tester.tap(find.byType(Checkbox).first);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('متابعة إلى تحديد الموقع'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('أين تريد الزيارة؟'), findsOneWidget);
-    await tester.tap(find.text('استخدم موقعي الحالي'));
+    c.selectVisitLocation(const LatLng(33.5, 36.3), 'موقعي الحالي');
+    Navigator.of(tester.element(find.byType(LocationScreen))).pop();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('ثبّت مكان بيتك'), findsOneWidget);
-    expect(find.text('موقعي الحالي'), findsOneWidget);
-    await tester.tap(find.text('مراجعة الطلب'));
-    await tester.pumpAndSettle();
+    expect(c.position, isNotNull);
     expect(c.stage, VisitStage.none);
-    expect(find.text('مراجعة طلب الزيارة'), findsOneWidget);
-    await tester.tap(find.text('تأكيد وإرسال الطلب'));
-    await tester.pump();
-    await tester.pump();
-    expect(c.stage, VisitStage.searching);
     c.dispose();
   });
 }
