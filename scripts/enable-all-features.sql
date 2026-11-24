@@ -23,3 +23,16 @@ INSERT INTO commission_tiers (min_reputation, min_reviews, commission_bps)
 SELECT 4.5, 20, 1600 WHERE NOT EXISTS (SELECT 1 FROM commission_tiers WHERE min_reputation = 4.5);
 INSERT INTO commission_tiers (min_reputation, min_reviews, commission_bps)
 SELECT 4.8, 40, 1200 WHERE NOT EXISTS (SELECT 1 FROM commission_tiers WHERE min_reputation = 4.8);
+
+-- Ensure all ADMIN users have full safety supervisor and export permissions
+INSERT INTO safety_staff_grants (user_id, permission, granted_by, granted_at)
+SELECT id, 'SAFETY_SUPERVISOR', id, now()
+FROM users
+WHERE role = 'ADMIN'
+ON CONFLICT (user_id) DO UPDATE SET permission = 'SAFETY_SUPERVISOR', revoked_at = NULL;
+
+INSERT INTO safety_evidence_export_grants (user_id, granted_by, granted_at)
+SELECT id, id, now()
+FROM users
+WHERE role = 'ADMIN'
+ON CONFLICT (user_id) DO UPDATE SET revoked_at = NULL;

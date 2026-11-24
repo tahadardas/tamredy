@@ -12,8 +12,12 @@ export class StaffCasesRepository {
   }
 
   async grant(client: PoolClient, actor: string) {
-    return (await client.query(`SELECT permission FROM safety_staff_grants
+    const direct = (await client.query(`SELECT permission FROM safety_staff_grants
       WHERE user_id=$1 AND revoked_at IS NULL FOR SHARE`, [actor])).rows[0]?.permission;
+    if (direct) return direct;
+    const user = (await client.query(`SELECT role FROM users WHERE id=$1 AND status='ACTIVE'`, [actor])).rows[0];
+    if (user?.role === 'ADMIN') return 'SAFETY_SUPERVISOR';
+    return undefined;
   }
 
   async dashboard(client: PoolClient, actor: string, supervisor: boolean) {

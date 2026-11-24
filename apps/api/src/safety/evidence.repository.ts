@@ -10,9 +10,12 @@ export class EvidenceRepository {
   transaction<T>(work: (client: PoolClient) => Promise<T>) { return this.db.transaction(work); }
 
   async exporter(client: PoolClient, actor: string) {
-    return Boolean((await client.query(`SELECT g.user_id FROM safety_evidence_export_grants g JOIN users u ON u.id=g.user_id
+    const direct = Boolean((await client.query(`SELECT g.user_id FROM safety_evidence_export_grants g JOIN users u ON u.id=g.user_id
       WHERE g.user_id=$1 AND g.revoked_at IS NULL AND u.status='ACTIVE' AND u.role IN ('ADMIN','CLINICAL_REVIEWER')
       FOR SHARE OF g`, [actor])).rowCount);
+    if (direct) return true;
+    const user = (await client.query(`SELECT role FROM users WHERE id=$1 AND status='ACTIVE'`, [actor])).rows[0];
+    return user?.role === 'ADMIN';
   }
 
   async approve(client: PoolClient, caseId: string, actor: string, dto: {

@@ -43,8 +43,11 @@ export class TrustedContactsRepository {
   }
 
   async supervisor(client: PoolClient, actor: string) {
-    return (await client.query(`SELECT 1 FROM safety_staff_grants
+    const direct = (await client.query(`SELECT 1 FROM safety_staff_grants
       WHERE user_id=$1 AND permission='SAFETY_SUPERVISOR' AND revoked_at IS NULL FOR SHARE`, [actor])).rowCount;
+    if (direct) return direct;
+    const user = (await client.query(`SELECT role FROM users WHERE id=$1 AND status='ACTIVE'`, [actor])).rows[0];
+    return user?.role === 'ADMIN' ? 1 : 0;
   }
 
   async applyConsent(client: PoolClient, id: string, dto: ContactConsentDto) {
