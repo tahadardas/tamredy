@@ -685,7 +685,22 @@ class _ServiceScreenState extends State<ServiceScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
           child: Column(
             children: [
-              KeyValueRow('اسم المستفيد', c.beneficiary),
+              if (c.beneficiaries.length > 1)
+                DropdownButtonFormField<String>(
+                  key: ValueKey(c.selectedBeneficiaryId),
+                  initialValue: c.selectedBeneficiaryId,
+                  decoration: const InputDecoration(labelText: 'المستفيد'),
+                  isExpanded: true,
+                  items: [
+                    for (final person in c.beneficiaries)
+                      DropdownMenuItem(value: person.id, child: Text(person.name)),
+                  ],
+                  onChanged: (id) {
+                    if (id != null) c.selectBeneficiary(id);
+                  },
+                )
+              else
+                KeyValueRow('اسم المستفيد', c.beneficiary.isEmpty ? 'غير محدد' : c.beneficiary),
               const Divider(color: TamreedyColors.border, height: 1),
               const KeyValueRow('الوقت المطلوب', 'فوراً (أقرب ممرض متاح)'),
             ],

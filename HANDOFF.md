@@ -220,3 +220,10 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Provider and ledger remain unavailable on the current backend. No payment API, prices, fees or migrations changed.
 - Nine patient demo tests and one non-demo wallet widget test passed. The wallet test simulates an API failure followed by a disabled response.
 - ADB found no device. Physical phase 3 verification remains pending. Continue with the phase 4 booking and tracking flow review alongside that release check.
+
+### Guardian phase 4 — booking review
+
+- Booking now supports selection among consenting beneficiaries returned by the existing patient endpoint. The chosen beneficiary is included in the existing idempotent request.
+- The location step opens an explicit review sheet before dispatch. It summarizes the visit, address, patient, estimate and method of payment. Concurrent taps cannot submit twice from the controller.
+- Patient demo flow and two non-demo tests passed. The non-demo booking test checks the selected ID, confirmed address and one request when submission overlaps.
+- No endpoints or migrations added. Continue phase 4 with tracking, scheduling gate and history verification. Physical test and later Guardian phases remain pending.

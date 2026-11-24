@@ -296,6 +296,59 @@ class _LocationScreenState extends State<LocationScreen> {
 
   /// Everything (map, note, confirm button) fits on one screen: a tall map would swallow the scroll gesture
   /// and an older user could never reach the send button.
+  Future<void> _confirmAddress() async {
+    final point = _point;
+    if (point == null || _needsMapSelection || c.busy) return;
+    final navigator = Navigator.of(context);
+    c.selectVisitLocation(point, _address, accuracyMeters: _accuracy, addressDetails: _details);
+    if (widget.addressOnly) {
+      navigator.pop();
+      return;
+    }
+    final service = c.service;
+    if (service == null) return;
+    if (!kDemoMode && c.selectedBeneficiaryId == null) await c.loadBeneficiary();
+    if (!mounted || c.busy) return;
+    final estimate = c.est ?? estimatePrice(service.rule);
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SectionTitle('مراجعة طلب الزيارة'),
+              KeyValueRow('الخدمة', service.title),
+              KeyValueRow('المستفيد', c.beneficiary.isEmpty ? 'غير محدد' : c.beneficiary),
+              KeyValueRow('عنوان الزيارة', c.visitAddress),
+              KeyValueRow('السعر الأساسي', formatMoney(service.rule.basePrice)),
+              KeyValueRow('الإجمالي التقديري', formatMoney(estimate.expected)),
+              KeyValueRow('مدة الزيارة التقديرية', '${service.expectedMinutes} دقيقة'),
+              if ((num.tryParse('${c.quoteInfo['surchargePercent']}') ?? 0) > 0)
+                KeyValueRow('رسم الوقت', '+${c.quoteInfo['surchargePercent']}%'),
+              if ((num.tryParse('${c.quoteInfo['taxPercent']}') ?? 0) > 0)
+                KeyValueRow('الضريبة', '${c.quoteInfo['taxPercent']}%'),
+              if (c.promoCode.isNotEmpty) KeyValueRow('كود الخصم', c.promoCode),
+              KeyValueRow('طريقة الدفع', !kDemoMode || c.payMethod == 'cash' ? 'نقدًا للممرض' : 'المحفظة التجريبية'),
+              if (service.requiresPrescription) const NoticeBox('تتطلب الخدمة وصفة طبية.'),
+              const NoticeBox('يُحسب المبلغ النهائي وفق مدة الزيارة والرسوم المطبقة.'),
+              PrimaryButton('تأكيد وإرسال الطلب', onPressed: () => Navigator.pop(context, true)),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    if (await c.submit() && mounted) {
+      c.setTab(1);
+      navigator.popUntil((route) => route.isFirst);
+    }
+  }
+
   Widget _mapStep() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
@@ -355,21 +408,11 @@ class _LocationScreenState extends State<LocationScreen> {
           icon: const Icon(Icons.bookmark_add_outlined),
           label: const Text('حفظ ضمن أماكني'),
         ),
-      _bigButton(widget.addressOnly ? 'تأكيد عنوان الزيارة' : 'هذا بيتي — أرسل الطلب', Icons.check_circle_outline, c.busy || _needsMapSelection || _point == null
-          ? null
-          : () async {
-              final nav = Navigator.of(context);
-              c.selectVisitLocation(_point!, _address, accuracyMeters: _accuracy, addressDetails: _details);
-              if (widget.addressOnly) {
-                nav.pop();
-                return;
-              }
-              final ok = await c.submit();
-              if (ok && mounted) {
-                c.setTab(1);
-                nav.popUntil((r) => r.isFirst);
-              }
-            }),
+      _bigButton(
+        widget.addressOnly ? 'تأكيد عنوان الزيارة' : 'مراجعة الطلب',
+        Icons.check_circle_outline,
+        c.busy || _needsMapSelection || _point == null ? null : _confirmAddress,
+      ),
     ],
   );
 

@@ -211,15 +211,33 @@ class PatientController extends ChangeNotifier {
   ServiceLoadState serviceState = kDemoMode ? ServiceLoadState.loaded : ServiceLoadState.initial;
   String? serviceError;
 
-  /// The visit is for the patient's own beneficiary (created at sign-up), never a sample name.
+  List<({String id, String name})> beneficiaries = [];
+  String? selectedBeneficiaryId;
+
   Future<void> loadBeneficiary() async {
+    if (kDemoMode) return;
     try {
-      final b = await api.getList('/v1/beneficiaries/mine');
-      if (b.isNotEmpty) {
-        beneficiary = '${(b.first as Map)['display_name']}';
-        notifyListeners();
+      final rows = await api.getList('/v1/beneficiaries/mine');
+      beneficiaries = [
+        for (final row in rows.cast<Map>())
+          (id: row['id'] as String, name: row['display_name'] as String),
+      ];
+      if (!beneficiaries.any((entry) => entry.id == selectedBeneficiaryId)) {
+        selectedBeneficiaryId = beneficiaries.firstOrNull?.id;
       }
-    } catch (_) {/* keep default */}
+      beneficiary = beneficiaries.where((entry) => entry.id == selectedBeneficiaryId).firstOrNull?.name ?? '';
+      notifyListeners();
+    } catch (_) {
+      // Retain the most recent server list during a transient failure.
+    }
+  }
+
+  void selectBeneficiary(String id) {
+    final selected = beneficiaries.where((entry) => entry.id == id).firstOrNull;
+    if (selected == null) return;
+    selectedBeneficiaryId = selected.id;
+    beneficiary = selected.name;
+    notifyListeners();
   }
 
   /// Live catalogue: services and prices the admin edits appear/disappear here without an app update.
@@ -645,7 +663,7 @@ class PatientController extends ChangeNotifier {
 
   /// Creates the request, then follows its lifecycle.
   Future<bool> submit() async {
-    if (service == null) return false;
+    if (service == null || busy) return false;
     _searchStart = DateTime.now();
     Analytics.log('request_submitted', {
       'service_id': service!.id,
@@ -696,11 +714,16 @@ class PatientController extends ChangeNotifier {
     }
     try {
       _idemKey ??= const Uuid().v4();
-      final benef = await api.getList('/v1/beneficiaries/mine');
+      if (selectedBeneficiaryId == null) await loadBeneficiary();
+      final beneficiaryId = selectedBeneficiaryId;
+      if (beneficiaryId == null) {
+        error = 'تعذر تحديد المستفيد. تحقق من بيانات الحساب وحاول مجددًا.';
+        return false;
+      }
       final r = await api.post(
         '/v1/requests',
         {
-          'beneficiaryId': (benef.first as Map)['id'],
+          'beneficiaryId': beneficiaryId,
           'serviceId': service!.id,
           'latitude': visitPoint.latitude,
           'longitude': visitPoint.longitude,

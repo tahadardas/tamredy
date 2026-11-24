@@ -112,7 +112,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('ثبّت مكان بيتك'), findsOneWidget);
     expect(find.text('موقعي الحالي'), findsOneWidget);
-    await tester.tap(find.text('هذا بيتي — أرسل الطلب'));
+    await tester.tap(find.text('مراجعة الطلب'));
+    await tester.pumpAndSettle();
+    expect(c.stage, VisitStage.none);
+    expect(find.text('مراجعة طلب الزيارة'), findsOneWidget);
+    await tester.tap(find.text('تأكيد وإرسال الطلب'));
     await tester.pump();
     await tester.pump();
     expect(c.stage, VisitStage.searching);
