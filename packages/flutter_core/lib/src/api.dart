@@ -396,4 +396,10 @@ class TamreedyApi {
     Map<String, dynamic> body,
   ) async =>
       Map<String, dynamic>.from((await dio.put(path, data: body)).data as Map);
+
+  Future<Map<String, dynamic>> delete(
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async =>
+      Map<String, dynamic>.from((await dio.delete(path, data: body)).data as Map);
 }

@@ -6,6 +6,7 @@ import '../availability_manager.dart';
 import '../controller.dart';
 import '../main.dart';
 import 'visit.dart';
+import 'calendar.dart';
 
 /// N01 — dashboard / availability.
 class NurseHomeScreen extends StatelessWidget {
@@ -97,6 +98,13 @@ class NurseHomeScreen extends StatelessWidget {
               child: StatCard('زيارات مكتملة', twoDigits(c.completedVisits)),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        SoftButton(
+          'جدول المواعيد والزيارات المجدولة (Smart Scheduling)',
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => NurseCalendarScreen(c: c)),
+          ),
         ),
         const SectionTitle('حالة الجاهزية والاستقبال الميداني'),
         _ReadinessCard(c: c),

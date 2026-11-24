@@ -4,6 +4,9 @@ import '../controller.dart';
 import '../main.dart';
 export 'location.dart';
 import 'location.dart';
+import 'care_plans.dart';
+import 'favorite_nurses.dart';
+import 'health_record.dart';
 
 const _serviceIcons = [
   Icons.vaccines_outlined,
@@ -57,6 +60,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     c.setTab(item.$3);
                   },
                 ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.calendar_month, color: AeroColors.accentTeal),
+                title: const Text('خطط الرعاية المستمرة'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => CarePlansScreen(c: c)));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.favorite, color: Color(0xFFEF4444)),
+                title: const Text('الممرضون المفضلون'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => FavoriteNursesScreen(c: c)));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_shared_outlined, color: AeroColors.primaryNavy),
+                title: const Text('السجل الصحي والتقارير'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => HealthRecordScreen(c: c)));
+                },
+              ),
             ],
           ),
         ),

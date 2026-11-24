@@ -5,6 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../alarm.dart';
 import '../controller.dart';
 import '../main.dart';
+import 'chat.dart';
+import 'clinical_notes.dart';
 
 /// Routes N02..N05 by the current stage.
 class VisitFlowScreen extends StatelessWidget {
@@ -76,6 +78,46 @@ class VisitFlowScreen extends StatelessWidget {
             mode: LaunchMode.externalApplication,
           ),
         ),
+        Row(
+          children: [
+            Expanded(
+              child: SoftButton(
+                'محادثة (Connect)',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => NurseChatScreen(
+                      c: c,
+                      requestId: c.requestId ?? '',
+                      patientName: 'المريض',
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SoftButton(
+                'اتصال صوتي (Voice)',
+                onPressed: () async {
+                  try {
+                    await c.api.post('/v1/calls/initiate', {'requestId': c.requestId});
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('جارٍ بدء الاتصال الصوتي المشفر...')),
+                      );
+                    }
+                  } catch (_) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('الاتصال الصوتي متاح فقط أثناء الزيارة المعتمدة')),
+                      );
+                    }
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
         if (assigned)
           PrimaryButton('بدأت التوجه إلى المريض', onPressed: c.busy ? null : c.depart)
         else if (!arrived)
@@ -129,6 +171,19 @@ class VisitFlowScreen extends StatelessWidget {
               divider: false,
             ),
           ],
+        ),
+      ),
+      const SectionTitle('التوثيق السريري والملاحظات'),
+      PrimaryButton(
+        'توثيق العلامات الحيوية والملاحظات السريرية',
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => NurseClinicalNotesScreen(
+              c: c,
+              requestId: c.requestId ?? '',
+              patientName: 'المريض',
+            ),
+          ),
         ),
       ),
       const SectionTitle('بعد انتهاء الزيارة'),

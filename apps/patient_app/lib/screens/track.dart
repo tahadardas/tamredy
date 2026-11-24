@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
 import 'payment.dart';
+import 'chat.dart';
 
 /// The amount due, shown to the patient immediately when the nurse closes the visit.
 class BillCard extends StatelessWidget {
@@ -346,15 +347,45 @@ class TrackScreen extends StatelessWidget {
             ).push(MaterialPageRoute(builder: (_) => PaymentScreen(c: c))),
           )
         else ...[
-          PrimaryButton(
-            'الاتصال بالممرض',
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'الاتصال الهاتفي المقنّع يُفعَّل مع خدمة الاتصالات',
+          Row(
+            children: [
+              Expanded(
+                child: PrimaryButton(
+                  'محادثة (Connect)',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PatientChatScreen(
+                        c: c,
+                        requestId: c.requestId ?? '',
+                        nurseName: c.nurseBadge?['name']?.toString() ?? 'الممرض المعتمد',
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SoftButton(
+                  'اتصال (Voice)',
+                  onPressed: () async {
+                    try {
+                      await c.api.post('/v1/calls/initiate', {'requestId': c.requestId});
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('جارٍ بدء الاتصال الصوتي الآمن...')),
+                        );
+                      }
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('الاتصال الصوتي متاح فقط أثناء الزيارة النشطة')),
+                        );
+                      }
+                    }
+                  },
+                ),
+              ),
+            ],
           ),
           if (c.stage == VisitStage.assigned || c.stage == VisitStage.enRoute)
             Padding(
