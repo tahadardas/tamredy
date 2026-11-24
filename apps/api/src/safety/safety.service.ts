@@ -22,7 +22,9 @@ export class SafetyService {
       if (assignment.status !== 'ACTIVE' || !['EN_ROUTE','ARRIVED','IN_SERVICE'].includes(assignment.request_status)) {
         conflict('SAFETY_ASSIGNMENT_NOT_IN_PROGRESS');
       }
-      return this.repository.start(client, assignmentId);
+      const session = await this.repository.start(client, assignmentId);
+      if (session.checked_out_at) conflict('SAFETY_SESSION_ALREADY_CHECKED_OUT');
+      return session;
     });
   }
 

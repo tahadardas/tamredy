@@ -7,6 +7,7 @@ Future<void> openGuardian(BuildContext context, NurseController nurse) async {
   final guardian = nurse.guardian;
   guardian.refreshSession();
   guardian.refreshSos();
+  guardian.location.sync();
   await showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
@@ -30,7 +31,7 @@ class _GuardianSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final safety = nurse.guardian;
     return ListenableBuilder(
-      listenable: Listenable.merge([nurse, safety]),
+      listenable: Listenable.merge([nurse, safety, safety.location]),
       builder: (context, _) {
         final assignment = nurse.assignmentId;
         final onVisit = [
@@ -86,6 +87,32 @@ class _GuardianSheet extends StatelessWidget {
                         : () => safety.start(assignment),
                     child: const Text('بدء جلسة السلامة لهذه الزيارة'),
                   ),
+                if (safety.sessionId != null) ...[
+                  const Text(
+                    'يُسجل GPS لأغراض السلامة أثناء الجلسة، عندما يكون التطبيق في المقدمة.',
+                  ),
+                  if (safety.location.capturing)
+                    OutlinedButton(
+                      onPressed: safety.location.stop,
+                      child: const Text('إيقاف تسجيل الموقع'),
+                    )
+                  else
+                    OutlinedButton(
+                      onPressed: safety.location.starting
+                          ? null
+                          : safety.startLocation,
+                      child: const Text('بدء تسجيل الموقع'),
+                    ),
+                ],
+                if (safety.location.queued > 0)
+                  TextButton(
+                    onPressed: safety.location.sync,
+                    child: Text(
+                      'مزامنة نقاط الموقع المعلقة (${safety.location.queued})',
+                    ),
+                  ),
+                if (safety.location.error != null)
+                  NoticeBox(safety.location.error!),
                 if (safety.checkin != null) ...[
                   const SectionTitle('هل أنت بخير؟'),
                   for (final choice in _responses.entries)

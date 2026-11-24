@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:uuid/uuid.dart';
 import 'guardian_sos_store.dart';
+import 'guardian_location.dart';
 
 const guardianEnabled =
     bool.fromEnvironment('GUARDIAN_MOBILE_ENABLED') && !kDemoMode;
@@ -42,6 +43,9 @@ class GuardianController extends ChangeNotifier {
     }
   }
 
+  GuardianLocation? _location;
+  GuardianLocation get location =>
+      _location ??= GuardianLocation(api, _accountId);
   String? _owner;
   Future<void>? _restore;
   bool sosStorageUnavailable = false;
@@ -204,8 +208,10 @@ class GuardianController extends ChangeNotifier {
   }
 
   Future<void> refreshSession() => _run(() async {
+    final previous = sessionId;
     final data = await api.getMap('/v1/safety/me/status');
     session = data['session'] as Map<String, dynamic>?;
+    if (sessionId != previous) location.stop();
     await _loadCheckin();
   });
 
@@ -216,10 +222,23 @@ class GuardianController extends ChangeNotifier {
     await _loadCheckin();
   });
 
+  Future<void> startLocation() async {
+    final id = sessionId;
+    final since = DateTime.tryParse('${session?['started_at']}');
+    if (id == null || since == null) return;
+    await location.start(
+      id,
+      since,
+      int.tryParse('${session?['next_sequence']}') ?? 0,
+    );
+  }
+
   Future<void> checkout() => _run(() async {
     final id = sessionId;
     if (id == null) return;
+    location.stop();
     await api.post('/v1/nurse/safety/sessions/$id/checkout');
+    location.sync();
     session = null;
     checkin = null;
     _pendingCheckin = null;
@@ -244,6 +263,7 @@ class GuardianController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _location?.dispose();
     super.dispose();
   }
 }

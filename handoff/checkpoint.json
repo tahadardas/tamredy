@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 6,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement informed visit GPS capture and encrypted point queue, then trusted contacts, safe exit, and staffed operations. Keep public rollout disabled.",
+  "nextAction": "Implement trusted contacts with consent and the documented safe-exit flow. Verify physical Android foreground GPS, encrypted queues and offline upload before enabling Guardian.",
   "productionDeploymentAuthorized": false
 }

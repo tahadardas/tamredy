@@ -35,7 +35,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 29. دليل أرقام الطوارئ | NOT_STARTED | |
 | 30. تتبع مسارات الزيارات — Safety Location Evidence | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 31. تخزين نقاط GPS | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
-| 32. العمل عند ضعف الإنترنت | IN_PROGRESS | Account-scoped durable SOS and original timestamps implemented. Physical secure storage, GPS queue and offline emergency directory pending. |
+| 32. العمل عند ضعف الإنترنت | IN_PROGRESS | Account-scoped SOS and foreground GPS queue implemented. Mocked replay verified. Physical secure storage and offline emergency directory pending. |
 | 33. التحقق الدوري من السلامة — Safety Check-In | IN_PROGRESS | Migration 029, server policy and worker prompt/reminder/alert tested. Mobile and human workflows pending. |
 | 34. سياسة الممرضات والعمل الليلي | NOT_STARTED | |
 | 35. توثيق المريض والحد من إساءة الاستخدام | NOT_STARTED | |

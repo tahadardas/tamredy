@@ -33,7 +33,10 @@ export class SafetyRepository {
       FROM safety_policy_versions v JOIN safety_policies p ON p.id=v.policy_id
       WHERE p.code='STANDARD' AND v.effective_at<=now()
       ORDER BY v.effective_at DESC LIMIT 1 ON CONFLICT(assignment_id) DO NOTHING RETURNING *`, [id]);
-    return inserted.rows[0] ?? (await client.query('SELECT * FROM safety_sessions WHERE assignment_id=$1', [id])).rows[0];
+    return inserted.rows[0] ? { ...inserted.rows[0], next_sequence: 0 } :
+      (await client.query(`SELECT s.*,coalesce((SELECT max(p.sequence_no)::bigint+1
+        FROM safety_location_points p WHERE p.session_id=s.id),0)::text AS next_sequence
+        FROM safety_sessions s WHERE s.assignment_id=$1`, [id])).rows[0];
   }
 
   async session(client: PoolClient, owner: string, id: string) {
@@ -90,7 +93,9 @@ export class SafetyRepository {
   }
 
   async status(owner: string) {
-    const active = await this.db.query(`SELECT s.id,s.assignment_id,s.started_at FROM safety_sessions s
+    const active = await this.db.query(`SELECT s.id,s.assignment_id,s.started_at,
+      coalesce((SELECT max(p.sequence_no)::bigint+1 FROM safety_location_points p
+        WHERE p.session_id=s.id),0)::text AS next_sequence FROM safety_sessions s
       JOIN request_assignments a ON a.id=s.assignment_id JOIN nurses n ON n.id=a.nurse_id
       WHERE n.user_id=$1 AND s.checked_out_at IS NULL ORDER BY s.started_at DESC LIMIT 1`, [owner]);
     return active.rows[0] ?? null;

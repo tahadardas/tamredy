@@ -284,3 +284,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - The nurse UI shows original trigger and server receipt times independently and shows storage or delivery uncertainty. Staff detail includes both clocks.
 - API built. Four targeted backend tests passed, including the original timestamp and wrong-account rejection. Flutter test exercised restart, account isolation and idempotent retry using an in-memory secure-store substitute.
 - Physical Android Keystore, GPS queue/upload, trusted contacts, emergency directory and staffed operations remain pending. No new routes, no server deployment; feature remains disabled by default.
+
+### Guardian phase 6 — informed foreground GPS and offline queue
+
+- Nurse may explicitly start location recording in an open safety session. The shell indicates active capture. Capture stops on app backgrounding, sign-out, session change, checkout or the 12-hour session cap. After backgrounding, the nurse can explicitly restart capture.
+- The app encrypts pending points per account using FlutterSecureStorage, samples at most once every 30 seconds, and uploads in batches with stable sequences. Only server-acknowledged points leave the queue. Queuing is capped at 1,500 points per account.
+- API uses the existing session and batch routes. Start/status return the next accepted sequence; a completed checkout prevents reopening that session. No migration added.
+- API build and four backend checks passed. Flutter tests cover mocked GPS, failed upload, retained point after restart, replay and foreground pause. Android GPS and Keystore tests remain pending.
+- No continuous background collection or new Android permissions. No deployment. Trusted contacts, safe exit and staffed operations remain.

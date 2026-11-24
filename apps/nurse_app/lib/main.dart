@@ -47,17 +47,25 @@ class TamreedyNurseApp extends StatelessWidget {
       child: (_) => NurseApprovalGate(
         api: controller.api,
         onLogout: () async {
+          if (guardianEnabled) controller.guardian.location.stop();
           await controller.api.logout();
+          if (guardianEnabled) controller.guardian.dispose();
           runApp(TamreedyNurseApp());
         },
         child: (_) => OnSessionStart(
           onStart: () async {
-            if (guardianEnabled) await controller.guardian.restoreSos();
+            if (guardianEnabled) {
+              await controller.guardian.restoreSos();
+              controller.guardian.location.sync();
+            }
             await controller.resync();
           },
           child: RealtimeHost(
             api: controller.api,
-            onResync: controller.resync,
+            onResync: () async {
+              if (guardianEnabled) controller.guardian.location.sync();
+              await controller.resync();
+            },
             onEvent: controller.onLive,
             onEventData: controller.onLiveData,
             child: NurseShell(c: controller),
@@ -85,9 +93,22 @@ TamBottomNav nurseNavBar(BuildContext context, NurseController c, int index) =>
       },
     );
 
-class NurseShell extends StatelessWidget {
+class NurseShell extends StatefulWidget {
   final NurseController c;
   const NurseShell({super.key, required this.c});
+
+  @override
+  State<NurseShell> createState() => _NurseShellState();
+}
+
+class _NurseShellState extends State<NurseShell> {
+  NurseController get c => widget.c;
+
+  @override
+  void dispose() {
+    if (guardianEnabled) c.guardian.location.stop();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -101,10 +122,15 @@ class NurseShell extends StatelessWidget {
           children: [
             Align(
               alignment: AlignmentDirectional.centerEnd,
-              child: TextButton.icon(
-                onPressed: () => openGuardian(context, c),
-                icon: const Icon(Icons.health_and_safety_outlined, color: Colors.red),
-                label: const Text('السلامة والاستغاثة'),
+              child: ListenableBuilder(
+                listenable: c.guardian.location,
+                builder: (context, _) => TextButton.icon(
+                  onPressed: () => openGuardian(context, c),
+                  icon: const Icon(Icons.health_and_safety_outlined, color: Colors.red),
+                  label: Text(c.guardian.location.capturing
+                      ? 'السلامة والاستغاثة • تسجيل الموقع جارٍ'
+                      : 'السلامة والاستغاثة'),
+                ),
               ),
             ),
             Expanded(child: content),
