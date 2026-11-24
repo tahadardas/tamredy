@@ -28,13 +28,13 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 22. شاشة الطوارئ والسلامة | NOT_STARTED | |
 | 23. زر SOS العائم | NOT_STARTED | |
 | 24. الاستغاثة الصامتة — Silent SOS | NOT_STARTED | |
-| 25. حالات الاستغاثة | NOT_STARTED | |
+| 25. حالات الاستغاثة | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 26. المناوبات ومركز السلامة | NOT_STARTED | |
 | 27. نظام إدارة المناوبات | NOT_STARTED | |
 | 28. جهات الاتصال الموثوقة | NOT_STARTED | |
 | 29. دليل أرقام الطوارئ | NOT_STARTED | |
-| 30. تتبع مسارات الزيارات — Safety Location Evidence | NOT_STARTED | |
-| 31. تخزين نقاط GPS | NOT_STARTED | |
+| 30. تتبع مسارات الزيارات — Safety Location Evidence | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
+| 31. تخزين نقاط GPS | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 32. العمل عند ضعف الإنترنت | NOT_STARTED | |
 | 33. التحقق الدوري من السلامة — Safety Check-In | NOT_STARTED | |
 | 34. سياسة الممرضات والعمل الليلي | NOT_STARTED | |
@@ -44,10 +44,10 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 38. نظام الحوادث الأمنية | NOT_STARTED | |
 | 39. ملف الأدلة الرقمية | NOT_STARTED | |
 | 40. منع التسجيل السري للصوت والصورة | NOT_STARTED | |
-| 41. قاعدة البيانات | NOT_STARTED | |
+| 41. قاعدة البيانات | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 42. حماية البيانات وسياسة الاحتفاظ | NOT_STARTED | |
 | 43. الصلاحيات | NOT_STARTED | |
-| 44. واجهات API | NOT_STARTED | |
+| 44. واجهات API | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 45. الإشعارات والتصعيد | NOT_STARTED | |
 | 46. مشاركة الزيارة مع شخص موثوق | NOT_STARTED | |
 | 47. Google Play Compliance | NOT_STARTED | |

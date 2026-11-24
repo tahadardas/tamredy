@@ -243,3 +243,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - API and Worker must use the same rollout flag. The worker also reads the Open Dispatch flag and current dispatch settings at release. Apply migration 027 before enabling. Drain pending scheduled visits before turning the flag off.
 - Worker integration exercised no early job, one due job, open search initialization, expiry, and cancelled exclusion using PGlite. Real PostGIS concurrency and Android verification remain pending.
 - No deployment performed. Continue phase 4 verification, then implement phase 5 Guardian backend.
+
+### Guardian phase 5 — foundation
+
+- Migration 028 adds safety_sessions, safety_location_points, emergency_events and emergency_event_actions.
+- Added nurse-only GET /v1/safety/me/status, POST /v1/safety/sos, GET /v1/safety/events/:id, POST /v1/nurse/safety/sessions/start, POST /v1/nurse/safety/sessions/:id/locations/batch and POST /v1/nurse/safety/sessions/:id/checkout.
+- A recording session starts only for the assigned nurse once the visit is underway. GPS batches preserve capture and receipt times, reject altered sequence replays and reject new captures after checkout. Initial capture window is capped server-side at 12 hours.
+- SOS creation, RECEIVED history and outbox are atomic and idempotent. RECEIVED means server persisted only. Checkout does not close the SOS. No operations consumer, human acknowledgement, escalation or nurse UI is connected.
+- API built. PGlite lifecycle and three route audits passed. Geography was substituted in the test harness. Real PostGIS testing, check-ins, policy versions, incident workflows, staff handling and retention remain pending. No deployment.

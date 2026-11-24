@@ -50,6 +50,10 @@ import { SavedPlacesController } from './saved-places/saved-places.controller.js
 import { SavedPlacesRepository } from './saved-places/saved-places.repository.js';
 import { SavedPlacesService } from './saved-places/saved-places.service.js';
 
+import { SafetyController } from './safety/safety.controller.js';
+import { SafetyRepository } from './safety/safety.repository.js';
+import { SafetyService } from './safety/safety.service.js';
+
 @Module({
   imports: [
     ThrottlerModule.forRoot([{
@@ -57,10 +61,10 @@ import { SavedPlacesService } from './saved-places/saved-places.service.js';
       limit: 120,
     }]),
   ],
-  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController],
+  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService
   ],
 })
 export class AppModule {}
