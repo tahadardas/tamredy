@@ -1,13 +1,97 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:uuid/uuid.dart';
+import 'guardian_sos_store.dart';
 
 const guardianEnabled =
     bool.fromEnvironment('GUARDIAN_MOBILE_ENABLED') && !kDemoMode;
 
 class GuardianController extends ChangeNotifier {
   final TamreedyApi api;
-  GuardianController(this.api);
+  final GuardianSosStore _store;
+  final Future<String?> Function() _accountId;
+  GuardianController(
+    this.api, {
+    GuardianSosStore? store,
+    Future<String?> Function()? accountId,
+  }) : _store = store ?? SecureGuardianSosStore(),
+       _accountId = accountId ?? (() => _readLocalAccountId(api));
+
+  // Used only to namespace device storage. The API independently authenticates
+  // the access token and verifies the expected reporter on every submission.
+  static Future<String?> _readLocalAccountId(TamreedyApi api) async {
+    try {
+      final token = await api.accessToken();
+      final payload = token?.split('.');
+      if (payload == null || payload.length != 3) return null;
+      final json = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(payload[1]))),
+      );
+      final id = json is Map ? json['sub'] : null;
+      return id is String &&
+              RegExp(
+                r'^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$',
+                caseSensitive: false,
+              ).hasMatch(id)
+          ? id
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _owner;
+  Future<void>? _restore;
+  bool sosStorageUnavailable = false;
+
+  DateTime? get sosTriggeredAt => DateTime.tryParse(
+    '${_pendingSos?['triggeredAt'] ?? event?['triggered_at'] ?? ''}',
+  )?.toLocal();
+
+  DateTime? get sosReceivedAt => sosUnconfirmed
+      ? null
+      : DateTime.tryParse('${event?['received_at'] ?? ''}')?.toLocal();
+
+  Future<void> restoreSos() {
+    if (_restore case final Future<void> pending) return pending;
+    final work = _restoreFromStorage();
+    _restore = work;
+    return work.whenComplete(() => _restore = null);
+  }
+
+  Future<void> _restoreFromStorage() async {
+    final owner = await _accountId();
+    if (_disposed || owner == _owner) return;
+    _owner = owner;
+    _statusRead++;
+    event = null;
+    _pendingSos = null;
+    sosUnconfirmed = false;
+    statusUnavailable = false;
+    sosStorageUnavailable = false;
+    if (owner != null) {
+      try {
+        final saved = await _store.read(owner);
+        _pendingSos = saved.pending;
+        event = saved.receipt;
+        sosUnconfirmed = _pendingSos != null;
+      } catch (_) {
+        sosStorageUnavailable = true;
+      }
+    }
+    _changed();
+  }
+
+  Future<void> _persistSos(String owner) async {
+    try {
+      await _store.write(owner, (pending: _pendingSos, receipt: event));
+      sosStorageUnavailable = false;
+    } catch (_) {
+      sosStorageUnavailable = true;
+    }
+  }
 
   Map<String, dynamic>? session;
   Map<String, dynamic>? checkin;
@@ -29,24 +113,39 @@ class GuardianController extends ChangeNotifier {
   }
 
   Future<void> sendSos() async {
-    if (sendingSos || (event != null && !eventClosed)) return;
-    _pendingSos ??= {
-      'clientEventId': const Uuid().v4(),
-      'silent': true,
-      if (sessionId != null) 'sessionId': sessionId,
-    };
+    if (sendingSos) return;
     sendingSos = true;
-    sosUnconfirmed = false;
+    final tappedAt = DateTime.now().toUtc().toIso8601String();
     _changed();
     try {
+      await restoreSos();
+      final owner = _owner;
+      if (_disposed) return;
+      if (owner == null) {
+        sosUnconfirmed = true;
+        return;
+      }
+      if (event != null && !eventClosed) return;
+      _pendingSos ??= {
+        'clientEventId': const Uuid().v4(),
+        'expectedReporterId': owner,
+        'triggeredAt': tappedAt,
+        'silent': true,
+        if (sessionId != null) 'sessionId': sessionId,
+      };
+      sosUnconfirmed = false;
+      await _persistSos(owner);
+      if (_disposed || await _accountId() != owner) return;
       final response = await api.post('/v1/safety/sos', _pendingSos!);
       if (response['id'] is! String || response['state'] is! String) {
         throw StateError('Missing server receipt');
       }
+      if (_disposed || await _accountId() != owner) return;
       _statusRead++;
       statusUnavailable = false;
       event = response;
       _pendingSos = null;
+      await _persistSos(owner);
     } catch (_) {
       sosUnconfirmed = true;
     } finally {
@@ -59,14 +158,18 @@ class GuardianController extends ChangeNotifier {
       ['RESOLVED', 'FALSE_ALARM', 'CLOSED'].contains(event?['state']);
 
   Future<void> refreshSos() async {
+    await restoreSos();
+    final owner = _owner;
     final id = event?['id'];
-    if (id is! String) return;
+    if (owner == null || id is! String) return;
     final read = ++_statusRead;
     try {
       final response = await api.getMap('/v1/safety/events/$id');
-      if (read != _statusRead || event?['id'] != id || response['id'] != id) return;
+      if (read != _statusRead || event?['id'] != id || response['id'] != id)
+        return;
       event = response;
       statusUnavailable = false;
+      await _persistSos(owner);
     } catch (_) {
       if (read != _statusRead) return;
       statusUnavailable = true;

@@ -31,7 +31,7 @@ export class StaffCasesRepository {
   }
 
   async detail(client: PoolClient, id: string) {
-    const information = (await client.query(`SELECT coalesce(a.kind,'SOS') AS kind,e.silent,
+    const information = (await client.query(`SELECT coalesce(a.kind,'SOS') AS kind,e.silent,e.triggered_at,e.received_at,
       u.display_name AS reporter_name,s.assignment_id
       FROM safety_cases c
       LEFT JOIN safety_alerts a ON a.id=c.alert_id

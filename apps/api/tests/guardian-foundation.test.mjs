@@ -30,6 +30,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('005_password_accounts_push'));
   await db.exec(await read('029_guardian_checkins'));
   await db.exec(await read('030_guardian_staff_cases'));
+  await db.exec(await read('031_guardian_sos_trigger_time'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -58,9 +59,12 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await assert.rejects(svc.upload(nurse, session.id, { points: [{ ...point, latitude: 33 }] }), { status: 409 });
   await assert.rejects(svc.upload(outsider, session.id, { points: [point] }), { status: 404 });
 
-  const dto = { sessionId: session.id, clientEventId: randomUUID(), silent: true };
+  const triggeredAt = new Date(Date.now() - 90000).toISOString();
+  const dto = { sessionId: session.id, clientEventId: randomUUID(), silent: true, triggeredAt, expectedReporterId: nurse };
+  assert.throws(() => svc.sos(outsider, dto), { status: 403 });
   const sos = await svc.sos(nurse, dto);
   assert.equal(sos.state, 'RECEIVED');
+  assert.equal(new Date(sos.triggered_at).toISOString(), triggeredAt);
   assert.equal((await svc.sos(nurse, dto)).id, sos.id);
   await assert.rejects(svc.sos(nurse, { ...dto, silent: false }), { status: 409 });
   await assert.rejects(svc.event(outsider, sos.id), { status: 404 });

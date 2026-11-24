@@ -23,6 +23,9 @@ export class ReportSosDto {
   @IsUUID() clientEventId!: string;
   @ValidateIf((_, value) => value !== undefined) @IsUUID() sessionId?: string;
   @IsBoolean() silent!: boolean;
+  @ValidateIf((_, value) => value !== undefined) @IsUUID() expectedReporterId?: string;
+  @ValidateIf((_, value) => value !== undefined)
+  @IsISO8601({ strict: true }) @Matches(/(?:Z|[+-]\d{2}:\d{2})$/i) triggeredAt?: string;
 }
 
 export const checkinResponses = ['OK','MORE_TIME','HELP','SAFE_EXIT'] as const;

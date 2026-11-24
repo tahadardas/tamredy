@@ -51,7 +51,10 @@ class TamreedyNurseApp extends StatelessWidget {
           runApp(TamreedyNurseApp());
         },
         child: (_) => OnSessionStart(
-          onStart: controller.resync,
+          onStart: () async {
+            if (guardianEnabled) await controller.guardian.restoreSos();
+            await controller.resync();
+          },
           child: RealtimeHost(
             api: controller.api,
             onResync: controller.resync,

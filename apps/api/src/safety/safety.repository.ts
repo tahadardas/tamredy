@@ -63,18 +63,18 @@ export class SafetyRepository {
   }
 
   async eventByKey(client: PoolClient, owner: string, key: string) {
-    return (await client.query(`SELECT id,session_id,silent,state,received_at FROM emergency_events
+    return (await client.query(`SELECT id,session_id,silent,state,received_at,triggered_at FROM emergency_events
       WHERE reporter_user_id=$1 AND client_event_id=$2`, [owner, key])).rows[0];
   }
 
   async report(client: PoolClient, owner: string, dto: ReportSosDto) {
     return (await client.query(`INSERT INTO emergency_events
-      (reporter_user_id,client_event_id,session_id,silent,location_sequence_no)
+      (reporter_user_id,client_event_id,session_id,silent,location_sequence_no,triggered_at)
       VALUES($1,$2,$3,$4,(SELECT sequence_no FROM safety_location_points
-        WHERE session_id=$3 ORDER BY captured_at DESC,sequence_no DESC LIMIT 1))
+        WHERE session_id=$3 ORDER BY captured_at DESC,sequence_no DESC LIMIT 1),$5)
       ON CONFLICT(reporter_user_id,client_event_id) DO NOTHING
-      RETURNING id,session_id,silent,state,received_at`,
-    [owner, dto.clientEventId, dto.sessionId ?? null, dto.silent])).rows[0];
+      RETURNING id,session_id,silent,state,received_at,triggered_at`,
+    [owner, dto.clientEventId, dto.sessionId ?? null, dto.silent, dto.triggeredAt ?? null])).rows[0];
   }
 
   async recordReceived(client: PoolClient, eventId: string, owner: string) {
@@ -85,7 +85,7 @@ export class SafetyRepository {
   }
 
   async event(owner: string, id: string) {
-    return (await this.db.query(`SELECT id,session_id,silent,state,received_at FROM emergency_events
+    return (await this.db.query(`SELECT id,session_id,silent,state,received_at,triggered_at FROM emergency_events
       WHERE id=$1 AND reporter_user_id=$2`, [id, owner])).rows[0];
   }
 

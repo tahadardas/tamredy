@@ -147,6 +147,20 @@ class _SosPanel extends StatelessWidget {
       children: [
         if (message != null)
           Semantics(liveRegion: true, child: NoticeBox(message)),
+        if (guardian.sosTriggeredAt case final DateTime time)
+          KeyValueRow(
+            'وقت طلب الاستغاثة',
+            '${MaterialLocalizations.of(context).formatMediumDate(time)} • ${TimeOfDay.fromDateTime(time).format(context)}',
+          ),
+        if (guardian.sosReceivedAt case final DateTime time)
+          KeyValueRow(
+            'وقت تسجيل البلاغ على الخادم',
+            '${MaterialLocalizations.of(context).formatMediumDate(time)} • ${TimeOfDay.fromDateTime(time).format(context)}',
+          ),
+        if (guardian.sosStorageUnavailable && guardian.sosUnconfirmed)
+          const NoticeBox(
+            'تعذر حفظ البلاغ على الجهاز. اترك التطبيق مفتوحًا لإعادة المحاولة.',
+          ),
         if (guardian.statusUnavailable)
           const NoticeBox('تعذر تحديث حالة البلاغ. تُعرض آخر حالة مؤكدة.'),
         if (state == null || guardian.eventClosed)

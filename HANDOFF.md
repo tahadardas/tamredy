@@ -276,3 +276,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Retrying an unconfirmed SOS in the current process reuses its client event ID. The screen does not claim server receipt before a valid response. The screen can refresh the known report and applies private realtime events.
 - GET /v1/safety/me/status now returns an explicit session envelope. No migration or new endpoint. API and four targeted tests passed. Five nurse demo tests and the mocked SOS fail/retry/acknowledgement test passed.
 - Pending: account-scoped encrypted offline persistence, visit GPS collection, trusted contacts and safe-exit flow. No physical Android verification and no deployment.
+
+### Guardian phase 6 — durable offline SOS and original time
+
+- Pending silent SOS and the latest confirmed receipt are stored via FlutterSecureStorage per authenticated account. A manual retry after restart uses the same ID and original trigger time. No automatic dispatch of an old report.
+- Migration 031 adds optional triggered_at alongside server received_at. SOS can assert the expected reporter so an account switch cannot replay the old payload as another nurse. Existing clients without the new fields still work.
+- The nurse UI shows original trigger and server receipt times independently and shows storage or delivery uncertainty. Staff detail includes both clocks.
+- API built. Four targeted backend tests passed, including the original timestamp and wrong-account rejection. Flutter test exercised restart, account isolation and idempotent retry using an in-memory secure-store substitute.
+- Physical Android Keystore, GPS queue/upload, trusted contacts, emergency directory and staffed operations remain pending. No new routes, no server deployment; feature remains disabled by default.

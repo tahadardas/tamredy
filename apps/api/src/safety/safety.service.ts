@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { conflict, invalid, missing } from '../common/errors.js';
+import { conflict, forbidden, invalid, missing } from '../common/errors.js';
 import { SafetyRepository, SafetyPointRecord } from './safety.repository.js';
 import type { ReportSosDto, SafetyLocationBatchDto } from './safety.dto.js';
 
@@ -69,6 +69,11 @@ export class SafetyService {
   }
 
   sos(owner: string, dto: ReportSosDto) {
+    if (dto.expectedReporterId !== undefined && dto.expectedReporterId !== owner) forbidden();
+    const triggerTime = dto.triggeredAt === undefined ? null : Date.parse(dto.triggeredAt);
+    if (triggerTime !== null && (!Number.isFinite(triggerTime) || triggerTime > Date.now() + 60_000)) {
+      invalid('SOS trigger time is invalid');
+    }
     return this.repository.transaction(async client => {
       let event = await this.repository.eventByKey(client, owner, dto.clientEventId);
       if (!event) {
@@ -77,7 +82,8 @@ export class SafetyService {
         if (event) await this.repository.recordReceived(client, event.id, owner);
         else event = await this.repository.eventByKey(client, owner, dto.clientEventId);
       }
-      if (event.session_id !== (dto.sessionId ?? null) || event.silent !== dto.silent) {
+      if (event.session_id !== (dto.sessionId ?? null) || event.silent !== dto.silent ||
+          (event.triggered_at ? new Date(event.triggered_at).getTime() : null) !== triggerTime) {
         conflict('SOS_CLIENT_EVENT_ID_CONFLICT');
       }
       return event;

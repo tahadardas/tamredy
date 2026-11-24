@@ -2,13 +2,31 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:tamreedy_nurse_app/guardian.dart';
+import 'package:tamreedy_nurse_app/guardian_sos_store.dart';
+
+class MemorySosStore implements GuardianSosStore {
+  final items = <String, GuardianSosState>{};
+
+  @override
+  Future<GuardianSosState> read(String owner) async =>
+      items[owner] ?? (pending: null, receipt: null);
+
+  @override
+  Future<void> write(String owner, GuardianSosState state) async {
+    items[owner] = state;
+  }
+}
 
 void main() {
   test(
-    'silent SOS retries the same event and distinguishes human acknowledgement',
+    'silent SOS survives restart, retries the same event, and isolates accounts',
     () async {
       final api = TamreedyApi();
-      final guardian = GuardianController(api);
+      final store = MemorySosStore();
+      var account = 'nurse-a';
+      GuardianController open() =>
+          GuardianController(api, store: store, accountId: () async => account);
+      final guardian = open();
       addTearDown(guardian.dispose);
       final attempts = <Map<String, dynamic>>[];
       api.dio.interceptors.clear();
@@ -48,14 +66,26 @@ void main() {
       await guardian.sendSos();
       expect(guardian.event, isNull);
       expect(guardian.sosUnconfirmed, isTrue);
-      await guardian.sendSos();
+      final restarted = open();
+      addTearDown(restarted.dispose);
+      await restarted.restoreSos();
+      expect(restarted.sosUnconfirmed, isTrue);
+      expect(restarted.sosTriggeredAt, isNotNull);
+      await restarted.sendSos();
       expect(attempts, hasLength(2));
       expect(attempts[0], attempts[1]);
       expect(attempts.first['silent'], isTrue);
       expect(attempts.first['sessionId'], 'session-1');
-      expect(guardian.event?['state'], 'RECEIVED');
-      await guardian.refreshSos();
-      expect(guardian.event?['state'], 'ACKNOWLEDGED');
+      expect(restarted.event?['state'], 'RECEIVED');
+      await restarted.refreshSos();
+      expect(restarted.event?['state'], 'ACKNOWLEDGED');
+      account = 'nurse-b';
+      await restarted.restoreSos();
+      expect(restarted.event, isNull);
+      expect(restarted.sosUnconfirmed, isFalse);
+      account = 'nurse-a';
+      await restarted.restoreSos();
+      expect(restarted.event?['state'], 'ACKNOWLEDGED');
     },
   );
 }
