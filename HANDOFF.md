@@ -184,3 +184,9 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Both login screens have a manual recovery entry point. See docs/PASSWORD_RECOVERY_AR.md for verification, delivery and the build-time support contact.
 - Node workspace build, focused auth and socket regressions, and the shared Flutter suite passed. Production DNS still failed and ADB found no attached devices. Verify production TLS, configured support and physical Android releases before rollout.
 - No new HTTP endpoints. No server deployment. Continue with Aero phase 2.
+
+### Guardian phase 2 — shared Aero login
+
+- Shared patient and nurse login now has a visible password toggle, a separate recovery action below the password, a filled Aero sign-in button and a separate outline registration or nurse application button.
+- Widget regression verifies password visibility and the manual recovery dialog. Patient and nurse demo suites passed. Pending: physical RTL, TalkBack and large text review, then the map-first shell and saved places.
+- No endpoints or migrations added in phase 2. No deployment.

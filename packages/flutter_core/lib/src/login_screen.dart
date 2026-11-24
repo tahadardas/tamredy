@@ -5,6 +5,7 @@ import 'api.dart';
 import 'change_password_screen.dart';
 import 'design/auth/syrian_phone_normalizer.dart';
 import 'design/widgets/aero_syrian_phone_field.dart';
+import 'design/widgets/aero_button.dart';
 import 'errors.dart';
 import 'nurse_apply_screen.dart';
 import 'register_screen.dart';
@@ -33,6 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool get _pw => kAuthMode == 'password';
   bool _codeSent = false, _busy = false;
   String? _error;
+  bool _showPassword = false;
 
   Future<void> _run(Future<void> Function() job, String fail) async {
     setState(() {
@@ -106,11 +108,17 @@ class _LoginScreenState extends State<LoginScreen> {
         TamCard(
           child: TextField(
             controller: _password,
-            obscureText: true,
+            obscureText: !_showPassword,
+            autofillHints: const [AutofillHints.password],
             textDirection: TextDirection.ltr,
             style: tamText(size: 18, weight: FontWeight.w700),
             decoration: InputDecoration(
-              hintText: 'كلمة المرور',
+              labelText: 'كلمة المرور',
+              suffixIcon: IconButton(
+                tooltip: _showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور',
+                onPressed: () => setState(() => _showPassword = !_showPassword),
+                icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility),
+              ),
               hintStyle: tamText(color: TamreedyColors.subtext),
             ),
           ),
@@ -135,6 +143,11 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+      if (_pw)
+        TextButton(
+          onPressed: _busy ? null : _showRecovery,
+          child: const Text('نسيت كلمة المرور؟'),
+        ),
       if (_error != null)
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
@@ -144,8 +157,10 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       if (_pw)
-        PrimaryButton(
-          'دخول',
+        AeroButton.teal(
+          'تسجيل الدخول',
+          width: double.infinity,
+          isLoading: _busy,
           onPressed: _busy
               ? null
               : () => _run(
@@ -224,28 +239,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
         ),
       if (_pw)
-        TextButton(
-          onPressed: _busy ? null : _showRecovery,
-          child: const Text('نسيت كلمة المرور؟'),
-        ),
-      if (_pw)
-        Center(
-          child: TextButton(
-            onPressed: () => Navigator.of(context).push(
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: AeroButton.secondary(
+            widget.expectedRole == 'NURSE' ? 'تقديم طلب انضمام' : 'إنشاء حساب جديد',
+            width: double.infinity,
+            onPressed: _busy ? null : () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => widget.expectedRole == 'NURSE'
                     ? NurseApplyScreen(api: widget.api)
                     : RegisterScreen(api: widget.api, onDone: widget.onLoggedIn),
-              ),
-            ),
-            child: Text(
-              widget.expectedRole == 'NURSE'
-                  ? 'ممرض جديد؟ قدّم طلب انضمام'
-                  : 'ليس لديك حساب؟ إنشاء حساب جديد',
-              style: tamText(
-                size: 14,
-                weight: FontWeight.w700,
-                color: TamreedyColors.teal,
               ),
             ),
           ),

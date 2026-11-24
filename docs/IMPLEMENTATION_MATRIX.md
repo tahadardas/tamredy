@@ -7,7 +7,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 1. تعريف المهمة الرئيسية | IN_PROGRESS | |
 | 2. تعليمات غير قابلة للتفاوض | IN_PROGRESS | |
 | 3. استمرارية التنفيذ بين نماذج الذكاء الاصطناعي | IMPLEMENTED | Git baseline, matrix and checkpoint recorded. |
-| 4. الهوية البصرية الإلزامية | NOT_STARTED | |
+| 4. الهوية البصرية الإلزامية | IN_PROGRESS | Shared Aero login is implemented. Physical accessibility review pending. |
 | 5. فلسفة تجربة الاستخدام — Map-First | NOT_STARTED | |
 | 6. الشاشة الرئيسية للمريض | NOT_STARTED | |
 | 7. القائمة الجانبية للمريض | NOT_STARTED | |
@@ -54,6 +54,6 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 48. الأداء وسرعة التطبيق | NOT_STARTED | |
 | 49. الاختبارات الإلزامية للتصميم | NOT_STARTED | |
 | 50. الاختبارات الإلزامية لنظام Guardian | NOT_STARTED | |
-| 51. مراحل التنفيذ | IN_PROGRESS | Phase 0 recorded. Phase 1 implemented locally, external verification pending. |
+| 51. مراحل التنفيذ | IN_PROGRESS | Phase 0 recorded. Phase 1 implemented locally, external verification pending. Phase 2 started. |
 | 52. شروط اكتمال المشروع | NOT_STARTED | |
 | 53. التقرير النهائي | NOT_STARTED | |
