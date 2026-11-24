@@ -33,6 +33,9 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   await pg.exec(read('024_departure_reminders'));
   await pg.exec(`
     CREATE TABLE app_settings(key text PRIMARY KEY, value jsonb);
+    CREATE TABLE user_blocks(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), blocker_user_id uuid, blocked_user_id uuid, revoked_at timestamptz);
+    CREATE TABLE care_request_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), request_id uuid, service_id uuid, price_amount numeric, expected_minutes int);
+    CREATE TABLE scheduled_visits(request_id uuid PRIMARY KEY, appointment_at timestamptz);
     INSERT INTO users(phone_e164,role) VALUES ('patient-1','PATIENT'),('nurse-1','NURSE');
     INSERT INTO beneficiaries(owner_user_id,display_name,consent_status)
       SELECT id,'زيارة اختبارية','GRANTED' FROM users WHERE role='PATIENT';

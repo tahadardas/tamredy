@@ -16,7 +16,7 @@ class AddCalendarBlockDto {
   reason?: string;
 }
 
-@Controller('v1/nurse/calendar')
+@Controller('v1/nurse-calendar')
 @UseGuards(AuthGuard)
 export class NurseCalendarController {
   constructor(private readonly calendar: NurseCalendarService) {}

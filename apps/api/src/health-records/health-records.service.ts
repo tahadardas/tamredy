@@ -417,4 +417,18 @@ export class HealthRecordsService {
       versionHistory: versions.rows,
     };
   }
+
+  /** Lists all beneficiaries owned by user with their health profile summary */
+  async listBeneficiaries(ownerUserId: string) {
+    const res = await this.db.query(`
+      SELECT b.id, b.display_name, b.consent_status, b.created_at,
+             p.relationship, p.date_of_birth, p.gender, p.blood_type,
+             p.known_allergies, p.chronic_conditions
+      FROM beneficiaries b
+      LEFT JOIN beneficiary_profiles p ON p.beneficiary_id = b.id
+      WHERE b.owner_user_id = $1
+      ORDER BY b.created_at ASC
+    `, [ownerUserId]);
+    return res.rows;
+  }
 }

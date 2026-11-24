@@ -42,8 +42,7 @@ export class CatalogController {
   /** Public catalog endpoint: visible to patients before and after login */
   @Get('services')
   async services(@Query('category') categoryFilter?: string) {
-    const cacheKey = categoryFilter ? `services:public:${categoryFilter}` : 'services:public';
-    return this.cache.getOrLoad(cacheKey, async () => {
+    const fetchServices = async (cat?: string) => {
       let query = `
         SELECT s.id, s.code, s.category_id, sc.code AS category_code, sc.title_ar AS category_title_ar,
                s.title_ar, s.title_en, s.description_ar, s.price_amount, s.currency_code,
@@ -56,13 +55,18 @@ export class CatalogController {
         WHERE s.active = true AND s.dispatch_approved = true
       `;
       const params: unknown[] = [];
-      if (categoryFilter) {
-        params.push(categoryFilter);
+      if (cat) {
+        params.push(cat);
         query += ` AND (sc.code = $1 OR sc.id::text = $1 OR s.category_id::text = $1)`;
       }
       query += ` ORDER BY sc.sort_order ASC NULLS LAST, s.sort_order ASC, s.title_ar ASC, s.id ASC`;
       return (await this.db.query(query, params)).rows;
-    }, 300);
+    };
+
+    if (categoryFilter) {
+      return this.cache.getOrLoad(`services:public:${categoryFilter}`, () => fetchServices(categoryFilter), 300);
+    }
+    return this.cache.getOrLoad('services:public', () => fetchServices(), 300);
   }
 
   /** Multi-service estimate calculator: computes combined duration, items, base pricing, and fees */

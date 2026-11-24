@@ -158,4 +158,20 @@ export class TrustService {
     const res = await this.db.query(query, params);
     return res.rows;
   }
+
+  /** Admin resolution / triage update */
+  async triageReport(reportId: string, adminUserId: string, status: string, resolutionNote?: string) {
+    const res = await this.db.query(
+      `UPDATE user_reports
+       SET status = $1,
+           resolution_note = $2,
+           resolved_by_user_id = $3,
+           resolved_at = CASE WHEN $1 IN ('RESOLVED', 'REJECTED') THEN now() ELSE resolved_at END,
+           updated_at = now()
+       WHERE id = $4
+       RETURNING *`,
+      [status, resolutionNote ?? null, adminUserId, reportId],
+    );
+    return res.rows[0];
+  }
 }

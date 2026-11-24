@@ -139,4 +139,37 @@ export class HealthRecordsController {
   ) {
     return this.health.getVisitNote(r.user!.id, requestId);
   }
+
+  @Post('health-records/observations')
+  @HttpCode(201)
+  async postHealthObservations(
+    @Request() r: AuthRequest,
+    @Body() body: any,
+  ) {
+    const benId = body.beneficiaryId;
+    const reqId = body.requestId;
+    const obsList = body.observations ?? (body.observationType ? [body] : []);
+    return this.health.recordObservations(r.user!.id, benId, reqId, obsList);
+  }
+
+  @Post('health-records/notes')
+  @HttpCode(201)
+  async postHealthNotes(
+    @Request() r: AuthRequest,
+    @Body() body: any,
+  ) {
+    requireRole(r.user!, 'NURSE');
+    return this.health.saveVisitNote(r.user!.id, body.requestId, body, body.isDraft);
+  }
+
+  @Get('health-records/profiles')
+  async getHealthProfiles(
+    @Request() r: AuthRequest,
+    @Query('beneficiaryId') beneficiaryId?: string,
+  ) {
+    if (beneficiaryId) {
+      return this.health.getBeneficiaryProfile(r.user!.id, beneficiaryId);
+    }
+    return this.health.listBeneficiaries(r.user!.id);
+  }
 }

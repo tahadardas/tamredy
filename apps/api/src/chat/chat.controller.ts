@@ -52,17 +52,17 @@ class AttachmentMetadataDto {
   isPrescription?: boolean;
 }
 
-@Controller('v1/conversations')
+@Controller('v1')
 @UseGuards(AuthGuard)
 export class ChatController {
   constructor(private readonly chat: ChatService) {}
 
-  @Get()
+  @Get('conversations')
   async list(@Request() r: AuthRequest) {
     return this.chat.listUserConversations(r.user!.id);
   }
 
-  @Post('visit/:requestId')
+  @Post('conversations/visit/:requestId')
   async openVisitConversation(
     @Request() r: AuthRequest,
     @Param('requestId') requestId: string,
@@ -70,7 +70,7 @@ export class ChatController {
     return this.chat.getOrCreateVisitConversation(requestId, r.user!.id);
   }
 
-  @Get(':id/messages')
+  @Get('conversations/:id/messages')
   async messages(
     @Request() r: AuthRequest,
     @Param('id') conversationId: string,
@@ -81,7 +81,30 @@ export class ChatController {
     return this.chat.getMessages(r.user!.id, conversationId, numLimit, before);
   }
 
-  @Post(':id/messages')
+  @Get('chat/requests/:requestId/messages')
+  async requestMessages(
+    @Request() r: AuthRequest,
+    @Param('requestId') requestId: string,
+  ) {
+    const conv = await this.chat.getOrCreateVisitConversation(requestId, r.user!.id);
+    return this.chat.getMessages(r.user!.id, conv.id, 50);
+  }
+
+  @Post('chat/messages')
+  @HttpCode(201)
+  async postChatMessage(
+    @Request() r: AuthRequest,
+    @Body() body: any,
+  ) {
+    let convId = body.conversationId;
+    if (!convId && body.requestId) {
+      const conv = await this.chat.getOrCreateVisitConversation(body.requestId, r.user!.id);
+      convId = conv.id;
+    }
+    return this.chat.sendMessage(r.user!.id, convId, body);
+  }
+
+  @Post('conversations/:id/messages')
   @HttpCode(201)
   async sendMessage(
     @Request() r: AuthRequest,
@@ -91,7 +114,7 @@ export class ChatController {
     return this.chat.sendMessage(r.user!.id, conversationId, body);
   }
 
-  @Post(':id/read')
+  @Post('conversations/:id/read')
   @HttpCode(200)
   async markRead(
     @Request() r: AuthRequest,
@@ -101,7 +124,7 @@ export class ChatController {
     return this.chat.markRead(r.user!.id, conversationId, body.messageId);
   }
 
-  @Post(':id/attachments')
+  @Post('conversations/:id/attachments')
   @HttpCode(201)
   async uploadAttachment(
     @Request() r: AuthRequest,

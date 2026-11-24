@@ -2,7 +2,7 @@ import { Controller, Delete, Get, HttpCode, Param, Post, Request, UseGuards } fr
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { FavoritesService } from './favorites.service.js';
 
-@Controller('v1/favorite-nurses')
+@Controller('v1/favorites/nurses')
 @UseGuards(AuthGuard)
 export class FavoritesController {
   constructor(private readonly favorites: FavoritesService) {}

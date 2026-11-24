@@ -80,4 +80,15 @@ export class TrustController {
     requireRole(r.user!, 'ADMIN');
     return this.trust.listReports({ status, type });
   }
+
+  @Post('trust/reports/:id/triage')
+  @HttpCode(200)
+  async triageReport(
+    @Request() r: AuthRequest,
+    @Param('id') reportId: string,
+    @Body() body: { status: string; resolutionNote?: string },
+  ) {
+    requireRole(r.user!, 'ADMIN');
+    return this.trust.triageReport(reportId, r.user!.id, body.status, body.resolutionNote);
+  }
 }
