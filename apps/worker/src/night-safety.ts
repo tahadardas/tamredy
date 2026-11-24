@@ -4,9 +4,9 @@ export const nightPolicyEnabled = () => process.env.GUARDIAN_NIGHT_POLICY_ENABLE
 
 export async function closeNightIneligibleOffers(pool: pg.Pool): Promise<boolean> {
   const result = await pool.query(`WITH candidates AS (
-    SELECT o.id,guardian_night_denial(o.nurse_id,r.service_id,statement_timestamp()) AS reason FROM request_offers o JOIN care_requests r ON r.id=o.request_id
+    SELECT o.id,guardian_dispatch_denial(o.nurse_id,r.id,statement_timestamp()) AS reason FROM request_offers o JOIN care_requests r ON r.id=o.request_id
     WHERE o.status='OPEN' AND o.expires_at>clock_timestamp() AND r.status='OFFERING'
-      AND guardian_night_denial(o.nurse_id,r.service_id,statement_timestamp()) IS NOT NULL
+      AND guardian_dispatch_denial(o.nurse_id,r.id,statement_timestamp()) IS NOT NULL
     ORDER BY o.id LIMIT 100 FOR UPDATE OF o SKIP LOCKED
   ), closed AS (
     UPDATE request_offers o SET status='CLOSED' FROM candidates c

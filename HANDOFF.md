@@ -355,3 +355,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - GUARDIAN_NIGHT_POLICY_ENABLED defaults off on API/Worker. When on, open and wave dispatch filter unsuitable candidates, acceptance rechecks policy, and the Worker closes newly ineligible open offers. Existing assignments continue. Scheduled jobs are checked when offers are generated, without a guarantee before release.
 - Covered modes: ordinary eligibility, restricted window, present safety staff, explicit opt-in plus coverage. Companion/risk policies, dedicated schedule-time assessment and field rollout are pending.
 - Workspace build and local checks completed. No policies configured live or deployment performed. Verify co-enabled staffed coverage, PostgreSQL concurrency and UI field behavior before activation.
+
+### Guardian phase 8 — visit risk and professional companion
+
+- Migration 039 adds per-request supervisor reviews, companion nominations/confirmations and exclusive active reservations. Assessments can temporarily hold dispatch, require a companion or clear the restriction. Scope is the specific visit, with a documented reason and reference.
+- Added POST /v1/admin/safety/requests/:id/risk, POST /v1/admin/safety/requests/:id/companion, GET /v1/nurse/safety/companions and POST /v1/nurse/safety/companions/:id/confirm. The nurse app exposes confirmation in Guardian.
+- Existing dispatch guard applies the active review, checks companion consent and recent readiness, locks both providers in sorted order, and reserves the companion in the acceptance transaction. Releasing the assignment releases the reservation. No sensitive risk details are sent to patients.
+- Integrated PGlite and route tests passed. Coverage includes hold, unauthorized assessment or confirmation, companion gating and reservation release. Real PostgreSQL races and physical accompaniment are unverified.
+- Supervisor review is currently API-driven. Request-time schedule planning, patient verification/appeal workflow and companion journey confirmation UI remain pending. Feature remains behind GUARDIAN_NIGHT_POLICY_ENABLED. No deployment.

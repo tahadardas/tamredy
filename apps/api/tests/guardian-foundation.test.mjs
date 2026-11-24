@@ -4,6 +4,7 @@ import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { closeNightIneligibleOffers } from '../../worker/src/night-safety.ts';
+import { VisitRiskService } from '../dist/safety/visit-risk.js';
 import { NightPolicyService } from '../dist/safety/night-policy.js';
 import { routeSafetyCase } from '../../worker/src/safety-routing.ts';
 import { runSafetyCheckin } from '../../worker/src/safety-checkins.ts';
@@ -51,6 +52,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('036_guardian_case_routing'));
   await db.exec(await read('037_guardian_handovers'));
   await db.exec(await read('038_guardian_night_policy'));
+  await db.exec(await read('039_guardian_visit_risk'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -327,5 +329,34 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal(await closeNightIneligibleOffers({query: adapter.query}), true);
   assert.equal((await db.query('SELECT status FROM request_offers WHERE request_id=$1', [offering.id])).rows[0].status, 'CLOSED');
   assert.equal((await db.query('SELECT status FROM care_requests WHERE id=$1', [visitInfo.id])).rows[0].status, 'ESCALATED');
+
+  const risks = new VisitRiskService(adapter, grants);
+  const effectiveUntil = new Date(Date.now()+3600000).toISOString();
+  const assessment = {decision: 'HOLD', basis: 'DOCUMENTED_THREAT', reference: 'case-reference', effectiveUntil};
+  await assert.rejects(risks.assess(operator,offering.id,assessment), {status: 403});
+  await risks.assess(supervisor,offering.id,assessment);
+  const eligibility = async (nurse, request) => (await db.query(
+    'SELECT guardian_dispatch_denial($1,$2,statement_timestamp()) AS reason',[nurse,request])).rows[0].reason;
+  assert.equal(await eligibility(nurseId,offering.id), 'VISIT_SAFETY_REVIEW_REQUIRED');
+  await risks.assess(supervisor,offering.id,{...assessment, decision: 'REQUIRE_COMPANION', basis: 'SOLO_WORK'});
+  assert.equal(await eligibility(nurseId,offering.id), 'VISIT_COMPANION_REQUIRED');
+  const companion = (await db.query(`INSERT INTO nurses(user_id,verified,work_status,availability_intent,last_heartbeat_at)
+    VALUES($1,true,'AVAILABLE','AVAILABLE',now()) RETURNING id`,[outsider])).rows[0].id;
+  await db.query("UPDATE nurses SET verified=true WHERE id=$1", [nurseId]);
+  for (const provider of [nurseId,companion]) {
+    await db.query("INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved) VALUES($1,'test',now()+interval '1 day',true)",[provider]);
+  }
+  await risks.nominate(supervisor,offering.id,{nurseId,companionId: companion});
+  await assert.rejects(risks.confirm(nurse,offering.id,nurseId), {status: 404});
+  assert.equal((await risks.pending(outsider))[0].request_id,offering.id);
+  await risks.confirm(outsider,offering.id,nurseId);
+  await policy.publish(supervisor,{mode: 'ALLOW',startsAt,endsAt});
+  assert.equal(await eligibility(nurseId,offering.id), null);
+  const newAssignment = (await db.query(
+    'INSERT INTO request_assignments(request_id,nurse_id) VALUES($1,$2) RETURNING id',[offering.id,nurseId])).rows[0].id;
+  await db.query('INSERT INTO safety_companion_reservations(assignment_id,companion_id) VALUES($1,$2)',[newAssignment,companion]);
+  assert.equal(await eligibility(companion,offering.id), 'VISIT_COMPANION_BUSY');
+  await db.query("UPDATE request_assignments SET status='RELEASED' WHERE id=$1",[newAssignment]);
+  assert.notEqual(await eligibility(companion,offering.id), 'VISIT_COMPANION_BUSY');
 
 });

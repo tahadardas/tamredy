@@ -146,7 +146,7 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
                          WHERE existing.request_id = req.id AND existing.nurse_id = n.id)
           AND NOT EXISTS (SELECT 1 FROM request_assignments a
                          WHERE a.nurse_id = n.id AND a.status = 'ACTIVE')
-          ${nightPolicyEnabled() ? 'AND guardian_night_denial(n.id,req.service_id,statement_timestamp()) IS NULL' : ''}
+          ${nightPolicyEnabled() ? 'AND guardian_dispatch_denial(n.id,req.id,statement_timestamp()) IS NULL' : ''}
           AND ST_DWithin(nl.location, req.location, $3::double precision)
       ), inserted AS (
         INSERT INTO request_offers(request_id, nurse_id, wave_no, expires_at)

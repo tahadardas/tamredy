@@ -3,6 +3,7 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
 import '../guardian.dart';
 import 'night_preference.dart';
+import 'visit_companions.dart';
 
 Future<void> openGuardian(BuildContext context, NurseController nurse) async {
   final guardian = nurse.guardian;
@@ -63,6 +64,7 @@ class _GuardianSheet extends StatelessWidget {
                 ),
                 _SosPanel(guardian: safety),
                 NightPreference(api: nurse.api),
+                VisitCompanions(api: nurse.api),
                 const SizedBox(height: 16),
                 if (assignment != null && (onVisit || nurse.stage == NurseStage.assigned))
                   AeroButton.danger(

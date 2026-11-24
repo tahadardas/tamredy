@@ -35,8 +35,18 @@ export class DispatchService {
       // The order of locks is consistent for every mutation: request, nurse, offer.
       const rr=await c.query(`SELECT * FROM care_requests WHERE id=$1 FOR UPDATE`,[requestId]);
       const request=rr.rows[0];
-      const nr=await c.query('SELECT * FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
-      const nurse=nr.rows[0];
+      const nightPolicy = process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true';
+      const companion = nightPolicy ? (await c.query(`WITH review AS (
+        SELECT decision,effective_until FROM safety_visit_reviews WHERE request_id=$1
+        ORDER BY created_at DESC,id DESC LIMIT 1
+      ) SELECT v.companion_id FROM safety_visit_companions v CROSS JOIN review r
+        WHERE v.request_id=$1 AND v.nurse_id=$2 AND v.confirmed_at IS NOT NULL
+          AND r.decision='REQUIRE_COMPANION' AND r.effective_until>clock_timestamp()`,
+      [requestId,nurseId])).rows[0]?.companion_id : undefined;
+      const nr=companion
+        ? await c.query('SELECT * FROM nurses WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[nurseId,companion]])
+        : await c.query('SELECT * FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
+      const nurse=companion ? nr.rows.find(row => row.id===nurseId) : nr.rows[0];
       const oo=await c.query(`SELECT status, expires_at > clock_timestamp() AS unexpired
         FROM request_offers WHERE id=$1 FOR UPDATE`,[offerId]);
       const offer=oo.rows[0];
@@ -63,9 +73,9 @@ export class DispatchService {
             AND ST_DWithin(nl.location,r.location,r.search_radius_meters)
           ))`,[nurseId,requestId]);
       if (!ready.rowCount) conflict('NURSE_NOT_AVAILABLE');
-      if (process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true') {
-        const denial = (await c.query(`SELECT guardian_night_denial($1,$2,statement_timestamp()) AS reason`,
-          [nurseId,request.service_id])).rows[0]?.reason;
+      if (nightPolicy) {
+        const denial = (await c.query(`SELECT guardian_dispatch_denial($1,$2,statement_timestamp()) AS reason`,
+          [nurseId,requestId])).rows[0]?.reason;
         if (denial) conflict(denial);
       }
       const qualified=await c.query(`SELECT 1 FROM nurse_skills sk
@@ -82,6 +92,8 @@ export class DispatchService {
         SELECT $1,$2,statement_timestamp(),statement_timestamp()+seconds*interval '1 second' FROM policy
         RETURNING id`,[requestId,nurseId]);
       const assignmentId=ins.rows[0].id;
+      if (companion) await c.query(`INSERT INTO safety_companion_reservations(assignment_id,companion_id)
+        VALUES($1,$2)`, [assignmentId,companion]);
       const updateNurse=await c.query(`UPDATE nurses SET work_status='RESERVED',updated_at=now()
         WHERE id=$1 AND work_status='AVAILABLE'`,[nurseId]);
       if(updateNurse.rowCount!==1) conflict('NURSE_NOT_AVAILABLE');
@@ -91,7 +103,7 @@ export class DispatchService {
           AND (search_expires_at IS NULL OR search_expires_at>statement_timestamp())
           AND EXISTS (SELECT 1 FROM request_offers o WHERE o.id=$2 AND o.expires_at>statement_timestamp()
             ${process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true'
-              ? 'AND guardian_night_denial(o.nurse_id,care_requests.service_id,statement_timestamp()) IS NULL' : ''})`,[requestId,offerId]);
+              ? 'AND guardian_dispatch_denial(o.nurse_id,care_requests.id,statement_timestamp()) IS NULL' : ''})`,[requestId,offerId]);
       if(updateRequest.rowCount!==1) gone();
       // Distance the nurse must cover (straight line x 1.3 road factor) -> automatic travel fee when enabled.
       await c.query(`UPDATE care_requests SET travel_distance_m=(SELECT round(ST_Distance(nl.location,cr.location)*1.3)::int

@@ -19,6 +19,9 @@ const _codes = <String, String>{
   'TOO_MANY_DOCUMENTS': 'بلغت الحد الأقصى من المستندات',
   'SETTLEMENT_REQUIRED': 'عليك تسوية المستحقات للشركة قبل قبول طلبات جديدة',
   'NURSE_NOT_VERIFIED': 'رخصتك لم تُعتمد بعد',
+  'VISIT_SAFETY_REVIEW_REQUIRED': 'يتطلب الطلب مراجعة السلامة قبل الإسناد.',
+  'VISIT_COMPANION_REQUIRED': 'تتطلب الزيارة مرافقًا مهنيًا متاحًا ومؤكدًا.',
+  'VISIT_COMPANION_BUSY': 'أنت محجوز حاليًا لمرافقة زيارة.',
   'NIGHT_POLICY_RESTRICTED': 'هذا العرض غير متاح خلال فترة العمل الليلي.',
   'NIGHT_POLICY_OPT_IN_REQUIRED': 'يلزم تأكيد موافقتك على استقبال عروض العمل الليلي.',
   'NIGHT_POLICY_COVERAGE_REQUIRED': 'لا تتوفر تغطية سلامة لهذه الزيارة الآن.',
@@ -34,7 +37,7 @@ const _codes = <String, String>{
 };
 
 String? nightPolicyMessage(Object? code) =>
-    code is String && code.startsWith('NIGHT_POLICY_') ? _codes[code] : null;
+    code is String && (code.startsWith('NIGHT_POLICY_') || code.startsWith('VISIT_COMPANION_') || code == 'VISIT_SAFETY_REVIEW_REQUIRED') ? _codes[code] : null;
 
 /// Turns any failure into a short, clear Arabic sentence (never a raw exception or an English message).
 String explainError(Object e, {String? fallback}) {
