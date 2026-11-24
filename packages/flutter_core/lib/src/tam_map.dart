@@ -60,12 +60,14 @@ class TamMap extends StatefulWidget {
   final LatLng? patient;
   final LatLng? nurse;
   final RouteInfo? route;
+  final bool homeOverlay;
   final double height;
   const TamMap({
     super.key,
     this.patient,
     this.nurse,
     this.route,
+    this.homeOverlay = false,
     this.height = 300,
   });
   @override
@@ -77,6 +79,7 @@ class _TamMapState extends State<TamMap> with SingleTickerProviderStateMixin {
   late final AnimationController _glide;
   LatLng? _from, _to;
   bool _ready = false;
+  Timer? _initialFit;
 
   LatLng? get _nurseNow {
     if (_to == null) return null;
@@ -133,6 +136,7 @@ class _TamMapState extends State<TamMap> with SingleTickerProviderStateMixin {
 
   @override
   void dispose() {
+    _initialFit?.cancel();
     _glide.dispose();
     _ctl.dispose();
     super.dispose();
@@ -164,7 +168,7 @@ class _TamMapState extends State<TamMap> with SingleTickerProviderStateMixin {
                 ),
                 onMapReady: () {
                   _ready = true;
-                  Future.delayed(const Duration(milliseconds: 200), _fit);
+                  _initialFit = Timer(const Duration(milliseconds: 200), _fit);
                 },
               ),
               children: [
@@ -214,7 +218,7 @@ class _TamMapState extends State<TamMap> with SingleTickerProviderStateMixin {
                       ),
                   ],
                 ),
-                _attribution(),
+                if (!widget.homeOverlay) _attribution(),
               ],
             ),
             if (r != null)
@@ -258,8 +262,21 @@ class _TamMapState extends State<TamMap> with SingleTickerProviderStateMixin {
                   ),
                 ),
               ),
+            if (widget.homeOverlay)
+              const PositionedDirectional(
+                top: 62,
+                end: 12,
+                child: ColoredBox(
+                  color: Color(0xEEFFFFFF),
+                  child: Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Text(kTileAttribution, style: TextStyle(fontSize: 10)),
+                  ),
+                ),
+              ),
             PositionedDirectional(
-              bottom: 28,
+              top: widget.homeOverlay ? 60 : null,
+              bottom: widget.homeOverlay ? null : 28,
               start: 12,
               child: Material(
                 color: Colors.white,
@@ -270,6 +287,7 @@ class _TamMapState extends State<TamMap> with SingleTickerProviderStateMixin {
                     Icons.center_focus_strong,
                     color: TamreedyColors.navy,
                   ),
+                  tooltip: 'إعادة تمركز الخريطة',
                   onPressed: _fit,
                 ),
               ),

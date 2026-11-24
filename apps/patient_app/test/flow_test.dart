@@ -51,7 +51,7 @@ void main() {
 
     final nav = find.byType(NavigationBar);
     final emergencyNotice = find.text('تنبيه طبي للحالات الإسعافية');
-    final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    final scroll = tester.state<ScrollableState>(find.descendant(of: find.byType(DraggableScrollableSheet), matching: find.byType(Scrollable)).first);
     scroll.position.jumpTo(scroll.position.maxScrollExtent);
     await tester.pump();
     expect(emergencyNotice.hitTestable(), findsOneWidget);

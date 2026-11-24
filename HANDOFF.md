@@ -190,3 +190,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Shared patient and nurse login now has a visible password toggle, a separate recovery action below the password, a filled Aero sign-in button and a separate outline registration or nurse application button.
 - Widget regression verifies password visibility and the manual recovery dialog. Patient and nurse demo suites passed. Pending: physical RTL, TalkBack and large text review, then the map-first shell and saved places.
 - No endpoints or migrations added in phase 2. No deployment.
+
+### Guardian phase 3 — patient home map slice
+
+- Patient home now keeps one map mounted under a draggable service sheet. The visible viewport resizes as the sheet moves.
+- The RTL drawer opens orders, wallet and account. Wallet opens the existing screen. No balance is displayed in the home button because the production controller does not load wallet balance.
+- Existing service, tracking, code claim and emergency notice actions remain. The map shows a visit pin only when the controller has a point.
+- Patient Flutter suite passed 7 tests, including service-to-booking and navigation/keyboard layout. Physical GPS and accessibility remain unverified.
+- No endpoints or migrations added in this slice. Continue phase 3 with saved places, visit-address flow and authoritative wallet data.

@@ -13,75 +13,192 @@ const _serviceIcons = [
 ];
 const _serviceTones = [Tone.teal, Tone.blue, Tone.teal, Tone.orange];
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final PatientController c;
   final TamBottomNav nav;
   const HomeScreen({super.key, required this.c, required this.nav});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  static const _initialSheetSize = 0.65;
+  final _sheet = DraggableScrollableController();
+  PatientController get c => widget.c;
+
+  @override
+  void dispose() {
+    _sheet.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final last = c.history.isEmpty ? null : c.history.first;
-    return TamScaffold(
-      title: 'طلب تمريض منزلي',
-      subtitle: 'اختر الخدمة لعرض تفاصيل الزيارة وتكلفتها',
-      nav: nav,
-      onRefresh: () => c.loadServices(),
-      children: [
-        if (c.stage != VisitStage.none)
-          ActiveOrderBanner(c: c),
-        const SectionTitle('الخدمات المنزلية'),
-        if (c.serviceState == ServiceLoadState.loading)
-          const ServiceSkeletonGrid()
-        else if (c.serviceState == ServiceLoadState.networkError || c.serviceState == ServiceLoadState.serverError)
-          ServiceErrorCard(
-            message: c.serviceError ?? 'تعذر الاتصال بالخادم لجلب الخدمات المتاحة.',
-            onRetry: c.loadServices,
-          )
-        else if (c.serviceState == ServiceLoadState.empty)
-          const NoticeBox('لا توجد خدمات منشورة حاليًا في منطقتك. تواصل مع الدعم للمساعدة.')
-        else
-          LayoutBuilder(
-            builder: (context, constraints) {
-              const gap = 12.0;
-              final width = constraints.maxWidth >= 400
-                  ? (constraints.maxWidth - gap) / 2
-                  : constraints.maxWidth;
-              return Wrap(
-                spacing: gap,
-                children: [
-                  for (final service in c.services)
-                    SizedBox(
-                      width: width,
-                      child: _ServiceOption(
-                        service: service,
-                        onTap: () {
-                          c.pick(service);
-                          Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => ServiceScreen(c: c)),
-                          );
-                        },
+    return Scaffold(
+      bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom == 0
+          ? widget.nav
+          : null,
+      drawer: Drawer(
+        child: SafeArea(
+          child: ListView(
+            children: [
+              for (final item in [
+                (Icons.calendar_today_outlined, 'طلباتي', 1),
+                (Icons.account_balance_wallet_outlined, 'محفظتي', 2),
+                (Icons.person_outline, 'حسابي', 3),
+              ])
+                ListTile(
+                  leading: Icon(item.$1),
+                  title: Text(item.$2),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    c.setTab(item.$3);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            children: [
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _sheet,
+                  builder: (context, _) {
+                    final extent = _sheet.isAttached ? _sheet.size : _initialSheetSize;
+                    return Align(
+                      alignment: Alignment.topCenter,
+                      child: TamMap(
+                        patient: c.position,
+                        homeOverlay: true,
+                        height: constraints.maxHeight * (1 - extent),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              PositionedDirectional(
+                top: 12,
+                start: 12,
+                end: 12,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Builder(
+                      builder: (context) => IconButton.filledTonal(
+                        tooltip: 'فتح القائمة',
+                        onPressed: () => Scaffold.of(context).openDrawer(),
+                        icon: const Icon(Icons.menu),
                       ),
                     ),
-                ],
-              );
-            },
+                    FilledButton.tonalIcon(
+                      onPressed: () => c.setTab(2),
+                      icon: const Icon(Icons.account_balance_wallet_outlined),
+                      label: const Text('محفظتي'),
+                    ),
+                  ],
+                ),
+              ),
+              DraggableScrollableSheet(
+                controller: _sheet,
+                initialChildSize: _initialSheetSize,
+                minChildSize: 0.32,
+                maxChildSize: 0.78,
+                snap: true,
+                builder: (context, controller) => Material(
+                  color: AeroColors.lightCanvas,
+                  elevation: 8,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: RefreshIndicator(
+                    onRefresh: c.loadServices,
+                    child: ListView(
+                      controller: controller,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      children: [
+                        const Center(child: Icon(Icons.drag_handle)),
+                        const SectionTitle('طلب تمريض منزلي'),
+                        if (c.stage != VisitStage.none) ActiveOrderBanner(c: c),
+                        const SectionTitle('ما الخدمة التي تحتاجها؟'),
+                        if (c.serviceState == ServiceLoadState.loading)
+                          const ServiceSkeletonGrid()
+                        else if (c.serviceState ==
+                                ServiceLoadState.networkError ||
+                            c.serviceState == ServiceLoadState.serverError)
+                          ServiceErrorCard(
+                            message:
+                                c.serviceError ??
+                                'تعذر الاتصال بالخادم لجلب الخدمات المتاحة.',
+                            onRetry: c.loadServices,
+                          )
+                        else if (c.serviceState == ServiceLoadState.empty)
+                          const NoticeBox(
+                            'لا توجد خدمات منشورة حاليًا في منطقتك. تواصل مع الدعم للمساعدة.',
+                          )
+                        else
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              const gap = 12.0;
+                              final width = constraints.maxWidth >= 400
+                                  ? (constraints.maxWidth - gap) / 2
+                                  : constraints.maxWidth;
+                              return Wrap(
+                                spacing: gap,
+                                children: [
+                                  for (final service in c.services)
+                                    SizedBox(
+                                      width: width,
+                                      child: _ServiceOption(
+                                        service: service,
+                                        onTap: () {
+                                          c.pick(service);
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  ServiceScreen(c: c),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
+                        ClaimCodeCard(c: c),
+                        const SectionTitle('حجوزاتي الأخيرة'),
+                        if (last == null)
+                          const NoticeBox(
+                            'لا توجد حجوزات سابقة بعد. اختر خدمة لتبدأ طلبك الأول.',
+                          )
+                        else
+                          TamCard(
+                            child: ListRow(
+                              icon: Icons.check,
+                              title: last.title,
+                              subtitle:
+                                  '${last.date} • ${formatMoney(last.price)}',
+                              trailing: StatusChip(last.status),
+                              divider: false,
+                            ),
+                          ),
+                        const EmergencyNoticeBanner(),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ClaimCodeCard(c: c),
-        const SectionTitle('حجوزاتي الأخيرة'),
-        if (last == null)
-          const NoticeBox('لا توجد حجوزات سابقة بعد. اختر خدمة لتبدأ طلبك الأول.')
-        else
-          TamCard(
-            child: ListRow(
-              icon: Icons.check,
-              title: last.title,
-              subtitle: '${last.date} • ${formatMoney(last.price)}',
-              trailing: StatusChip(last.status),
-              divider: false,
-            ),
-          ),
-        const EmergencyNoticeBanner(),
-      ],
+        ),
+      ),
     );
   }
 }
