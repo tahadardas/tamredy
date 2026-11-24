@@ -2,7 +2,7 @@
   "projectName": "tamreedy",
   "branch": "feature/smart-booking-marketplace",
   "baselineCommit": "06768cf1ae45d8cb33b1945cc3f2f966a52b9fbf",
-  "latestCommit": "4c8857e fix(api): allow ADMIN to list care-plans (fix 403) and use UUID for outbox booking policies audit (fix 500)",
+  "latestCommit": "b57342a feat(admin): live BI telemetry endpoint and modern card-based regions architecture",
   "status": "COMPLETED",
   "testSweepResults": {
     "apiTests": "154/154 PASS",
