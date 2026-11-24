@@ -18,6 +18,7 @@ import {SafetyOperations} from './pages_safety_operations';
 import {SafetyDirectory} from './pages_safety_directory';
 import {DispatchMonitor} from './pages_dispatch';
 import {CancellationAppeals} from './pages_appeals';
+import {AppointmentsSchedule, SupportReports, LedgerAudit, BITelemetry} from './pages_expansion';
 
 export type NavItem = {
   id: string;
@@ -45,6 +46,7 @@ export const navCategories: NavCategory[] = [
       {id: 'safety-directory', label: 'دليل الطوارئ', icon: 'bell', title: 'دليل الطوارئ', desc: 'إدارة الأرقام الموثقة للاتصال في حالات الطوارئ'},
       {id: 'map', label: 'مراقبة ميدانية', icon: 'pin', title: 'المراقبة الميدانية المباشرة', desc: 'عرض توزيع الحالات والزيارات والممرضين'},
       {id: 'requests', label: 'إدارة الطلبات', icon: 'doc', title: 'إدارة ومتابعة الطلبات', desc: 'تصفية وبحث ومراقبة مراحل الإسناد والخدمة'},
+      {id: 'appointments', label: 'الزيارات المجدولة', icon: 'doc', title: 'الزيارات المجدولة وخطط الرعاية', desc: 'إدارة الزيارات المسبقة وخطط الرعاية الدورية'},
       {id: 'appeals', label: 'الاعتراضات', icon: 'doc', title: 'اعتراضات الإلغاء', desc: 'مراجعة الاعتراضات واتخاذ القرارات'},
     ],
   },
@@ -73,6 +75,7 @@ export const navCategories: NavCategory[] = [
       {id: 'fees', label: 'الرسوم والضرائب', icon: 'settings', title: 'إعدادات الرسوم والتعرفة', desc: 'بدل المسافة، الساعات الليلية، العطلات، والضرائب'},
       {id: 'dues', label: 'مستحقات الشركة', icon: 'wallet', title: 'مستحقات الشركة من الممرضين', desc: 'تسوية المبالغ النقدية المقبوضة ميدانياً'},
       {id: 'wallet', label: 'المحافظ والتسويات', icon: 'wallet', title: 'مطابقة المحافظ والتسويات', desc: 'تنظيم آلية الدفع النقدي ومطابقة الحسابات'},
+      {id: 'ledger-audit', label: 'دفتر الأستاذ', icon: 'wallet', title: 'دفتر الأستاذ والقيود المزدوجة', desc: 'تدقيق القيود المحاسبية وتوازن الحسابات'},
     ],
   },
   {
@@ -88,6 +91,8 @@ export const navCategories: NavCategory[] = [
         desc: 'متابعة جودة الرعاية وبلاغات السلامة الطبية',
         badge: extra => (extra.reviews?.safety_reports ? extra.reviews.safety_reports : null),
       },
+      {id: 'support-reports', label: 'مركز الشكاوى', icon: 'alert', title: 'مركز الشكاوى وبلاغات الجودة', desc: 'فرز ومعالجة الشكاوى وبلاغات المستخدمين'},
+      {id: 'bi-telemetry', label: 'مؤشرات النمو (BI)', icon: 'chart', title: 'تحليلات ونمو الأعمال', desc: 'معدلات الإيفاء، الإيرادات، ومؤشرات ولاء المرضى'},
     ],
   },
   {
@@ -343,14 +348,18 @@ function App() {
     map: <LiveMap live={live} />,
     requests: <Requests live={live} />,
     appeals: <CancellationAppeals live={live} />,
+    appointments: <AppointmentsSchedule live={live} />,
     applications: <Applications live={live} />,
     nurses: <Nurses live={live} />,
     credentials: <Credentials live={live} />,
     finance: <Finance live={live} />,
     wallet: <WalletRec live={live} />,
+    'ledger-audit': <LedgerAudit live={live} />,
     accounts: <Accounts live={live} />,
     prices: <ServicesPrices live={live} />,
     marketing: <Marketing live={live} />,
+    'support-reports': <SupportReports live={live} />,
+    'bi-telemetry': <BITelemetry live={live} />,
     fees: <FeesSettings live={live} />,
     dues: <Dues live={live} />,
     promos: <Promos live={live} />,
