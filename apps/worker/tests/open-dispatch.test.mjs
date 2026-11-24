@@ -17,6 +17,17 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
     await db.exec(migration(name));
   }
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS care_request_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      request_id uuid NOT NULL,
+      service_id uuid NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      blocker_user_id uuid NOT NULL,
+      blocked_user_id uuid NOT NULL,
+      revoked_at timestamptz
+    );
     CREATE FUNCTION ST_DWithin(double precision,double precision,double precision)
     RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT abs($1-$2)<=$3 $$;
   `);

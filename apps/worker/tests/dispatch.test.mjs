@@ -17,6 +17,17 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
     await db.exec(sql);
   }
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS care_request_items (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      request_id uuid NOT NULL,
+      service_id uuid NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      blocker_user_id uuid NOT NULL,
+      blocked_user_id uuid NOT NULL,
+      revoked_at timestamptz
+    );
     CREATE FUNCTION ST_DWithin(double precision, double precision, double precision)
       RETURNS boolean LANGUAGE sql AS $$ SELECT abs($1 - $2) <= $3 $$;
     CREATE TABLE app_settings (key text PRIMARY KEY, value jsonb);
