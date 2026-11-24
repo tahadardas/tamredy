@@ -18,3 +18,8 @@ export 'widgets/aero_scaffold.dart';
 export 'widgets/aero_floating_dock.dart';
 export 'widgets/aero_smart_cta.dart';
 export 'widgets/aero_glass_sheet.dart';
+export 'widgets/aero_chat_view.dart';
+export 'widgets/aero_schedule_picker_sheet.dart';
+export 'widgets/aero_observations_sheet.dart';
+export 'widgets/aero_notifications_center.dart';
+export 'widgets/aero_cards.dart';
