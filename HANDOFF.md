@@ -205,3 +205,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - If the region catalogue fails, production shows a retry and allows GPS or manual pin selection. Sample regions are limited to demo mode.
 - Patient Flutter suite passed 8 tests, including confirmation without submitting a request, booking, and navigation layout.
 - No endpoints or migrations added. Saved places, wallet data, and device verification remain.
+
+### Guardian phase 3 — saved places
+
+- Migration 026 adds user_saved_places with an owner foreign key, coordinate bounds, place types and a partial unique index for the single default. Apply before running the updated API.
+- Added patient-only GET/POST /v1/patient/saved-places, PUT/DELETE /v1/patient/saved-places/:id and POST /v1/patient/saved-places/:id/use.
+- The visit location picker can save a pin, list and select places, edit details, set a default and delete. Selection updates recency and still requires address confirmation before booking. The default sorts first.
+- API built. One PGlite lifecycle and access-control test, three route audits and nine patient Flutter tests passed. The saved place Flutter test uses a simulated API response. No server deployment or physical verification.
+- Remaining: wallet status and real ledger availability, physical map/GPS and accessibility, and later Guardian phases.

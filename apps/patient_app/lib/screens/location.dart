@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
 import '../main.dart';
+import 'saved_places.dart';
 
 /// Sample areas used by the local demo.
 const _fallback = [
@@ -119,6 +120,34 @@ class _LocationScreenState extends State<LocationScreen> {
     if (mounted) setState(() => _locating = false);
   }
 
+  void _useSavedPlace(SavedPlace place) {
+    setState(() {
+      _point = place.point;
+      _mapStart = place.point;
+      _address = place.address;
+      _accuracy = place.accuracy;
+      _details = place.details;
+      _needsMapSelection = false;
+      _onMap = true;
+    });
+  }
+
+  Future<void> _savePlace() async {
+    final point = _point;
+    if (point == null) return;
+    final saved = await editSavedPlace(context, c.api, SavedPlace({
+      'label': '',
+      'formatted_address': _address,
+      'latitude': point.latitude,
+      'longitude': point.longitude,
+      'accuracy': _accuracy,
+      'notes': _details,
+    }));
+    if (saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ المكان')));
+    }
+  }
+
   Widget _bigButton(String label, IconData icon, VoidCallback? onTap) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
     child: Material(
@@ -191,6 +220,7 @@ class _LocationScreenState extends State<LocationScreen> {
               ],
             ),
           ),
+        if (!kDemoMode) SavedPlaces(api: c.api, onSelected: _useSavedPlace),
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Text('أو اختر منطقتك', style: tamText(size: 20, weight: FontWeight.w800, color: TamreedyColors.navy)),
@@ -319,6 +349,12 @@ class _LocationScreenState extends State<LocationScreen> {
       ),
       if (c.error != null)
         Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(c.error!, style: tamText(size: 14, color: TamreedyColors.danger))),
+      if (!kDemoMode)
+        OutlinedButton.icon(
+          onPressed: c.busy || _needsMapSelection || _point == null ? null : _savePlace,
+          icon: const Icon(Icons.bookmark_add_outlined),
+          label: const Text('حفظ ضمن أماكني'),
+        ),
       _bigButton(widget.addressOnly ? 'تأكيد عنوان الزيارة' : 'هذا بيتي — أرسل الطلب', Icons.check_circle_outline, c.busy || _needsMapSelection || _point == null
           ? null
           : () async {
