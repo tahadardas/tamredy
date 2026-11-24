@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { closeNightIneligibleOffers } from '../../worker/src/night-safety.ts';
 import { VisitRiskService } from '../dist/safety/visit-risk.js';
@@ -21,6 +21,8 @@ import { DirectoryService } from '../dist/safety/directory.service.js';
 import { ShiftsRepository } from '../dist/safety/shifts.repository.js';
 import { ShiftsService } from '../dist/safety/shifts.service.js';
 import { HandoversService } from '../dist/safety/handovers.js';
+import { EvidenceRepository } from '../dist/safety/evidence.repository.js';
+import { EvidenceService } from '../dist/safety/evidence.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -34,6 +36,9 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     .replaceAll('geography(Point,4326)', 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
   await db.exec(`
     CREATE DOMAIN geography AS text;
+    CREATE DOMAIN geometry AS text;
+    CREATE FUNCTION ST_X(geometry) RETURNS float8 LANGUAGE sql AS $$ SELECT nullif(split_part($1,',',1),'')::float8 $$;
+    CREATE FUNCTION ST_Y(geometry) RETURNS float8 LANGUAGE sql AS $$ SELECT nullif(split_part($1,',',2),'')::float8 $$;
     CREATE FUNCTION ST_MakePoint(float8,float8) RETURNS text LANGUAGE sql AS $$ SELECT $1::text || ',' || $2::text $$;
     CREATE FUNCTION ST_SetSRID(text, integer) RETURNS text LANGUAGE sql AS $$ SELECT $1 $$;
   `);
@@ -54,6 +59,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('038_guardian_night_policy'));
   await db.exec(await read('039_guardian_visit_risk'));
   await db.exec(await read('040_guardian_schedule_preflight'));
+  await db.exec(await read('021_open_dispatch_and_cancellation_foundation'));
+  await db.exec(await read('041_guardian_evidence_exports'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -373,5 +380,33 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await shiftService.save(supervisor,{...shiftSpec,startsAt: later+'T22:30:00+03:00',
     endsAt: new Date(Date.parse(evening)+3600000).toISOString()});
   assert.equal(await allowsSchedule(evening),null);
+
+  const previousKey = process.env.GUARDIAN_EVIDENCE_KEY;
+  process.env.GUARDIAN_EVIDENCE_KEY = randomBytes(32).toString('hex');
+  t.after(() => {
+    if (previousKey === undefined) delete process.env.GUARDIAN_EVIDENCE_KEY;
+    else process.env.GUARDIAN_EVIDENCE_KEY = previousKey;
+  });
+  const evidence = new EvidenceService(new EvidenceRepository(adapter), grants);
+  const separate = await makeUser('evidence-staff','CLINICAL_REVIEWER');
+  await db.query('INSERT INTO safety_evidence_export_grants(user_id,granted_by) VALUES($1,$2)', [separate,supervisor]);
+  const approval = await evidence.approve(supervisor,entry.id, {
+    exporterId: separate, purpose: 'مراجعة الحادثة', recipient: 'جهة مراجعة معتمدة',
+  });
+  await assert.rejects(evidence.generate(supervisor,entry.id,approval.id), {status: 403});
+  const exported = await evidence.generate(separate,entry.id,approval.id);
+  assert.equal((await evidence.generate(separate,entry.id,approval.id)).id,exported.id);
+  const bytes = await evidence.download(separate,exported.id);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),exported.sha256);
+  const envelope = JSON.parse(bytes);
+  for (const file of envelope.manifest.files) {
+    const raw = Buffer.from(envelope.files[file.name],'base64');
+    assert.equal(createHash('sha256').update(raw).digest('hex'),file.sha256);
+  }
+  const pointData = JSON.parse(Buffer.from(envelope.files['locations.geojson'],'base64'));
+  assert.deepEqual(pointData.features[0].geometry.coordinates,[36.3,33.5]);
+  assert.equal((await db.query("SELECT id FROM audit_log WHERE action='safety.evidence_downloaded'")).rows.length,1);
+  await db.query('UPDATE safety_evidence_export_grants SET revoked_at=now() WHERE user_id=$1',[separate]);
+  await assert.rejects(evidence.download(separate,exported.id), {status: 403});
 
 });

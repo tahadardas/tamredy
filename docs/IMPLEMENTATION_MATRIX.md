@@ -42,7 +42,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 36. Safety PIN والتحقق من الزيارة | NOT_STARTED | |
 | 37. الإنهاء الآمن للزيارة | IN_PROGRESS | Migration 033 and safe abort tested with neutral patient payload and open SOS. Staff workflow and physical validation pending. |
 | 38. نظام الحوادث الأمنية | IN_PROGRESS | Migration 030 and restricted staff case actions tested. Shift scoping, dashboard and evidence access pending. |
-| 39. ملف الأدلة الرقمية | NOT_STARTED | |
+| 39. ملف الأدلة الرقمية | IN_PROGRESS | Migration 041 and encrypted export with SHA-256 manifest. PDF, attachments and retention pending. |
 | 40. منع التسجيل السري للصوت والصورة | NOT_STARTED | |
 | 41. قاعدة البيانات | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 42. حماية البيانات وسياسة الاحتفاظ | NOT_STARTED | |

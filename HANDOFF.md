@@ -371,3 +371,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Added GET /v1/admin/safety/review-queue and the Admin Web review page. Supervisors select an active or scheduled visit, record a dated review and nominate verified professionals. The queue omits patient identity, address and private incident details.
 - Workspace build and five local Guardian, route and scheduling tests passed, including a blocked nightly time, no planned shift, daytime and planned coverage scenarios.
 - No server deployment. Phase 8 verification remains pending on real PostgreSQL and staffed conditions. Continue phase 9 evidence access and retention.
+
+### Guardian phase 9 — restricted evidence export foundation
+
+- Migration 041 adds separate export grants, supervisor approvals and encrypted bundles. Supervisor and exporter must be distinct. The approval identifies case, purpose and recipient and expires after 24 hours.
+- Added POST /v1/admin/safety/events/:id/export-approvals, POST /v1/admin/safety/events/:id/export and GET /v1/admin/safety/exports/:id. Download is limited to the designated active exporter with a valid approval. Approval, collection and download are audited. No external delivery.
+- The envelope contains case JSON, GPS CSV and GeoJSON and a SHA-256 manifest. AES-256-GCM protects the stored envelope using GUARDIAN_EVIDENCE_KEY. No live key or grants were provisioned. No legal authentication claim.
+- API build and the four local tests passed. Test covers distinct grant, encrypted storage/decryption round trip, per-file fingerprints, one export per approval and revocation. Geography is substituted in the PGlite harness.
+- Pending: legal holds and retention worker, encrypted backups and key rotation, PDF, attachments, console UI, real PostGIS and access review. No deployment.
