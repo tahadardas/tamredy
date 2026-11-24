@@ -11,7 +11,7 @@ import { estimateV2, ruleFromRow } from '../pricing/pricing.js';
 import { FeesService } from '../pricing/fees.service.js';
 import { AutoDiscountService } from '../pricing/auto-discounts.service.js';
 
-import { saveSchedule, validateAppointment } from '../scheduling/scheduling.js';
+import { saveSchedule, validateAppointment, verifyScheduledSafety } from '../scheduling/scheduling.js';
 
 @Injectable()
 export class RequestsService {
@@ -34,6 +34,7 @@ export class RequestsService {
       const service = await client.query(`SELECT * FROM services WHERE id=$1 AND active=true AND dispatch_approved=true`,[dto.serviceId]);
       if (!service.rowCount) invalid('Service unavailable or not clinically approved');
       const s=service.rows[0];
+      if (appointment) await verifyScheduledSafety(client,dto.serviceId,appointment);
       if (s.requires_prescription && !dto.prescriptionConfirmed) {
         invalid('PRESCRIPTION_CONFIRMATION_REQUIRED: Medical prescription verification is mandatory for this service');
       }

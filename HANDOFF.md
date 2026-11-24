@@ -363,3 +363,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Existing dispatch guard applies the active review, checks companion consent and recent readiness, locks both providers in sorted order, and reserves the companion in the acceptance transaction. Releasing the assignment releases the reservation. No sensitive risk details are sent to patients.
 - Integrated PGlite and route tests passed. Coverage includes hold, unauthorized assessment or confirmation, companion gating and reservation release. Real PostgreSQL races and physical accompaniment are unverified.
 - Supervisor review is currently API-driven. Request-time schedule planning, patient verification/appeal workflow and companion journey confirmation UI remain pending. Feature remains behind GUARDIAN_NIGHT_POLICY_ENABLED. No deployment.
+
+### Guardian phase 8 — supervisor review and scheduled safety preflight
+
+- Migration 040 adds planned safety coverage checks for global/service scheduling rules. API checks both planned release and appointment time before creation. Worker rechecks policy on release and defers visits with an active supervisor hold. Appointment expiry uses the existing unfulfilled path.
+- Planned coverage considers scheduled shifts with eligible staff grants, not real-time presence. Nurse-specific/area rules, consent and attendance still apply at offer creation and acceptance.
+- Added GET /v1/admin/safety/review-queue and the Admin Web review page. Supervisors select an active or scheduled visit, record a dated review and nominate verified professionals. The queue omits patient identity, address and private incident details.
+- Workspace build and five local Guardian, route and scheduling tests passed, including a blocked nightly time, no planned shift, daytime and planned coverage scenarios.
+- No server deployment. Phase 8 verification remains pending on real PostgreSQL and staffed conditions. Continue phase 9 evidence access and retention.

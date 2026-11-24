@@ -7,6 +7,12 @@ import { ConfirmVisitCompanionDto, VisitCompanionDto, VisitRiskDto, VisitRiskSer
 export class VisitRiskController {
   constructor(private readonly service: VisitRiskService) {}
 
+  @Get('admin/safety/review-queue')
+  queue(@Request() req: AuthRequest) {
+    requireAnyRole(req.user!, ['ADMIN','CLINICAL_REVIEWER']);
+    return this.service.queue(req.user!.id);
+  }
+
   @Post('admin/safety/requests/:id/risk')
   assess(@Request() req: AuthRequest, @Param('id',ParseUUIDPipe) id: string, @Body() dto: VisitRiskDto) {
     requireAnyRole(req.user!, ['ADMIN','CLINICAL_REVIEWER']);

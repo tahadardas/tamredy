@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { invalid } from '../common/errors.js';
+import { conflict, invalid } from '../common/errors.js';
 
 export const schedulePolicy = {
   leadMinutes: 15,
@@ -27,4 +27,13 @@ export async function saveSchedule(client: PoolClient, requestId: string, appoin
   await client.query(`INSERT INTO scheduled_visits(request_id,appointment_at,release_at)
     VALUES($1,$2,$2::timestamptz-$3::integer*interval '1 minute')`,
   [requestId, appointment, schedulePolicy.leadMinutes]);
+}
+
+export async function verifyScheduledSafety(client: PoolClient, serviceId: string, appointment: Date) {
+  if (process.env.GUARDIAN_NIGHT_POLICY_ENABLED !== 'true') return;
+  const result = await client.query<{ reason: string | null }>(`SELECT coalesce(
+    guardian_schedule_denial($1,$2::timestamptz),
+    guardian_schedule_denial($1,$2::timestamptz-$3::integer*interval '1 minute')
+  ) AS reason`, [serviceId,appointment,schedulePolicy.leadMinutes]);
+  if (result.rows[0]?.reason) conflict(result.rows[0].reason);
 }

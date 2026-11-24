@@ -53,6 +53,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('037_guardian_handovers'));
   await db.exec(await read('038_guardian_night_policy'));
   await db.exec(await read('039_guardian_visit_risk'));
+  await db.exec(await read('040_guardian_schedule_preflight'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -358,5 +359,19 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal(await eligibility(companion,offering.id), 'VISIT_COMPANION_BUSY');
   await db.query("UPDATE request_assignments SET status='RELEASED' WHERE id=$1",[newAssignment]);
   assert.notEqual(await eligibility(companion,offering.id), 'VISIT_COMPANION_BUSY');
+
+  const later = new Date(Date.now()+11*86400000).toISOString().slice(0,10);
+  const evening = later+'T23:30:00+03:00';
+  const allowsSchedule = async (when) => (await db.query(
+    'SELECT guardian_schedule_denial($1,$2) AS reason',[visitInfo.service_id,when])).rows[0].reason;
+  const scheduledRule = {startsAt: '22:00',endsAt: '06:00'};
+  await policy.publish(supervisor,{...scheduledRule,mode: 'RESTRICT'});
+  assert.equal(await allowsSchedule(evening),'SCHEDULE_NIGHT_RESTRICTED');
+  await policy.publish(supervisor,{...scheduledRule,mode: 'REQUIRE_COVERAGE'});
+  assert.equal(await allowsSchedule(evening),'SCHEDULE_SAFETY_COVERAGE_NOT_PLANNED');
+  assert.equal(await allowsSchedule(later+'T12:00:00+03:00'),null);
+  await shiftService.save(supervisor,{...shiftSpec,startsAt: later+'T22:30:00+03:00',
+    endsAt: new Date(Date.parse(evening)+3600000).toISOString()});
+  assert.equal(await allowsSchedule(evening),null);
 
 });

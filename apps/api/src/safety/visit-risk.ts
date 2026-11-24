@@ -30,6 +30,24 @@ export class VisitRiskService {
     if (!['OFFERING','SCHEDULED'].includes(row.status)) conflict('VISIT_REVIEW_NOT_EDITABLE');
   }
 
+  queue(actor: string) {
+    return this.db.transaction(async client => {
+      if (await this.staff.grant(client,actor) !== 'SAFETY_SUPERVISOR') forbidden();
+      const requests = (await client.query(`SELECT r.id,r.status,s.title_ar,sv.appointment_at,
+        v.decision,v.effective_until FROM care_requests r
+        JOIN services s ON s.id=r.service_id LEFT JOIN scheduled_visits sv ON sv.request_id=r.id
+        LEFT JOIN LATERAL (SELECT decision,effective_until FROM safety_visit_reviews
+          WHERE request_id=r.id ORDER BY created_at DESC,id DESC LIMIT 1) v ON true
+        WHERE r.status IN ('SCHEDULED','OFFERING')
+        ORDER BY sv.appointment_at NULLS FIRST,r.created_at,r.id LIMIT 100`)).rows;
+      const nurses = (await client.query(`SELECT n.id,u.display_name FROM nurses n JOIN users u ON u.id=n.user_id
+        WHERE n.verified AND u.status='ACTIVE' AND EXISTS (
+          SELECT 1 FROM nurse_credentials k WHERE k.nurse_id=n.id AND k.approved AND k.expires_at>now()
+        ) ORDER BY u.display_name,n.id LIMIT 200`)).rows;
+      return { requests,nurses };
+    });
+  }
+
   assess(actor: string, request: string, dto: VisitRiskDto) {
     return this.db.transaction(async client => {
       await this.requireSupervisor(client,actor,request);

@@ -19,6 +19,8 @@ const _codes = <String, String>{
   'TOO_MANY_DOCUMENTS': 'بلغت الحد الأقصى من المستندات',
   'SETTLEMENT_REQUIRED': 'عليك تسوية المستحقات للشركة قبل قبول طلبات جديدة',
   'NURSE_NOT_VERIFIED': 'رخصتك لم تُعتمد بعد',
+  'SCHEDULE_NIGHT_RESTRICTED': 'هذا الموعد غير متاح وفق سياسة السلامة. اختر موعدًا آخر.',
+  'SCHEDULE_SAFETY_COVERAGE_NOT_PLANNED': 'لا توجد تغطية سلامة مجدولة لهذا الموعد. اختر موعدًا آخر.',
   'VISIT_SAFETY_REVIEW_REQUIRED': 'يتطلب الطلب مراجعة السلامة قبل الإسناد.',
   'VISIT_COMPANION_REQUIRED': 'تتطلب الزيارة مرافقًا مهنيًا متاحًا ومؤكدًا.',
   'VISIT_COMPANION_BUSY': 'أنت محجوز حاليًا لمرافقة زيارة.',

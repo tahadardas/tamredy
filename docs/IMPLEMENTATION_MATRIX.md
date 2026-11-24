@@ -37,8 +37,8 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 31. تخزين نقاط GPS | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 32. العمل عند ضعف الإنترنت | IN_PROGRESS | Account-scoped SOS and foreground GPS queue implemented. Mocked replay verified. Physical secure storage and offline emergency directory pending. |
 | 33. التحقق الدوري من السلامة — Safety Check-In | IN_PROGRESS | Migration 029, server policy and worker prompt/reminder/alert tested. Mobile and human workflows pending. |
-| 34. سياسة الممرضات والعمل الليلي | IN_PROGRESS | Migration 038, versioned scoped policies, consent and dispatch checks. Companion/risk API and gating added with migration 039. Scheduled precheck and field rollout pending. |
-| 35. توثيق المريض والحد من إساءة الاستخدام | IN_PROGRESS | Migration 039 adds human-reviewed per-visit safety holds and companion confirmation. Patient verification, appeals and supervisor UI pending. |
+| 34. سياسة الممرضات والعمل الليلي | IN_PROGRESS | Migration 038, versioned scoped policies, consent and dispatch checks. Companion/risk API and gating added with migration 039. Scheduled precheck added in 040. Field rollout pending. |
+| 35. توثيق المريض والحد من إساءة الاستخدام | IN_PROGRESS | Migration 039 adds human-reviewed per-visit safety holds and companion confirmation. Supervisor UI implemented. Patient verification and appeals pending. |
 | 36. Safety PIN والتحقق من الزيارة | NOT_STARTED | |
 | 37. الإنهاء الآمن للزيارة | IN_PROGRESS | Migration 033 and safe abort tested with neutral patient payload and open SOS. Staff workflow and physical validation pending. |
 | 38. نظام الحوادث الأمنية | IN_PROGRESS | Migration 030 and restricted staff case actions tested. Shift scoping, dashboard and evidence access pending. |
