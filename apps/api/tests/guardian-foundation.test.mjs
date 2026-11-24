@@ -14,6 +14,8 @@ import { SafeAbortRepository } from '../dist/safety/safe-abort.repository.js';
 import { SafeAbortService } from '../dist/safety/safe-abort.service.js';
 import { DirectoryRepository } from '../dist/safety/directory.repository.js';
 import { DirectoryService } from '../dist/safety/directory.service.js';
+import { ShiftsRepository } from '../dist/safety/shifts.repository.js';
+import { ShiftsService } from '../dist/safety/shifts.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -40,6 +42,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('032_trusted_contacts'));
   await db.exec(await read('033_safety_abort'));
   await db.exec(await read('034_emergency_directory'));
+  await db.exec(await read('011_regions'));
+  await db.exec(await read('035_safety_shifts'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -128,7 +132,10 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   const patientNotice = (await db.query(`SELECT payload FROM outbox_events WHERE event_type='visit.interrupted'`)).rows[0].payload;
   assert.equal(patientNotice.recipientUserId, requester);
   assert.deepEqual(Object.keys(patientNotice).sort(), ['recipientUserId', 'requestId']);
-  const ops = new StaffCasesService(new StaffCasesRepository(adapter));
+  const grants = new StaffCasesRepository(adapter);
+  const shiftRepository = new ShiftsRepository(adapter);
+  const shiftService = new ShiftsService(shiftRepository, grants);
+  const ops = new StaffCasesService(grants, shiftRepository);
   const plainAdmin = await makeUser('admin', 'ADMIN');
   const operator = await makeUser('operator', 'ADMIN');
   const otherOperator = await makeUser('operator-b', 'ADMIN');
@@ -181,9 +188,34 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await assert.rejects(ops.dashboard(plainAdmin), { status: 403 });
   const summary = await ops.dashboard(operator);
   assert.equal(summary.canResolve, false);
-  assert.equal(summary.coverage, 'NOT_CONFIGURED');
+  assert.equal(summary.coverage, 'UNCOVERED');
   assert.equal(summary.counts.open_sos, 1);
   assert.equal(summary.counts.missed_checkins, 1);
+  const now = Date.now();
+  const shiftSpec = {
+    shiftKind: 'NIGHT', primaryUserId: operator, backupUserId: supervisor,
+    startsAt: new Date(now-3600000).toISOString(), endsAt: new Date(now+3600000).toISOString(),
+  };
+  await assert.rejects(shiftService.save(operator, shiftSpec), { status: 403 });
+  const shift = await shiftService.save(supervisor, shiftSpec);
+  assert.equal((await ops.dashboard(operator)).coverage, 'UNCOVERED');
+  await assert.rejects(shiftService.save(supervisor, shiftSpec), { status: 409 });
+  await assert.rejects(shiftService.presence(otherOperator, shift.id, 'checkin'), { status: 404 });
+  await assert.rejects(shiftService.presence(operator, shift.id, 'heartbeat'), { status: 409 });
+  await shiftService.presence(operator, shift.id, 'checkin');
+  assert.equal((await ops.dashboard(supervisor)).shifts[0].primary_present, true);
+  await db.query("UPDATE safety_staff_shift_presence SET checked_in_at=now()-interval '5 minutes',heartbeat_at=now()-interval '2 minutes' WHERE shift_id=$1", [shift.id]);
+  assert.equal((await ops.dashboard(supervisor)).coverage, 'UNCOVERED');
+  await shiftService.presence(supervisor, shift.id, 'checkin');
+  assert.equal((await ops.dashboard(operator)).shifts[0].backup_present, true);
+  await shiftService.presence(supervisor, shift.id, 'checkout');
+  assert.equal((await ops.dashboard(supervisor)).coverage, 'UNCOVERED');
+  const tomorrow = new Date(now+172800000).toISOString().slice(0,10);
+  const following = new Date(now+259200000).toISOString().slice(0,10);
+  const acrossMidnight = await shiftService.save(supervisor, {
+    ...shiftSpec, startsAt: tomorrow+'T22:00:00+03:00', endsAt: following+'T06:00:00+03:00',
+  });
+  assert.equal(new Date(acrossMidnight.ends_at)-new Date(acrossMidnight.starts_at), 8*3600000);
   const queue = await ops.list(operator);
   assert.deepEqual(queue.map(entry => entry.kind).sort(), ['CHECKIN_MISSED','SAFE_EXIT_REQUESTED','SOS']);
   const entry = queue.find(row => row.kind === 'SOS');

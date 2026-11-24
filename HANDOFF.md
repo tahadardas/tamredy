@@ -323,3 +323,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Added GET /v1/admin/safety/dashboard. Counts are scoped to the staff grant. Existing event endpoints provide the audit trail and enforce server-side grants, ownership and version checks. The UI reuses its action key for an unchanged retry.
 - The dashboard labels shift coverage as not configured. Automatic escalation and handover are not active. Current event list is limited to 100 rows.
 - Workspace build and the four targeted Guardian/route tests passed. No migration, staff provisioning, browser field test or deployment. Continue with shift roster, heartbeat, assignment and timed escalation.
+
+### Guardian phase 7 — shift roster and staff presence
+
+- Migration 035 adds safety_staff_shifts and safety_staff_shift_presence. Supports day/night, general or governorate coverage, primary and backup, UTC storage and Damascus time in Admin Web.
+- GET/POST /v1/admin/safety/shifts, PUT/DELETE by ID and POST checkin/heartbeat/checkout are implemented. Only authorized supervisors can schedule or change a future shift. The server serializes overlapping shift writes and validates grants.
+- Staff must explicitly check in. While the console is visible, it sends a heartbeat every 30 seconds. A heartbeat older than 90 seconds, checkout, revoked grant or inactive account excludes that staff member from coverage. An empty roster reports uncovered.
+- Workspace build and four targeted Guardian/route checks passed, including overnight intervals, overlap, staff scope, no heartbeat before check-in and stale presence.
+- No staff scheduled or deployment performed. Next: case routing to present primary/backup, persisted escalation deadlines, handover and acknowledgement by the replacement.

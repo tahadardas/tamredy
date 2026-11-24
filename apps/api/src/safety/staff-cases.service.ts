@@ -1,13 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { conflict, forbidden, invalid, missing } from '../common/errors.js';
 import type { SafetyCaseActionDto } from './staff-cases.dto.js';
+import { ShiftsRepository } from './shifts.repository.js';
 import { StaffCasesRepository } from './staff-cases.repository.js';
 
 export type StaffAction = 'ACKNOWLEDGED' | 'ESCALATED' | 'RESOLVED';
 
 @Injectable()
 export class StaffCasesService {
-  constructor(private readonly repository: StaffCasesRepository) {}
+  constructor(private readonly repository: StaffCasesRepository, private readonly shifts: ShiftsRepository) {}
 
   dashboard(actor: string) {
     return this.repository.transaction(async client => {
@@ -15,7 +16,10 @@ export class StaffCasesService {
       if (!grant) forbidden();
       const supervisor = grant === 'SAFETY_SUPERVISOR';
       const counts = await this.repository.dashboard(client, actor, supervisor);
-      return { canResolve: supervisor, counts, coverage: 'NOT_CONFIGURED' };
+      const shifts = await this.shifts.coverage(client);
+      const covered = shifts.filter(shift => shift.primary_present || shift.backup_present).length;
+      const coverage = covered === 0 ? 'UNCOVERED' : covered < shifts.length ? 'PARTIAL' : 'COVERED';
+      return { canResolve: supervisor, counts, coverage, shifts };
     });
   }
 

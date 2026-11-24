@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {getJson, msgOf, sendJson} from './session';
+import {SafetyShifts, ShiftCoverage, type ShiftCoverageProps} from './safety_shifts';
 
 type State = 'RECEIVED' | 'ACKNOWLEDGED' | 'ESCALATED' | 'RESOLVED';
 type Command = 'acknowledge' | 'escalate' | 'resolve';
@@ -31,7 +32,8 @@ type CaseDetail = CaseRow & {
 };
 type Overview = {
   canResolve: boolean;
-  coverage: 'NOT_CONFIGURED';
+  coverage: ShiftCoverageProps['coverage'];
+  shifts: ShiftCoverageProps['shifts'];
   counts: {received: number; acknowledged: number; escalated: number; open_sos: number; missed_checkins: number; last_update: string | null};
 };
 type PendingAction = {id: string; version: number; command: Command; note: string; key: string};
@@ -148,12 +150,13 @@ export function SafetyOperations() {
   const current = detail ?? selected;
   return <section aria-label="مركز عمليات السلامة">
     <div className="card">
-      <p><strong>تغطية المناوبات:</strong> لم تُفعّل متابعة المناوبات بعد.</p>
+      <ShiftCoverage coverage={overview.coverage} shifts={overview.shifts} />
       <p>بانتظار الاستلام {counts.received} · مستلمة {counts.acknowledged} · مصعّدة {counts.escalated}</p>
       <p>استغاثات مفتوحة {counts.open_sos} · تنبيهات تحقق فائتة {counts.missed_checkins}</p>
       <p>آخر تغيير في البلاغات {date(counts.last_update)} · آخر تحديث للقائمة {date(updated)}</p>
       <button className="pill" disabled={busy} onClick={() => void load()}>تحديث قائمة البلاغات</button>
     </div>
+    <SafetyShifts onPresence={load} />
     <label>حالة البلاغ <select value={filter} onChange={event => setFilter(event.currentTarget.value as State | 'OPEN')}>
       <option value="OPEN">البلاغات المفتوحة</option>
       {Object.entries(stateLabel).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
