@@ -2,7 +2,7 @@
   "projectName": "tamreedy",
   "branch": "feature/smart-booking-marketplace",
   "baselineCommit": "06768cf1ae45d8cb33b1945cc3f2f966a52b9fbf",
-  "latestCommit": "aeeeb67 fix(security): disable HSTS and CSP upgradeInsecureRequests in HTTP pilot mode to prevent browser fetch SSL aborts",
+  "latestCommit": "054379c fix(safety): grant ADMIN role supreme SAFETY_SUPERVISOR and export access automatically",
   "status": "COMPLETED",
   "testSweepResults": {
     "apiTests": "154/154 PASS",
