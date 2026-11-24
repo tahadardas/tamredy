@@ -68,6 +68,27 @@ export class DispatchService {
         LIMIT 1
       `, [userId, request.requester_user_id]);
       if (blocked.rowCount) conflict('MUTUALLY_BLOCKED');
+
+      const sched = await c.query(
+        `SELECT appointment_at FROM scheduled_visits WHERE request_id = $1`,
+        [requestId],
+      );
+      if (sched.rowCount) {
+        const appointmentAt = new Date(sched.rows[0].appointment_at);
+        const expectedMin = Number(request.pricing?.expectedMinutes) || 30;
+        const conflictRes = await c.query(
+          `SELECT nurse_has_schedule_conflict($1, $2::timestamptz, $3::timestamptz, $4) AS conflict`,
+          [
+            nurseId,
+            new Date(appointmentAt.getTime() - 30 * 60 * 1000).toISOString(),
+            new Date(appointmentAt.getTime() + (expectedMin + 30) * 60 * 1000).toISOString(),
+            requestId,
+          ],
+        );
+        if (conflictRes.rows[0]?.conflict) {
+          conflict('NURSE_SCHEDULE_CONFLICT');
+        }
+      }
       const ready = await c.query(`SELECT 1 FROM nurses n
         JOIN users u ON u.id=n.user_id AND u.status='ACTIVE'
         JOIN care_requests r ON r.id=$2
