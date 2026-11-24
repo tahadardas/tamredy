@@ -169,8 +169,9 @@ class GuardianController extends ChangeNotifier {
     final read = ++_statusRead;
     try {
       final response = await api.getMap('/v1/safety/events/$id');
-      if (read != _statusRead || event?['id'] != id || response['id'] != id)
+      if (read != _statusRead || event?['id'] != id || response['id'] != id) {
         return;
+      }
       event = response;
       statusUnavailable = false;
       await _persistSos(owner);

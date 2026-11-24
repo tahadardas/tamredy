@@ -68,11 +68,13 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
   bool get starting => _starting;
 
   static Future<Stream<SafetyFix>> _platformPositions() async {
-    if (!await Geolocator.isLocationServiceEnabled())
+    if (!await Geolocator.isLocationServiceEnabled()) {
       throw StateError('GPS disabled');
+    }
     var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied)
+    if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
+    }
     if (permission != LocationPermission.whileInUse &&
         permission != LocationPermission.always) {
       throw StateError('Location permission required');
@@ -93,7 +95,7 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
     final next = _operations.then((_) => action());
     _operations = next.then<void>(
       (_) {},
-      onError: (Object _, StackTrace __) {},
+      onError: (Object _, StackTrace stackTrace) {},
     );
     return next;
   }
@@ -169,14 +171,16 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
     DateTime startedAt,
     SafetyFix fix,
   ) async {
-    if (_generation != generation || _session != session || _owner != owner)
+    if (_generation != generation || _session != session || _owner != owner) {
       return;
+    }
     final now = DateTime.now();
     if (fix.capturedAt.isBefore(
           startedAt.subtract(const Duration(minutes: 1)),
         ) ||
-        fix.capturedAt.isAfter(now.add(const Duration(minutes: 1))))
+        fix.capturedAt.isAfter(now.add(const Duration(minutes: 1)))) {
       return;
+    }
     if (_lastFix != null && now.difference(_lastFix!) < _interval) return;
     if (!fix.latitude.isFinite ||
         !fix.longitude.isFinite ||
@@ -184,8 +188,9 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
         fix.latitude.abs() > 90 ||
         fix.longitude.abs() > 180 ||
         fix.accuracy < 0 ||
-        fix.accuracy > 10000)
+        fix.accuracy > 10000) {
       return;
+    }
     _lastFix = now;
     try {
       await _serial(() async {
@@ -241,16 +246,18 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
           {'points': batch},
         );
         final accepted = (result['acceptedSequences'] as List).toSet();
-        if (!batch.every((point) => accepted.contains(point['sequence'])))
+        if (!batch.every((point) => accepted.contains(point['sequence']))) {
           throw StateError('Incomplete acknowledgement');
+        }
         await _serial(() async {
           final data = await _load(owner);
           final pending = data['pending'] as Map<String, dynamic>;
           (pending[session] as List?)?.removeWhere(
             (p) => accepted.contains(p['sequence']),
           );
-          if ((pending[session] as List?)?.isEmpty ?? false)
+          if ((pending[session] as List?)?.isEmpty ?? false) {
             pending.remove(session);
+          }
           await _store.write(owner, jsonEncode(data));
           queued = _count(data);
         });

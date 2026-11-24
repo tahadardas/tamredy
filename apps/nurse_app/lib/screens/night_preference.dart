@@ -28,10 +28,12 @@ class _NightPreferenceState extends State<NightPreference> {
     try {
       final result = optIn == null ? await widget.api.getMap(_path) :
         await widget.api.put(_path, {'optedIn': optIn});
-      if (mounted) setState(() {
-        _enabled = result['enabled'] == true;
-        _optedIn = result['optedIn'] == true;
-      });
+      if (mounted) {
+        setState(() {
+          _enabled = result['enabled'] == true;
+          _optedIn = result['optedIn'] == true;
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _failed = true);
     } finally {
