@@ -61,9 +61,16 @@ class TamreedyApi {
       url = url.substring(0, url.length - 1);
     }
     final uri = Uri.tryParse(url);
-    if (kReleaseMode || kAppEnvironment != AppEnvironment.dev) {
-      if (uri == null || uri.scheme != 'https' || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
-        throw StateError('API_BASE_URL must be a valid HTTPS URL');
+    if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
+      throw StateError('API_BASE_URL must be a valid URL');
+    }
+    if (kAppEnvironment == AppEnvironment.production) {
+      if (uri.scheme != 'https') {
+        throw StateError('Production API_BASE_URL must be a valid HTTPS URL');
+      }
+    } else {
+      if (uri.scheme != 'https' && uri.scheme != 'http') {
+        throw StateError('API_BASE_URL must use http or https scheme');
       }
     }
     return url;
