@@ -4,6 +4,7 @@ import { Server, Socket } from 'socket.io';
 import { Redis } from 'ioredis';
 import jwt from 'jsonwebtoken';
 const { verify } = jwt;
+import { requireActiveDeviceSession } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
 import { ReferenceCacheService } from '../cache/reference-cache.service.js';
 
@@ -37,8 +38,9 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       if(typeof token!=='string'||!process.env.JWT_SECRET||process.env.JWT_SECRET.length<32)throw Error('auth');
       const payload=verify(token,process.env.JWT_SECRET,{algorithms:['HS256'],issuer:process.env.JWT_ISSUER??'tamreedy-api',audience:process.env.JWT_AUDIENCE??'tamreedy-mobile'});
       if(typeof payload==='string'||typeof payload.sub!=='string')throw Error('auth');
-      const result=await this.db.query(`SELECT 1 FROM users WHERE id=$1 AND status='ACTIVE'`,[payload.sub]);
+      const result=await this.db.query(`SELECT 1 FROM users WHERE id=$1 AND status='ACTIVE' AND NOT must_change_password`,[payload.sub]);
       if(!result.rowCount)throw Error('inactive');
+      await requireActiveDeviceSession(this.db, payload.sub, payload.dsi);
       await client.join(`user:${payload.sub}`);
       client.emit('connected',{resyncRequired:true});
     }catch { client.disconnect(true); }

@@ -160,8 +160,8 @@ export class AuthService {
 
       // Check if associated device session was revoked
       if (r.device_session_id) {
-        const ds = (await c.query('SELECT revoked_at FROM device_sessions WHERE id=$1', [r.device_session_id])).rows[0];
-        if (ds?.revoked_at) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+        const ds = (await c.query('SELECT revoked_at, device_id FROM device_sessions WHERE id=$1 AND user_id=$2', [r.device_session_id, r.user_id])).rows[0];
+        if (!ds || ds.revoked_at || (deviceId && deviceId !== ds.device_id)) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
       }
 
       if (r.used_at || r.revoked_at) {
@@ -180,7 +180,7 @@ export class AuthService {
 
       // Sliding session update: extend device session last_seen_at
       let dsi = r.device_session_id;
-      if (deviceId) {
+      if (deviceId && !dsi) {
         dsi = (await this.upsertDeviceSession(c, u.id, deviceId, undefined, undefined, u.role)) ?? dsi;
       } else if (dsi) {
         await c.query('UPDATE device_sessions SET last_seen_at=now() WHERE id=$1', [dsi]).catch(() => {});
@@ -203,7 +203,7 @@ export class AuthService {
     });
   }
 
-  async logout(refreshToken: string, deviceId?: string) {
+  async logout(refreshToken: string) {
     const h = hashToken(refreshToken ?? '');
     await this.db.transaction(async c => {
       const r = (await c.query('SELECT family_id, device_session_id FROM refresh_tokens WHERE token_hash=$1', [h])).rows[0];
@@ -212,9 +212,6 @@ export class AuthService {
         if (r.device_session_id) {
           await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE id=$1', [r.device_session_id]).catch(() => {});
         }
-      }
-      if (deviceId) {
-        await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE device_id=$1', [deviceId]).catch(() => {});
       }
     });
     return { ok: true };

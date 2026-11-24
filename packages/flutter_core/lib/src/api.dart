@@ -33,7 +33,7 @@ final AppEnvironment kAppEnvironment = resolveEnvironment();
 String defaultBaseUrlForEnv(AppEnvironment env) {
   switch (env) {
     case AppEnvironment.production:
-      return 'http://85.215.243.237:18300';
+      return 'https://tamredy.dardus.com.sy';
     case AppEnvironment.staging:
       return 'https://staging-api.tamreedy.com';
     case AppEnvironment.dev:
@@ -59,6 +59,12 @@ class TamreedyApi {
     String url = _customBaseUrl.isNotEmpty ? _customBaseUrl : defaultBaseUrlForEnv(kAppEnvironment);
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
+    }
+    final uri = Uri.tryParse(url);
+    if (kReleaseMode || kAppEnvironment != AppEnvironment.dev) {
+      if (uri == null || uri.scheme != 'https' || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
+        throw StateError('API_BASE_URL must be a valid HTTPS URL');
+      }
     }
     return url;
   }

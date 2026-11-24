@@ -27,15 +27,28 @@ export class AuthGuard implements CanActivate {
     const result = await this.db.query('SELECT id,role,status,must_change_password FROM users WHERE id=$1', [payload.sub]);
     const row = result.rows[0];
     if (!row || row.status !== 'ACTIVE') throw new UnauthorizedException('ACCOUNT_INACTIVE');
-    if (payload.dsi) {
-      const sess = await this.db.query('SELECT revoked_at FROM device_sessions WHERE id=$1', [payload.dsi]).catch(() => ({ rows: [] }));
-      if (sess.rows[0]?.revoked_at) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
-    }
+    await requireActiveDeviceSession(this.db, row.id, payload.dsi);
     // Until the initial password is replaced, only the auth routes (me / change-password) work.
     if (row.must_change_password && !(request.url ?? '').startsWith('/v1/auth/')) throw new ForbiddenException({ code: 'PASSWORD_CHANGE_REQUIRED' });
     request.user = { id: row.id, role: row.role as Role };
     return true;
   }
+}
+export async function requireActiveDeviceSession(
+  db: DbService,
+  userId: string,
+  sessionId: unknown,
+): Promise<void> {
+  // Browser and legacy tokens may be issued without a device binding.
+  if (sessionId === undefined || sessionId === null) return;
+  if (typeof sessionId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)) {
+    throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+  }
+  const result = await db.query(
+    'SELECT 1 FROM device_sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',
+    [sessionId, userId],
+  );
+  if (!result.rows.length) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
 }
 export function requireRole(user: AuthUser, role: Role): void {
   if (user.role !== role) throw new ForbiddenException({code:'ROLE_NOT_ALLOWED'});

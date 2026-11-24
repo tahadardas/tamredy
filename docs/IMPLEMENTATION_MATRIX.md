@@ -6,12 +6,12 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | --- | --- | --- |
 | 1. تعريف المهمة الرئيسية | IN_PROGRESS | |
 | 2. تعليمات غير قابلة للتفاوض | IN_PROGRESS | |
-| 3. استمرارية التنفيذ بين نماذج الذكاء الاصطناعي | IN_PROGRESS | |
+| 3. استمرارية التنفيذ بين نماذج الذكاء الاصطناعي | IMPLEMENTED | Git baseline, matrix and checkpoint recorded. |
 | 4. الهوية البصرية الإلزامية | NOT_STARTED | |
 | 5. فلسفة تجربة الاستخدام — Map-First | NOT_STARTED | |
 | 6. الشاشة الرئيسية للمريض | NOT_STARTED | |
 | 7. القائمة الجانبية للمريض | NOT_STARTED | |
-| 8. تسجيل الدخول وإنشاء الحساب واستعادة كلمة المرور | NOT_STARTED | |
+| 8. تسجيل الدخول وإنشاء الحساب واستعادة كلمة المرور | IN_PROGRESS | Owner-bound device checks covered by device-session.test.mjs. HTTPS enforced in mobile configuration. Public DNS and recovery workflow remain unresolved. |
 | 9. محرك اختيار العناوين — Location Experience | NOT_STARTED | |
 | 10. الأماكن المحفوظة | NOT_STARTED | |
 | 11. رحلة إنشاء الطلب | NOT_STARTED | |
@@ -54,6 +54,6 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 48. الأداء وسرعة التطبيق | NOT_STARTED | |
 | 49. الاختبارات الإلزامية للتصميم | NOT_STARTED | |
 | 50. الاختبارات الإلزامية لنظام Guardian | NOT_STARTED | |
-| 51. مراحل التنفيذ | NOT_STARTED | |
+| 51. مراحل التنفيذ | IN_PROGRESS | Phase 0 recorded. Phase 1 in progress. |
 | 52. شروط اكتمال المشروع | NOT_STARTED | |
 | 53. التقرير النهائي | NOT_STARTED | |

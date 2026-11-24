@@ -42,6 +42,6 @@ export class AuthController {
     return this.auth.refresh(b.refreshToken, b.deviceId);
   }
   @Post('logout') @HttpCode(200) logout(@Body() b: LogoutDto) {
-    return this.auth.logout(b.refreshToken ?? '', b.deviceId);
+    return this.auth.logout(b.refreshToken ?? '');
   }
 }

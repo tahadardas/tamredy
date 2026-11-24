@@ -164,3 +164,14 @@ API, Worker and Admin Web built successfully. Baseline Node command exited 0.
 Scope and evidence are tracked in docs/IMPLEMENTATION_MATRIX.md.
 Next: enforce HTTPS and verify owner-bound session revocation across HTTP and Socket.IO, then audit the recovery workflow.
 Production deployment is deferred. No schema or endpoint changes in phase 0.
+
+### Guardian phase 1 — in progress
+
+- HTTP auth and new Socket.IO connections verify device-session ownership and revocation.
+- Refresh preserves the existing device binding. Logout revokes the family and bound session using the refresh credential.
+- Flutter release URLs require HTTPS. Android allows cleartext only through debug resources. Default URL is https://tamredy.dardus.com.sy.
+- API rebuild passed and both device-session regression tests passed. Android build, signing and physical tests remain pending.
+- Public hostname lookup failed from the workstation. Restore public DNS and trusted TLS before distributing production builds.
+- Existing open Socket.IO connections still need revocation handling. Complete recovery design and delivery verification.
+- Existing refresh/logout contracts and database schema were retained. No endpoints or migrations added. No deployment performed.
+- Continue phase 1 before Aero phase 2. The matrix records all subsequent sections as pending.
