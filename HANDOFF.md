@@ -227,3 +227,10 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - The location step opens an explicit review sheet before dispatch. It summarizes the visit, address, patient, estimate and method of payment. Concurrent taps cannot submit twice from the controller.
 - Patient demo flow and two non-demo tests passed. The non-demo booking test checks the selected ID, confirmed address and one request when submission overlaps.
 - No endpoints or migrations added. Continue phase 4 with tracking, scheduling gate and history verification. Physical test and later Guardian phases remain pending.
+
+### Guardian phase 4 — reconnect tracking and visit history
+
+- Reconnect restores an active request when the app has no request ID. Concurrent tracking reads for the same ID share one fetch. A late route response cannot attach to a different request, and a missing fresh nurse fix clears the route.
+- History now separates network errors from empty results and offers reload. A completed visit opens its existing server invoice without mutating the current booking. Non-completed requests show their real state.
+- Three non-demo tests passed, including reconnect and tracking coalescing. The patient demo suite passed nine tests during the tracking changes.
+- Existing tracking, active request, history and bill APIs reused. No new endpoints or migrations. Scheduling and device verification remain pending before claiming phase 4 complete.

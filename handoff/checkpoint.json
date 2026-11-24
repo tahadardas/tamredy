@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 4,
   "status": "IN_PROGRESS",
-  "nextAction": "Verify phase 4 tracking and history states, scheduling feature gate, and server reconciliation. Then proceed to Guardian backend phase 5.",
+  "nextAction": "Implement and verify scheduling behind a feature flag. Verify history pagination and physical tracking, then proceed to phase 5 Guardian backend.",
   "productionDeploymentAuthorized": false
 }

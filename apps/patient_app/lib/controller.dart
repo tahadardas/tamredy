@@ -72,7 +72,8 @@ class HistoryItem {
   final String title, date;
   final int price;
   final String status; // مكتملة / ملغاة
-  const HistoryItem(this.title, this.date, this.price, this.status);
+  final String? requestId;
+  const HistoryItem(this.title, this.date, this.price, this.status, {this.requestId});
 }
 
 class WalletTx {
@@ -533,6 +534,8 @@ class PatientController extends ChangeNotifier {
     }
   }
 
+  String? historyError;
+
   /// Real visit history from `/v1/requests/mine` (keyset-paged; first page).
   Future<void> loadHistory() async {
     try {
@@ -546,11 +549,13 @@ class PatientController extends ChangeNotifier {
                 ? (num.tryParse('${r['price_amount']}') ?? 0).round()
                 : 0,
             requestStatusAr('${r['status']}'),
+            requestId: r['id'] as String?,
           ),
       ];
+      historyError = null;
       notifyListeners();
     } catch (_) {
-      error = 'تعذر تحميل السجل من الخادم';
+      historyError = 'تعذر تحميل السجل من الخادم';
       notifyListeners();
     }
   }
@@ -757,9 +762,10 @@ class PatientController extends ChangeNotifier {
 
   /// Restores active care request from server on app startup or reconnect.
   Future<void> restoreActiveRequest() async {
-    if (kDemoMode) return;
+    if (kDemoMode || busy || requestId != null) return;
     try {
       final res = await api.getMap('/v1/me/active-request');
+      if (busy || requestId != null) return;
       if (res['hasActive'] == true && res['request'] != null) {
         final req = Map<String, dynamic>.from(res['request'] as Map);
         requestId = req['id']?.toString();
@@ -787,6 +793,9 @@ class PatientController extends ChangeNotifier {
             ),
           );
         }
+        accuracy = 0;
+        route = null;
+        bill = null;
         final lat = num.tryParse('${req['nurse_lat']}');
         final lng = num.tryParse('${req['nurse_lng']}');
         nursePos = (lat != null && lng != null) ? LatLng(lat.toDouble(), lng.toDouble()) : null;
@@ -804,7 +813,7 @@ class PatientController extends ChangeNotifier {
         if (stage != VisitStage.none) {
           _timer?.cancel();
           _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
-          if (stage == VisitStage.enRoute) {
+          if (stage == VisitStage.enRoute && nursePos != null) {
             _loadRoute();
           }
           if (stage == VisitStage.completed) {
@@ -840,7 +849,10 @@ class PatientController extends ChangeNotifier {
 
   Future<void> resync() async {
     if (kDemoMode) return;
-    await Future.wait([_poll(), loadHistory(), loadServices()]);
+    await Future.wait([
+      if (requestId == null) restoreActiveRequest() else _poll(),
+      loadHistory(),
+    ]);
   }
 
   void _startDemoMove() {
@@ -874,18 +886,40 @@ class PatientController extends ChangeNotifier {
   }
 
   Future<void> _loadRoute() async {
+    final id = requestId;
+    if (id == null) return;
+    RouteInfo? next;
     try {
-      route = RouteInfo.fromJson(
-        await api.getMap('/v1/requests/$requestId/route'),
-      );
+      next = RouteInfo.fromJson(await api.getMap('/v1/requests/$id/route'));
     } catch (_) {
-      route = null; // ETA is optional: map still shows both pins
+      // ETA is optional; the map can still show recent positions.
     }
+    if (requestId != id || stage != VisitStage.enRoute || nursePos == null) return;
+    route = next;
+    notifyListeners();
   }
+
+  Future<String?>? _trackingFetch;
+  String? _trackingId;
 
   Future<String?> _poll() async {
     final id = requestId;
     if (id == null) return null;
+    if (_trackingId == id && _trackingFetch != null) return _trackingFetch!;
+    final fetch = _fetchTracking(id);
+    _trackingId = id;
+    _trackingFetch = fetch;
+    try {
+      return await fetch;
+    } finally {
+      if (identical(_trackingFetch, fetch)) {
+        _trackingFetch = null;
+        _trackingId = null;
+      }
+    }
+  }
+
+  Future<String?> _fetchTracking(String id) async {
     try {
       final d = await api.getMap('/v1/requests/$id/tracking');
       if (id != requestId) return null;
@@ -911,10 +945,11 @@ class PatientController extends ChangeNotifier {
       nursePos = (lat != null && lng != null)
           ? LatLng(lat.toDouble(), lng.toDouble())
           : null;
-      if (stage == VisitStage.enRoute && _pollCount++ % 3 == 0) {
+      if (stage == VisitStage.enRoute && nursePos != null && _pollCount++ % 3 == 0) {
         await _loadRoute();
       }
-      if (stage != VisitStage.enRoute) route = null;
+      if (id != requestId) return null;
+      if (stage != VisitStage.enRoute || nursePos == null) route = null;
       _logStage();
       if (stage == VisitStage.completed) {
         await loadBill();

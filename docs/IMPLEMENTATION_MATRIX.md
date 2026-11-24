@@ -18,9 +18,9 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 12. طريقة الدفع | NOT_STARTED | |
 | 13. طلب الخدمة الآن أو لاحقًا | NOT_STARTED | |
 | 14. شاشة البحث عن ممرض | NOT_STARTED | |
-| 15. شاشة تتبع الممرض | NOT_STARTED | |
+| 15. شاشة تتبع الممرض | IN_PROGRESS | Active request recovery and coalesced tracking verified in Flutter. Physical tracking pending. |
 | 16. سياسة الإلغاء المعتمدة | NOT_STARTED | |
-| 17. سجل الزيارات | NOT_STARTED | |
+| 17. سجل الزيارات | IN_PROGRESS | Visit history refresh, error and invoice actions implemented. Pagination and device verification pending. |
 | 18. المحفظة | IN_PROGRESS | Existing server status shown in production, retry tested. Authoritative ledger unavailable. |
 | 19. الملف الشخصي والإعدادات | NOT_STARTED | |
 | 20. تصميم تطبيق الممرض | NOT_STARTED | |
