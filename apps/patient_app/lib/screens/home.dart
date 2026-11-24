@@ -198,7 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               divider: false,
                             ),
                           ),
-                        const EmergencyNoticeBanner(),
+                        EmergencyNoticeBanner(api: c.api),
                       ],
                     ),
                   ),
@@ -424,7 +424,8 @@ class ActiveOrderBanner extends StatelessWidget {
 }
 
 class EmergencyNoticeBanner extends StatelessWidget {
-  const EmergencyNoticeBanner({super.key});
+  final TamreedyApi api;
+  const EmergencyNoticeBanner({super.key, required this.api});
 
   @override
   Widget build(BuildContext context) {
@@ -458,9 +459,16 @@ class EmergencyNoticeBanner extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'منصة تمريضي مخصصة لخدمات الرعاية والتمريض المنزلي المجدولة وغير الطارئة. في الحالات الإسعافية الطارئة، يرجى الاتصال فوراً بمنظومة الإسعاف السريع على الرقم 110.',
+                  'منصة تمريضي مخصصة لخدمات الرعاية والتمريض المنزلي المجدولة وغير الطارئة. في الحالات الإسعافية الطارئة، اتصل بخدمات الطوارئ المحلية فورًا.',
                   style: tamText(size: 11.5, color: const Color(0xFF7F1D1D), height: 1.5),
                 ),
+                if (!kDemoMode)
+                  TextButton(
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => EmergencyDirectoryScreen(api: api),
+                    )),
+                    child: const Text('فتح دليل الطوارئ'),
+                  ),
               ],
             ),
           ),
@@ -731,7 +739,7 @@ class _ServiceScreenState extends State<ServiceScreen> {
                 value: _nonEmergencyConfirmed,
                 onChanged: (val) => setState(() => _nonEmergencyConfirmed = val ?? false),
                 title: Text(
-                  'أقر بأن الحالة مستقرة وليست حالة إسعافية طارئة (للحالات الإسعافية اتصل بـ 110 فوراً)',
+                  'أقر بأن الحالة مستقرة وليست حالة إسعافية طارئة (للحالات الإسعافية اتصل بخدمات الطوارئ المحلية فورًا)',
                   style: tamText(size: 13, weight: FontWeight.w700, color: TamreedyColors.navy, height: 1.4),
                 ),
               ),

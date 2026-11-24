@@ -12,6 +12,8 @@ import { TrustedContactsRepository } from '../dist/trusted-contacts/trusted-cont
 import { TrustedContactsService } from '../dist/trusted-contacts/trusted-contacts.service.js';
 import { SafeAbortRepository } from '../dist/safety/safe-abort.repository.js';
 import { SafeAbortService } from '../dist/safety/safe-abort.service.js';
+import { DirectoryRepository } from '../dist/safety/directory.repository.js';
+import { DirectoryService } from '../dist/safety/directory.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -37,6 +39,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('031_guardian_sos_trigger_time'));
   await db.exec(await read('032_trusted_contacts'));
   await db.exec(await read('033_safety_abort'));
+  await db.exec(await read('034_emergency_directory'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -133,6 +136,21 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.query(`INSERT INTO safety_staff_grants(user_id,permission,granted_by)
     VALUES($1,'SAFETY_OPERATOR',$4),($2,'SAFETY_OPERATOR',$4),($3,'SAFETY_SUPERVISOR',$4)`,
   [operator, otherOperator, supervisor, plainAdmin]);
+  const directory = new DirectoryService(new DirectoryRepository(adapter), new StaffCasesRepository(adapter));
+  const draft = {
+    name: 'جهة اختبارية', category: 'APPROVED_SUPPORT', governorate: 'دمشق',
+    dialNumber: '000000', officialSource: 'مرجع اختباري', publishVerified: false,
+  };
+  await assert.rejects(directory.save(plainAdmin, draft), { status: 403 });
+  const directoryEntry = await directory.save(supervisor, draft);
+  assert.deepEqual(await directory.visible(), []);
+  await directory.save(supervisor, { ...draft, publishVerified: true }, directoryEntry.id);
+  assert.equal((await directory.visible())[0].id, directoryEntry.id);
+  await db.query("UPDATE emergency_directory SET verified_at=now()-interval '91 days',valid_until=now()-interval '1 day' WHERE id=$1", [directoryEntry.id]);
+  assert.deepEqual(await directory.visible(), []);
+  await directory.save(supervisor, { ...draft, publishVerified: true }, directoryEntry.id);
+  await directory.deactivate(supervisor, directoryEntry.id);
+  assert.deepEqual(await directory.visible(), []);
   const contacts = new TrustedContactsService(new TrustedContactsRepository(adapter));
   const nominated = {
     name: 'أحمد', phone: '+963987654321', relationship: 'أخ',

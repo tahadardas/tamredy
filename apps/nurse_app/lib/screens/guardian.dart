@@ -53,6 +53,13 @@ class _GuardianSheet extends StatelessWidget {
                   icon: const Icon(Icons.contact_phone_outlined),
                   label: const Text('جهات الاتصال الموثوقة'),
                 ),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => EmergencyDirectoryScreen(api: nurse.api),
+                  )),
+                  icon: const Icon(Icons.phone_outlined),
+                  label: const Text('دليل الطوارئ'),
+                ),
                 _SosPanel(guardian: safety),
                 const SizedBox(height: 16),
                 if (assignment != null && (onVisit || nurse.stage == NurseStage.assigned))

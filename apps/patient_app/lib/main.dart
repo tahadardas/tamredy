@@ -122,6 +122,14 @@ class PatientShell extends StatelessWidget {
                   icon: const Icon(Icons.contact_phone_outlined),
                   label: const Text('جهات الاتصال الموثوقة'),
                 ),
+              if (!kDemoMode)
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => EmergencyDirectoryScreen(api: c.api),
+                  )),
+                  icon: const Icon(Icons.phone_outlined),
+                  label: const Text('دليل الطوارئ'),
+                ),
               ReferralCard(c: c),
               TamCard(
                 child: Row(

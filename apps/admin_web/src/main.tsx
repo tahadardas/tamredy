@@ -12,6 +12,7 @@ import {Accounts, Credentials, Nurses} from './pages_people';
 import {Applications} from './pages_applications';
 import {AuditLog, SettingsPage} from './pages_settings';
 import {Dashboard, Finance, Live, LiveMap, Metrics, Page, Reports, RequestRow, Requests, Reviews, WalletRec} from './pages';
+import {SafetyDirectory} from './pages_safety_directory';
 import {DispatchMonitor} from './pages_dispatch';
 import {CancellationAppeals} from './pages_appeals';
 
@@ -35,6 +36,7 @@ export const navCategories: NavCategory[] = [
     items: [
       {id: 'dashboard', label: 'لوحة التحكم', icon: 'home', title: 'لوحة التحكم الرئيسية', desc: 'نظرة تشغيلية شاملة ومؤشرات حية'},
       {id: 'dispatch', label: 'مراقبة التوزيع', icon: 'bell', title: 'مراقبة الطلبات والإشعارات — Dispatch Monitor', desc: 'تتبع لحظي لمحرك المطابقة الجغرافية وأسباب الاستبعاد وصحة الإشعارات'},
+      {id: 'safety-directory', label: 'دليل الطوارئ', icon: 'bell', title: 'دليل الطوارئ', desc: 'إدارة الأرقام الموثقة للاتصال في حالات الطوارئ'},
       {id: 'map', label: 'مراقبة ميدانية', icon: 'pin', title: 'المراقبة الميدانية المباشرة', desc: 'عرض توزيع الحالات والزيارات والممرضين'},
       {id: 'requests', label: 'إدارة الطلبات', icon: 'doc', title: 'إدارة ومتابعة الطلبات', desc: 'تصفية وبحث ومراقبة مراحل الإسناد والخدمة'},
       {id: 'appeals', label: 'الاعتراضات', icon: 'doc', title: 'اعتراضات الإلغاء', desc: 'مراجعة الاعتراضات واتخاذ القرارات'},
@@ -321,6 +323,7 @@ function App() {
   const body: Record<string, React.ReactNode> = {
     dashboard: <Dashboard live={live} />,
     dispatch: <DispatchMonitor live={live} />,
+    'safety-directory': <SafetyDirectory />,
     map: <LiveMap live={live} />,
     requests: <Requests live={live} />,
     appeals: <CancellationAppeals live={live} />,

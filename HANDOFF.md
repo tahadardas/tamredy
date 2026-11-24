@@ -308,3 +308,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - The nurse can end a mission from the Guardian sheet without a reason. Patient status and notification are neutral. The SOS and visit safety session stay open for staff action and separate safe checkout.
 - PGlite lifecycle and route checks cover ownership, replay, interruption, preserved SOS and patient payload minimization. No production deployment or physical test.
 - Remaining: verified emergency directory, staffed console and shifts, and field validation.
+
+### Guardian phase 6 — verified emergency directory
+
+- Migration 034 adds emergency_directory. A supervisor can save a draft, publish after manual source verification, or deactivate an entry. Publication records actor and time and expires after 90 days. The initial catalogue is empty.
+- Added GET /v1/safety/directory and supervisor GET/POST /v1/admin/safety/directory plus PUT/DELETE by ID. Admin Web now provides directory management.
+- Patient and nurse screens display active, unexpired entries and can open the number in the system dialer. The offline view is visibly dated and uses a cache of at most seven days, still subject to entry expiry. Removed the unverified hardcoded number from the patient copy.
+- Workspace built, PGlite verified draft exclusion, supervisor restriction, expiry and deactivation, and route audits passed. Actual source verification, live numbers, Android dialer and physical offline checks remain pending.
+- No new phone or SMS permissions, no calls initiated and no deployment. Next phase is staffed operations and shift coverage.

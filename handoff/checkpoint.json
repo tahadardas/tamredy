@@ -3,8 +3,8 @@
   "branch": "codex/guardian-safety",
   "baselineCommit": "827b02370035ed0c3006d481037e799979d4328c",
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
-  "phase": 6,
+  "phase": 7,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement the verified emergency directory and dialer access, then the Guardian staff console and coverage/shift enforcement.",
+  "nextAction": "Build the Guardian operations console, shift coverage and timed escalation. Publish real directory entries only after verification by an authorized supervisor.",
   "productionDeploymentAuthorized": false
 }
