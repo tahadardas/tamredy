@@ -44,6 +44,8 @@ type Overview = {
   shifts: ShiftCoverageProps['shifts'];
   counts: {received: number; acknowledged: number; escalated: number; open_sos: number; missed_checkins: number; last_update: string | null};
 };
+type Handover = {id: string; case_id: string; expires_at: string};
+type Candidate = {user_id: string; shift_id: string; display_name: string | null; governorate_name: string | null};
 type PendingAction = {id: string; version: number; command: Command; note: string; key: string};
 
 function date(value?: string | null) {
@@ -55,6 +57,9 @@ function date(value?: string | null) {
 export function SafetyOperations() {
   const [overview, setOverview] = useState<Overview>();
   const [cases, setCases] = useState<CaseRow[]>([]);
+  const [handovers, setHandovers] = useState<Handover[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [recipient, setRecipient] = useState('');
   const [filter, setFilter] = useState<State | 'OPEN'>('OPEN');
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState<string>();
@@ -73,7 +78,11 @@ export function SafetyOperations() {
     reading.current = true;
     try {
       const next = await getJson('/v1/admin/safety/dashboard') as Overview;
-      const rows = await getJson('/v1/admin/safety/events') as CaseRow[];
+      const [rows, offers] = await Promise.all([
+        getJson('/v1/admin/safety/events') as Promise<CaseRow[]>,
+        getJson('/v1/admin/safety/handovers') as Promise<Handover[]>,
+      ]);
+      setHandovers(offers);
       setOverview(next);
       setCases(rows);
       setUpdated(new Date().toISOString());
@@ -82,6 +91,7 @@ export function SafetyOperations() {
       setError(msgOf(error));
       setOverview(undefined);
       setCases([]);
+      setHandovers([]);
       setDetail(undefined);
       setSelected(undefined);
       detailSequence.current++;
@@ -102,10 +112,22 @@ export function SafetyOperations() {
     };
   }, [load]);
 
+  useEffect(() => {
+    if (selected && !cases.some(row => row.id === selected.id)) {
+      detailSequence.current++;
+      setSelected(undefined);
+      setDetail(undefined);
+      setCandidates([]);
+      setDetailLoading(false);
+    }
+  }, [cases, selected]);
+
   async function open(row: CaseRow, mayRead = overview?.canResolve) {
     const sequence = ++detailSequence.current;
     setSelected(row);
     setDetail(undefined);
+    setCandidates([]);
+    setRecipient('');
     setDetailError('');
     setNote('');
     setDetailLoading(false);
@@ -148,6 +170,15 @@ export function SafetyOperations() {
     }
   }
 
+  async function handoverCommand(work: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setDetailError('');
+    try { await work(); }
+    catch (error) { setDetailError(msgOf(error)); }
+    finally { setBusy(false); }
+  }
+
   if (!overview) return <section className="card">
     {error ? <p role="alert">{error}</p> : <p>جارٍ تحميل لوحة السلامة…</p>}
     <button className="pill" onClick={() => void load()}>إعادة التحميل</button>
@@ -165,6 +196,15 @@ export function SafetyOperations() {
       <button className="pill" disabled={busy} onClick={() => void load()}>تحديث قائمة البلاغات</button>
     </div>
     <SafetyShifts onPresence={load} />
+    {handovers.length > 0 && <section className="card" aria-label="بلاغات بانتظار التسليم">
+      <h2>بلاغات معروضة عليك للتسليم</h2>
+      {handovers.map(offer => <button className="pill" key={offer.id} disabled={busy}
+        onClick={() => void handoverCommand(async () => {
+          await sendJson('POST', `/v1/admin/safety/handovers/${offer.id}/accept`);
+          await load();
+        })}>قبول المسؤولية عن البلاغ <bdi>{offer.case_id.slice(0, 8)}</bdi> · حتى {date(offer.expires_at)}</button>)}
+    </section>}
+    {!current && detailError && <p role="alert">{detailError}</p>}
     <label>حالة البلاغ <select value={filter} onChange={event => setFilter(event.currentTarget.value as State | 'OPEN')}>
       <option value="OPEN">البلاغات المفتوحة</option>
       {Object.entries(stateLabel).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
@@ -196,6 +236,31 @@ export function SafetyOperations() {
       </>}
       {current.state === 'RECEIVED' && (overview.canResolve || !overview.routingEnabled || !!current.assigned_user_id) &&
         <button className="pill" disabled={busy} onClick={() => void act('acknowledge')}>{commandLabel.acknowledge}</button>}
+      {detail && ['ACKNOWLEDGED','ESCALATED'].includes(detail.state) && <>
+        <button className="pill" disabled={busy} onClick={() => void handoverCommand(async () => {
+          const rows = await getJson(`/v1/admin/safety/events/${detail.id}/handover-candidates`) as Candidate[];
+          setCandidates(rows);
+          setRecipient('');
+          if (!rows.length) setDetailError('لا يوجد مناوب بديل حاضر للتسليم.');
+        })}>عرض المناوبين المتاحين للتسليم</button>
+        {candidates.length > 0 && <>
+          <label>المناوب البديل <select value={recipient} onChange={event => setRecipient(event.currentTarget.value)}>
+            <option value="">اختر المناوب</option>
+            {candidates.map(row => <option key={row.shift_id + row.user_id} value={row.shift_id + row.user_id}>
+              {row.display_name ?? row.user_id} · {row.governorate_name ?? 'تغطية عامة'}
+            </option>)}
+          </select></label>
+          <button className="pill" disabled={busy || !recipient} onClick={() => void handoverCommand(async () => {
+            const target = candidates.find(row => row.shift_id + row.user_id === recipient);
+            if (!target) return;
+            await sendJson('POST', `/v1/admin/safety/events/${detail.id}/handover`, {
+              toUserId: target.user_id, toShiftId: target.shift_id, expectedVersion: detail.version,
+            });
+            setCandidates([]);
+            setDetailError('بانتظار قبول المناوب البديل.');
+          })}>طلب تسليم البلاغ</button>
+        </>}
+      </>}
       {detail && (detail.state === 'ACKNOWLEDGED' || (overview.canResolve && detail.state === 'ESCALATED')) && <>
         <label>توثيق الإجراء <textarea maxLength={500} value={note} disabled={busy} onChange={event => setNote(event.currentTarget.value)} /></label>
         {detail.state === 'ACKNOWLEDGED' &&

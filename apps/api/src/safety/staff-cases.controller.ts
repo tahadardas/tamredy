@@ -1,12 +1,13 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthRequest, requireAnyRole } from '../auth/auth.guard.js';
 import { SafetyCaseActionDto } from './staff-cases.dto.js';
+import { HandoverDto, HandoversService } from './handovers.js';
 import { StaffCasesService } from './staff-cases.service.js';
 
 @Controller('v1/admin/safety')
 @UseGuards(AuthGuard)
 export class StaffCasesController {
-  constructor(private readonly service: StaffCasesService) {}
+  constructor(private readonly service: StaffCasesService, private readonly handovers: HandoversService) {}
 
   @Get('dashboard') dashboard(@Request() request: AuthRequest) {
     requireAnyRole(request.user!, ['ADMIN', 'CLINICAL_REVIEWER']);
@@ -40,4 +41,27 @@ export class StaffCasesController {
     requireAnyRole(request.user!, ['ADMIN', 'CLINICAL_REVIEWER']);
     return this.service.act(request.user!.id, id, 'RESOLVED', dto);
   }
+  @Get('events/:id/handover-candidates')
+  candidates(@Request() req: AuthRequest, @Param('id', ParseUUIDPipe) id: string) {
+    requireAnyRole(req.user!, ['ADMIN','CLINICAL_REVIEWER']);
+    return this.handovers.candidates(req.user!.id,id);
+  }
+
+  @Get('handovers') inbox(@Request() req: AuthRequest) {
+    requireAnyRole(req.user!, ['ADMIN','CLINICAL_REVIEWER']);
+    return this.handovers.inbox(req.user!.id);
+  }
+
+  @Post('events/:id/handover')
+  handover(@Request() req: AuthRequest, @Param('id', ParseUUIDPipe) id: string, @Body() dto: HandoverDto) {
+    requireAnyRole(req.user!, ['ADMIN','CLINICAL_REVIEWER']);
+    return this.handovers.request(req.user!.id,id,dto);
+  }
+
+  @Post('handovers/:id/accept')
+  accept(@Request() req: AuthRequest, @Param('id', ParseUUIDPipe) id: string) {
+    requireAnyRole(req.user!, ['ADMIN','CLINICAL_REVIEWER']);
+    return this.handovers.accept(req.user!.id,id);
+  }
+
 }

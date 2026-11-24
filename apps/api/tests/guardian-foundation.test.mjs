@@ -17,6 +17,7 @@ import { DirectoryRepository } from '../dist/safety/directory.repository.js';
 import { DirectoryService } from '../dist/safety/directory.service.js';
 import { ShiftsRepository } from '../dist/safety/shifts.repository.js';
 import { ShiftsService } from '../dist/safety/shifts.service.js';
+import { HandoversService } from '../dist/safety/handovers.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -46,6 +47,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('011_regions'));
   await db.exec(await read('035_safety_shifts'));
   await db.exec(await read('036_guardian_case_routing'));
+  await db.exec(await read('037_guardian_handovers'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -269,5 +271,28 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.deepEqual(await routeStatus(), {assigned_user_id: null, routing_stage: 'UNCOVERED', state: 'RECEIVED'});
   assert.equal((await svc.event(nurse, another.id)).state, 'RECEIVED');
   assert.equal((await db.query('SELECT id FROM safety_case_routes WHERE case_id=$1', [routed.id])).rows.length, 3);
+
+  const handovers = new HandoversService(adapter, grants);
+  const pendingVersion = (await db.query('SELECT version FROM safety_cases WHERE id=$1', [routed.id])).rows[0].version;
+  const claimed = await ops.act(operator, routed.id, 'ACKNOWLEDGED', {
+    clientActionId: randomUUID(), expectedVersion: pendingVersion,
+  });
+  const options = await handovers.candidates(operator, routed.id);
+  assert.deepEqual(options.map(slot => slot.user_id), [supervisor]);
+  const transfer = {toUserId: supervisor, toShiftId: shift.id, expectedVersion: claimed.version};
+  const offer = await handovers.request(operator, routed.id, transfer);
+  assert.deepEqual(await handovers.request(operator, routed.id, transfer), offer);
+  assert.equal((await routeStatus()).assigned_user_id, operator);
+  assert.equal((await handovers.inbox(supervisor))[0].id, offer.id);
+  assert.deepEqual(await handovers.inbox(otherOperator), []);
+  await assert.rejects(handovers.accept(otherOperator, offer.id), {status: 404});
+  await shiftService.presence(supervisor, shift.id, 'checkout');
+  await assert.rejects(handovers.accept(supervisor, offer.id), {status: 409});
+  await shiftService.presence(supervisor, shift.id, 'checkin');
+  assert.deepEqual(await handovers.accept(supervisor, offer.id), {caseId: routed.id});
+  assert.deepEqual(await handovers.accept(supervisor, offer.id), {caseId: routed.id});
+  assert.equal((await routeStatus()).assigned_user_id, supervisor);
+  assert.equal((await svc.event(nurse, another.id)).state, 'ACKNOWLEDGED');
+  await assert.rejects(ops.detail(operator, routed.id), {status: 404});
 
 });

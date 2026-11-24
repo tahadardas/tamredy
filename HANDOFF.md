@@ -339,3 +339,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Automatic routing changes the operational queue, not the nurse-facing human acknowledgement state. The dashboard shows routing stage and history. The Worker publishes a private route event; the console currently reconciles on visible-tab polling. No SMS, phone or staffed alert delivery is verified.
 - Integrated PGlite test covers primary, timeout to backup, uncovered state and retained server-only receipt. Workspace build and three route checks passed. No new routes or deployment.
 - Next: explicit handover for already acknowledged cases, plus verified independent escalation channels and real PostgreSQL worker concurrency.
+
+### Guardian phase 7 — explicit shift handover
+
+- Migration 037 stores handover requests, originating and destination staff, shift, expiry and acceptance times. Four API routes support eligible candidates, recipient inbox, request and accept.
+- Supervisor or current assignee can offer an acknowledged or escalated case to present staff covering the relevant area. The current assignee retains responsibility until the recipient accepts within 10 minutes. Acceptance validates the case version and current presence, is idempotent and preserves the nurse-facing case state.
+- Added offer and acceptance controls to the safety console. The exchange is audited, and the recipient inbox uses the existing console polling cadence.
+- Workspace build and four local Guardian/route checks passed. Tests cover owner retention, duplicate request and acceptance, denial for wrong recipient, stale presence, and revoked old-assignee detail access.
+- No operational handover or deployment performed. Next: verify staffed alert delivery and start phase 8 night policy / dispatch integration.
