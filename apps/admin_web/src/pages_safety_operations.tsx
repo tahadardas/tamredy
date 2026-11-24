@@ -21,17 +21,25 @@ const commandLabel: Record<Command, string> = {
   escalate: 'التصعيد إلى المشرف',
   resolve: 'إغلاق البلاغ',
 };
-type CaseRow = {id: string; state: State; version: number; kind: string; opened_at: string; assigned_user_id?: string};
+const routingLabel: Record<string, string> = {
+  PRIMARY: 'أُحيل إلى المناوب الأساسي',
+  BACKUP: 'أُحيل إلى المناوب الاحتياطي',
+  SUPERVISOR: 'أُحيل إلى المشرف المناوب',
+  UNCOVERED: 'لا توجد جهة مناوبة متاحة',
+};
+type CaseRow = {id: string; routing_stage?: string; next_route_at?: string; state: State; version: number; kind: string; opened_at: string; assigned_user_id?: string};
 type CaseDetail = CaseRow & {
   reporter_name: string | null;
   assignment_id: string | null;
   silent: boolean | null;
   triggered_at?: string | null;
   received_at?: string | null;
+  routes: {route_stage: string; routed_at: string; acknowledge_by: string}[];
   actions: {actor_user_id: string; action: State; note: string | null; resulting_version: number; created_at: string}[];
 };
 type Overview = {
   canResolve: boolean;
+  routingEnabled: boolean;
   coverage: ShiftCoverageProps['coverage'];
   shifts: ShiftCoverageProps['shifts'];
   counts: {received: number; acknowledged: number; escalated: number; open_sos: number; missed_checkins: number; last_update: string | null};
@@ -169,6 +177,8 @@ export function SafetyOperations() {
     {current && <div className="card" aria-label="تفاصيل البلاغ">
       <h2>{kindLabel[current.kind] ?? current.kind}</h2>
       <p>{stateLabel[current.state]}</p>
+      {current.state === 'RECEIVED' && current.routing_stage && routingLabel[current.routing_stage] &&
+        <p>{routingLabel[current.routing_stage]}{current.assigned_user_id && current.next_route_at ? ` · مهلة الاستلام ${date(current.next_route_at)}` : ''}</p>}
       {detailLoading && <p>جارٍ تحميل تفاصيل البلاغ…</p>}
       {detailError && <p role="alert">{detailError}</p>}
       {detail && <>
@@ -177,11 +187,14 @@ export function SafetyOperations() {
         {detail.assignment_id && <p>الإسناد <bdi>{detail.assignment_id}</bdi></p>}
         {detail.triggered_at && <p>وقت طلب الاستغاثة {date(detail.triggered_at)}</p>}
         {detail.received_at && <p>وقت تسجيلها على الخادم {date(detail.received_at)}</p>}
+        {detail.routes.length > 0 && <ul>{detail.routes.map((route,index) => <li key={index}>
+          {routingLabel[route.route_stage]} · {date(route.routed_at)}
+        </li>)}</ul>}
         {detail.actions.length > 0 && <ul>{detail.actions.map(item => <li key={item.resulting_version}>
           {stateLabel[item.action]} · {date(item.created_at)} {item.note && <p>{item.note}</p>}
         </li>)}</ul>}
       </>}
-      {current.state === 'RECEIVED' &&
+      {current.state === 'RECEIVED' && (overview.canResolve || !overview.routingEnabled || !!current.assigned_user_id) &&
         <button className="pill" disabled={busy} onClick={() => void act('acknowledge')}>{commandLabel.acknowledge}</button>}
       {detail && (detail.state === 'ACKNOWLEDGED' || (overview.canResolve && detail.state === 'ESCALATED')) && <>
         <label>توثيق الإجراء <textarea maxLength={500} value={note} disabled={busy} onChange={event => setNote(event.currentTarget.value)} /></label>

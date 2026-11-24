@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 7,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement durable case assignment to present primary/backup, deadline escalation, and explicit handover. Then verify staffed shift coverage and emergency workflow drills.",
+  "nextAction": "Implement explicit acknowledged-case handover with recipient acceptance, then verify staffed independent alert delivery and PostgreSQL concurrency.",
   "productionDeploymentAuthorized": false
 }

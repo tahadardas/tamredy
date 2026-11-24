@@ -73,6 +73,14 @@ export class ShiftsRepository {
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, values)).rows[0];
   }
 
+  async isPresent(client: PoolClient, actor: string, shift: string) {
+    return Boolean((await client.query(`SELECT 1 FROM safety_staff_shift_presence p
+      JOIN safety_staff_shifts s ON s.id=p.shift_id
+      WHERE p.shift_id=$1 AND p.user_id=$2 AND p.checked_out_at IS NULL
+        AND p.heartbeat_at>clock_timestamp()-interval '90 seconds' AND s.cancelled_at IS NULL
+        AND s.starts_at<=clock_timestamp() AND s.ends_at>clock_timestamp()`, [shift,actor])).rowCount);
+  }
+
   async lockCurrent(client: PoolClient, actor: string, shift: string) {
     return (await client.query(`SELECT id FROM safety_staff_shifts WHERE id=$1
       AND $2 IN (primary_user_id,backup_user_id) AND cancelled_at IS NULL

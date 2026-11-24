@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import { routeSafetyCase } from '../../worker/src/safety-routing.ts';
 import { runSafetyCheckin } from '../../worker/src/safety-checkins.ts';
 import { CheckinsRepository } from '../dist/safety/checkins.repository.js';
 import { CheckinsService } from '../dist/safety/checkins.service.js';
@@ -44,6 +45,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('034_emergency_directory'));
   await db.exec(await read('011_regions'));
   await db.exec(await read('035_safety_shifts'));
+  await db.exec(await read('036_guardian_case_routing'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -247,4 +249,25 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal((await ops.detail(supervisor, entry.id)).actions.length, 3);
   assert.equal((await db.query("SELECT id FROM audit_log WHERE action='safety.case_resolved'")).rows.length, 1);
   assert.equal((await db.query("SELECT id FROM outbox_events WHERE event_type='safety.sos_received'")).rows.length, 1);
+  // Verify time-based routing separately from human acknowledgement.
+  await db.query("UPDATE safety_cases SET next_route_at=now()+interval '1 hour'");
+  const another = await svc.sos(nurse, { clientEventId: randomUUID(), silent: true });
+  const routed = (await db.query('SELECT id FROM safety_cases WHERE emergency_event_id=$1', [another.id])).rows[0];
+  await shiftService.presence(operator, shift.id, 'checkin');
+  await shiftService.presence(supervisor, shift.id, 'checkin');
+  assert.equal(await routeSafetyCase(pool), true);
+  const routeStatus = async () => (await db.query(
+    'SELECT assigned_user_id,routing_stage,state FROM safety_cases WHERE id=$1', [routed.id])).rows[0];
+  assert.deepEqual(await routeStatus(), {assigned_user_id: operator, routing_stage: 'PRIMARY', state: 'RECEIVED'});
+  assert.equal(await routeSafetyCase(pool), false);
+  const expire = () => db.query("UPDATE safety_cases SET next_route_at=now()-interval '1 second' WHERE id=$1", [routed.id]);
+  await expire();
+  assert.equal(await routeSafetyCase(pool), true);
+  assert.deepEqual(await routeStatus(), {assigned_user_id: supervisor, routing_stage: 'BACKUP', state: 'RECEIVED'});
+  await expire();
+  assert.equal(await routeSafetyCase(pool), true);
+  assert.deepEqual(await routeStatus(), {assigned_user_id: null, routing_stage: 'UNCOVERED', state: 'RECEIVED'});
+  assert.equal((await svc.event(nurse, another.id)).state, 'RECEIVED');
+  assert.equal((await db.query('SELECT id FROM safety_case_routes WHERE case_id=$1', [routed.id])).rows.length, 3);
+
 });

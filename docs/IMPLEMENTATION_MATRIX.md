@@ -48,7 +48,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 42. حماية البيانات وسياسة الاحتفاظ | NOT_STARTED | |
 | 43. الصلاحيات | IN_PROGRESS | Migration 030 and restricted staff case actions tested. Shift scoping, dashboard and evidence access pending. |
 | 44. واجهات API | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
-| 45. الإشعارات والتصعيد | NOT_STARTED | |
+| 45. الإشعارات والتصعيد | IN_PROGRESS | Migration 036 enables durable timed routing behind a flag. Physical alert delivery and staffed handover pending. |
 | 46. مشاركة الزيارة مع شخص موثوق | NOT_STARTED | |
 | 47. Google Play Compliance | NOT_STARTED | |
 | 48. الأداء وسرعة التطبيق | NOT_STARTED | |

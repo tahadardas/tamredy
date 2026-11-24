@@ -23,15 +23,15 @@ export class StaffCasesRepository {
       count(*) FILTER (WHERE c.state<>'RESOLVED' AND c.emergency_event_id IS NOT NULL)::int AS open_sos,
       count(*) FILTER (WHERE c.state<>'RESOLVED' AND a.kind='CHECKIN_MISSED')::int AS missed_checkins,
       max(c.updated_at) AS last_update FROM safety_cases c LEFT JOIN safety_alerts a ON a.id=c.alert_id
-      WHERE $2 OR c.assigned_user_id=$1 OR c.state='RECEIVED'`, [actor,supervisor])).rows[0];
+      WHERE $2 OR c.assigned_user_id=$1 OR (c.state='RECEIVED' AND c.assigned_user_id IS NULL)`, [actor,supervisor])).rows[0];
   }
 
   async list(client: PoolClient, actor: string, supervisor: boolean) {
-    return (await client.query(`SELECT c.id,c.state,c.version,c.opened_at,c.updated_at,
+    return (await client.query(`SELECT c.id,c.state,c.version,c.opened_at,c.updated_at,c.routing_stage,c.next_route_at,
       coalesce(a.kind,'SOS') AS kind,
       CASE WHEN $2 OR c.assigned_user_id=$1 THEN c.assigned_user_id END AS assigned_user_id
       FROM safety_cases c LEFT JOIN safety_alerts a ON a.id=c.alert_id
-      WHERE $2 OR c.assigned_user_id=$1 OR c.state='RECEIVED'
+      WHERE $2 OR c.assigned_user_id=$1 OR (c.state='RECEIVED' AND c.assigned_user_id IS NULL)
       ORDER BY CASE c.state WHEN 'ESCALATED' THEN 0 WHEN 'RECEIVED' THEN 1
         WHEN 'ACKNOWLEDGED' THEN 2 ELSE 3 END,c.opened_at,c.id LIMIT 100`, [actor, supervisor])).rows;
   }
@@ -54,7 +54,9 @@ export class StaffCasesRepository {
       WHERE c.id=$1`, [id])).rows[0];
     const actions = (await client.query(`SELECT actor_user_id,action,note,resulting_version,created_at
       FROM safety_case_actions WHERE case_id=$1 ORDER BY resulting_version`, [id])).rows;
-    return { ...information, actions };
+    const routes = (await client.query(`SELECT route_stage,routed_at,acknowledge_by
+      FROM safety_case_routes WHERE case_id=$1 ORDER BY id`, [id])).rows;
+    return { ...information, actions, routes };
   }
 
   async replay(client: PoolClient, id: string, actor: string, key: string) {
@@ -64,7 +66,8 @@ export class StaffCasesRepository {
 
   async update(client: PoolClient, id: string, actor: string, action: string, dto: SafetyCaseActionDto) {
     const changed = (await client.query(`UPDATE safety_cases SET state=$2,version=version+1,updated_at=now(),
-      assigned_user_id=coalesce(assigned_user_id,$3) WHERE id=$1 RETURNING *`, [id, action, actor])).rows[0];
+      assigned_shift_id=CASE WHEN $2='ACKNOWLEDGED' AND assigned_user_id IS DISTINCT FROM $3 THEN NULL ELSE assigned_shift_id END,
+      assigned_user_id=CASE WHEN $2='ACKNOWLEDGED' THEN $3 ELSE assigned_user_id END WHERE id=$1 RETURNING *`, [id, action, actor])).rows[0];
     await client.query(`INSERT INTO safety_case_actions(case_id,actor_user_id,client_action_id,action,note,resulting_version)
       VALUES($1,$2,$3,$4,$5,$6)`, [id, actor, dto.clientActionId, action, dto.note || null, changed.version]);
     if (changed.emergency_event_id) {

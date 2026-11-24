@@ -5,6 +5,7 @@ import 'dotenv/config';
 import { FcmClient, loadServiceAccount, pushDeliverBatch, retryPendingPushes } from './push.js';
 import { notifyDelayedDepartures } from './departure-reminders.js';
 import { deliverOutbox } from './outbox.js';
+import { routeSafetyCase } from './safety-routing.js';
 import { runSafetyCheckin } from './safety-checkins.js';
 import { releaseScheduledVisit } from './scheduling.js';
 import { doDispatch } from './dispatch.js';
@@ -94,6 +95,7 @@ async function runWorker(): Promise<void> {
   await Promise.all([
     ...(process.env.SCHEDULED_VISITS_ENABLED === 'true' ? [poll('Scheduled Visits', () => releaseScheduledVisit(pool))] : []),
     ...(process.env.GUARDIAN_CHECKINS_ENABLED === 'true' ? [poll('Safety Check-ins', () => runSafetyCheckin(pool))] : []),
+    ...(process.env.GUARDIAN_ROUTING_ENABLED === 'true' ? [poll('Safety Case Routing', () => routeSafetyCase(pool))] : []),
     poll('Dispatch', () => doDispatch(pool)),
     poll('Realtime', flushRealtimeOutbox),
     poll('Push', flushPushOutbox),

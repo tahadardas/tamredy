@@ -331,3 +331,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Staff must explicitly check in. While the console is visible, it sends a heartbeat every 30 seconds. A heartbeat older than 90 seconds, checkout, revoked grant or inactive account excludes that staff member from coverage. An empty roster reports uncovered.
 - Workspace build and four targeted Guardian/route checks passed, including overnight intervals, overlap, staff scope, no heartbeat before check-in and stale presence.
 - No staff scheduled or deployment performed. Next: case routing to present primary/backup, persisted escalation deadlines, handover and acknowledgement by the replacement.
+
+### Guardian phase 7 — durable routing of unacknowledged cases
+
+- Migration 036 adds routing stage, assigned shift, acknowledgement deadline and persisted route history. Worker locks one received case and selects a present primary, then backup, then available supervisor. Uncovered cases stay in the queue and retry.
+- GUARDIAN_ROUTING_ENABLED defaults off on API and Worker. GUARDIAN_ACK_SECONDS defaults to 30 and accepts 15 to 300. When enabled, operators can acknowledge only a case routed to their present shift. Supervisors retain manual intervention.
+- Automatic routing changes the operational queue, not the nurse-facing human acknowledgement state. The dashboard shows routing stage and history. The Worker publishes a private route event; the console currently reconciles on visible-tab polling. No SMS, phone or staffed alert delivery is verified.
+- Integrated PGlite test covers primary, timeout to backup, uncovered state and retained server-only receipt. Workspace build and three route checks passed. No new routes or deployment.
+- Next: explicit handover for already acknowledged cases, plus verified independent escalation channels and real PostgreSQL worker concurrency.

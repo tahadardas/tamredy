@@ -19,7 +19,8 @@ export class StaffCasesService {
       const shifts = await this.shifts.coverage(client);
       const covered = shifts.filter(shift => shift.primary_present || shift.backup_present).length;
       const coverage = covered === 0 ? 'UNCOVERED' : covered < shifts.length ? 'PARTIAL' : 'COVERED';
-      return { canResolve: supervisor, counts, coverage, shifts };
+      return { canResolve: supervisor, routingEnabled: process.env.GUARDIAN_ROUTING_ENABLED === 'true',
+        counts, coverage, shifts };
     });
   }
 
@@ -41,7 +42,8 @@ export class StaffCasesService {
       if (!current || (grant !== 'SAFETY_SUPERVISOR' && current.assigned_user_id !== actor)) missing();
       const details = await this.repository.detail(client, id);
       await this.repository.audit(client, actor, 'safety.case_viewed', id);
-      return { id, state: current.state, version: current.version, ...details };
+      return { id, state: current.state, version: current.version, assigned_user_id: current.assigned_user_id,
+        routing_stage: current.routing_stage, next_route_at: current.next_route_at, ...details };
     });
   }
 
@@ -57,6 +59,11 @@ export class StaffCasesService {
         if (replay.action !== action || replay.note !== (dto.note || null) ||
             replay.resulting_version !== dto.expectedVersion + 1) conflict('SAFETY_ACTION_ID_CONFLICT');
         return { id, state: replay.action, version: replay.resulting_version };
+      }
+      if (action === 'ACKNOWLEDGED' && !supervisor && process.env.GUARDIAN_ROUTING_ENABLED === 'true' &&
+          (!current.assigned_shift_id || current.assigned_user_id !== actor ||
+            !await this.shifts.isPresent(client,actor,current.assigned_shift_id))) {
+        conflict('SAFETY_CASE_ON_DUTY_ASSIGNMENT_REQUIRED');
       }
       if (current.version !== dto.expectedVersion) conflict('SAFETY_CASE_VERSION_CHANGED');
       if (action === 'ACKNOWLEDGED' ? current.state !== 'RECEIVED'
