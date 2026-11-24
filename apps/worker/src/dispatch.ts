@@ -33,7 +33,8 @@ async function diagnoseExclusions(c: pg.PoolClient, requestId: string, serviceId
         WHEN n.last_heartbeat_at IS NULL OR n.last_heartbeat_at <= now() - interval '120 seconds' THEN 'STALE_HEARTBEAT'
         WHEN nl.location IS NULL THEN 'NO_LOCATION'
         WHEN NOT EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > now()) THEN 'LICENSE_NOT_APPROVED'
-        WHEN NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true) THEN 'SKILL_NOT_APPROVED'
+        WHEN NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true)
+             OR EXISTS (SELECT 1 FROM care_request_items cri WHERE cri.request_id = $1 AND NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = cri.service_id AND ns.approved = true)) THEN 'SKILL_NOT_APPROVED'
         WHEN EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id = n.id AND a.status = 'ACTIVE') THEN 'ACTIVE_ASSIGNMENT'
         WHEN EXISTS (SELECT 1 FROM request_offers ro WHERE ro.request_id = $1 AND ro.nurse_id = n.id) THEN 'OFFER_ALREADY_SENT'
         WHEN NOT ST_DWithin(nl.location, req.location, $3::double precision) THEN 'OUTSIDE_RADIUS'
@@ -138,6 +139,14 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
         JOIN nurse_skills ns ON ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true
         JOIN care_requests req ON req.id = $1
         WHERE n.verified = true AND n.work_status = 'AVAILABLE' AND n.availability_intent = 'AVAILABLE'
+          AND NOT EXISTS (
+            SELECT 1 FROM care_request_items cri
+            WHERE cri.request_id = req.id
+              AND NOT EXISTS (
+                SELECT 1 FROM nurse_skills sk
+                WHERE sk.nurse_id = n.id AND sk.service_id = cri.service_id AND sk.approved = true
+              )
+          )
           AND n.last_heartbeat_at > now() - interval '120 seconds'
           AND nl.location IS NOT NULL
           AND EXISTS (SELECT 1 FROM nurse_credentials nc

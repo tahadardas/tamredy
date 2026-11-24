@@ -1,13 +1,23 @@
-import { IsBoolean, IsISO8601, Matches, IsIn, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsISO8601, Matches, IsIn, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
 export class LocationDto {
   @IsLatitude() latitude!: number;
   @IsLongitude() longitude!: number;
   @IsNumber() @Min(0) @Max(1000) accuracyMeters!: number;
 }
+
+export class RequestItemInputDto {
+  @IsUUID() serviceId!: string;
+  @IsOptional() @IsNumber() @Min(1) @Max(10) quantity?: number;
+}
+
 export class CreateRequestDto extends LocationDto {
   @IsOptional() @IsISO8601({ strict: true }) @Matches(/(?:Z|[+-]\d{2}:\d{2})$/i) scheduledAt?: string;
   @IsUUID() beneficiaryId!: string;
-  @IsUUID() serviceId!: string;
+  @IsOptional() @IsUUID() serviceId?: string;
+  @IsOptional() @IsArray() serviceIds?: string[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => RequestItemInputDto) items?: RequestItemInputDto[];
   @IsIn(['GPS_CONFIRMED','MANUAL_PIN']) locationSource!: string;
   @IsString() @MaxLength(400) addressText!: string;
   @IsBoolean() nonEmergencyConfirmed!: boolean;

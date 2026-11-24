@@ -44,6 +44,14 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
       JOIN nurse_skills k ON k.nurse_id=n.id AND k.service_id=r.service_id AND k.approved
       LEFT JOIN pricing_settings ps ON ps.id=1
       WHERE r.id=$1 AND r.status='OFFERING' AND r.search_expires_at > statement_timestamp()
+        AND NOT EXISTS (
+          SELECT 1 FROM care_request_items cri
+          WHERE cri.request_id = r.id
+            AND NOT EXISTS (
+              SELECT 1 FROM nurse_skills ns
+              WHERE ns.nurse_id = n.id AND ns.service_id = cri.service_id AND ns.approved
+            )
+        )
         ${nightPolicyEnabled() ? 'AND guardian_dispatch_denial(n.id,r.id,statement_timestamp()) IS NULL' : ''}
         AND n.last_heartbeat_at > statement_timestamp()-r.search_max_heartbeat_seconds*interval '1 second'
         AND l.recorded_at > statement_timestamp()-r.search_max_location_seconds*interval '1 second'

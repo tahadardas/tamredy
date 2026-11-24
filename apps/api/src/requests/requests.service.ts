@@ -31,26 +31,111 @@ export class RequestsService {
       if (orders && orders.accepting === false) throw new ServiceUnavailableException({ code: 'ORDERS_PAUSED', message: orders.pausedMessage ?? '' });
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
       if (!beneficiary.rowCount) forbidden();
-      const service = await client.query(`SELECT * FROM services WHERE id=$1 AND active=true AND dispatch_approved=true`,[dto.serviceId]);
-      if (!service.rowCount) invalid('Service unavailable or not clinically approved');
-      const s=service.rows[0];
-      if (appointment) await verifyScheduledSafety(client,dto.serviceId,appointment);
-      if (s.requires_prescription && !dto.prescriptionConfirmed) {
+
+      // Resolve all requested services (multi-service items or single service)
+      const rawItems: { serviceId: string; quantity: number }[] = [];
+      if (Array.isArray(dto.items) && dto.items.length > 0) {
+        for (const it of dto.items) {
+          if (it.serviceId) rawItems.push({ serviceId: it.serviceId, quantity: Math.max(1, Number(it.quantity) || 1) });
+        }
+      } else if (Array.isArray(dto.serviceIds) && dto.serviceIds.length > 0) {
+        for (const sid of dto.serviceIds) {
+          if (sid) rawItems.push({ serviceId: sid, quantity: 1 });
+        }
+      } else if (dto.serviceId) {
+        rawItems.push({ serviceId: dto.serviceId, quantity: 1 });
+      }
+
+      if (rawItems.length === 0) invalid('At least one service must be selected');
+
+      const serviceIds = [...new Set(rawItems.map(i => i.serviceId))];
+      const servicesRes = await client.query(
+        `SELECT * FROM services WHERE id = ANY($1::uuid[]) AND active=true AND dispatch_approved=true`,
+        [serviceIds]
+      );
+      if (servicesRes.rowCount !== serviceIds.length) {
+        invalid('One or more selected services are unavailable or not clinically approved');
+      }
+
+      const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
+      const anyRequiresPrescription = servicesRes.rows.some(r => r.requires_prescription);
+      if (anyRequiresPrescription && !dto.prescriptionConfirmed) {
         invalid('PRESCRIPTION_CONFIRMATION_REQUIRED: Medical prescription verification is mandatory for this service');
       }
-      const rule=ruleFromRow(s);
-      const feeSnapshot=await this.fees.snapshot(client); // night/holiday/distance/tax rules frozen for this order
-      // Explicit code must be valid; otherwise a claimed welcome code is applied silently. Row is locked against over-use.
-      const promo=await this.promos.resolve(client,userId,dto.serviceId,rule.basePrice,dto.promoCode,true);
-      // No code used -> the best automatic discount (off-peak / loyalty / visit pack), if any feature is switched on.
-      const auto=promo?null:await this.autos.pick(client,userId);
+
+      if (appointment) {
+        for (const sid of serviceIds) {
+          await verifyScheduledSafety(client, sid, appointment);
+        }
+      }
+
+      let totalBasePrice = 0;
+      let totalExpectedMinutes = 0;
+      let maxCommissionBps = 0;
+
+      for (const it of rawItems) {
+        const s = serviceMap.get(it.serviceId)!;
+        const unitPrice = Number(s.price_amount);
+        totalBasePrice += unitPrice * it.quantity;
+        totalExpectedMinutes += (Number(s.expected_minutes) || 30) * it.quantity;
+        maxCommissionBps = Math.max(maxCommissionBps, Number(s.commission_bps) || 2000);
+      }
+
+      // Pick primary service (highest price)
+      const primaryService = servicesRes.rows.reduce((prev, curr) =>
+        Number(curr.price_amount) > Number(prev.price_amount) ? curr : prev
+      , servicesRes.rows[0]);
+      const primaryServiceId = primaryService.id;
+
+      const baseRule = ruleFromRow(primaryService);
+      const combinedRule = {
+        ...baseRule,
+        basePrice: totalBasePrice,
+        expectedMinutes: totalExpectedMinutes,
+      };
+
+      const feeSnapshot = await this.fees.snapshot(client);
+      const promo = await this.promos.resolve(client, userId, primaryServiceId, combinedRule.basePrice, dto.promoCode, true);
+      const auto = promo ? null : await this.autos.pick(client, userId);
+
       const r = await client.query(`INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,status,price_amount,currency_code,commission_bps,pricing,promo_id,promo_snapshot)
         VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
         RETURNING id,status,version,price_amount,currency_code`,[
-        userId,dto.beneficiaryId,dto.serviceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,s.price_amount,s.currency_code,s.commission_bps,
-        JSON.stringify({...rule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, appointment ? 'SCHEDULED' : 'OFFERING'
+        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,maxCommissionBps,
+        JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, appointment ? 'SCHEDULED' : 'OFFERING'
       ]);
       const request = r.rows[0];
+
+      // Save care_request_items snapshot for all selected services
+      for (const it of rawItems) {
+        const s = serviceMap.get(it.serviceId)!;
+        await client.query(`
+          INSERT INTO care_request_items(
+            request_id, service_id, quantity, unit_price, expected_minutes,
+            pricing_snapshot, clinical_requirements_snapshot
+          )
+          VALUES($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+        `, [
+          request.id,
+          it.serviceId,
+          it.quantity,
+          s.price_amount,
+          s.expected_minutes || 30,
+          JSON.stringify({
+            basePrice: s.price_amount,
+            currency: s.currency_code,
+            includedMinutes: s.included_minutes,
+            blockMinutes: s.block_minutes,
+            blockPrice: s.block_price,
+          }),
+          JSON.stringify({
+            requiresPrescription: s.requires_prescription,
+            requiresClinicalReview: s.requires_clinical_review,
+            requiredSkills: s.required_skills,
+            riskClassification: s.risk_classification,
+          }),
+        ]);
+      }
       await client.query('UPDATE request_create_keys SET request_id=$1 WHERE user_id=$2 AND key=$3',[request.id,userId,key]);
       const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
       if (!appointment && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
@@ -69,14 +154,22 @@ export class RequestsService {
       else await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
       await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
       await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
-      return {...request, ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),estimate:estimateV2(rule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
+      return {...request, ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
     });
   }
   async findOne(userId: string, requestId: string) {
     const found = await this.db.query(`SELECT id,requester_user_id,beneficiary_id,service_id,status,version,price_amount,currency_code,created_at
        FROM care_requests WHERE id=$1 AND requester_user_id=$2`,[requestId,userId]);
     if(!found.rowCount) missing();
-    return found.rows[0];
+    const items = await this.db.query(`
+      SELECT cri.id, cri.service_id, cri.quantity, cri.unit_price, cri.expected_minutes,
+             cri.item_status, s.title_ar, s.code, s.requires_prescription
+      FROM care_request_items cri
+      JOIN services s ON s.id=cri.service_id
+      WHERE cri.request_id=$1
+      ORDER BY cri.created_at ASC
+    `, [requestId]).catch(() => ({ rows: [] }));
+    return { ...found.rows[0], items: items.rows };
   }
   async list(userId: string, page: PageArgs) {
     // One joined query for request + service + beneficiary + winning assignment.
