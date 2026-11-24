@@ -35,3 +35,9 @@ export class SafetyCheckinResponseDto {
   @IsUUID() clientResponseId!: string;
   @IsIn(checkinResponses) response!: (typeof checkinResponses)[number];
 }
+
+export class SafeAbortDto {
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(['THREAT','HARASSMENT','ASSAULT','UNSAFE_BEHAVIOR','VISIT_MISMATCH','UNSAFE_LOCATION','UNSAFE_PERSONS','OTHER'])
+  reason?: string;
+}

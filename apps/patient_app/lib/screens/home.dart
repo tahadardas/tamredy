@@ -266,6 +266,12 @@ class ActiveOrderBanner extends StatelessWidget {
     Color statusColor;
 
     switch (c.stage) {
+      case VisitStage.interrupted:
+        statusTitle = 'توقفت الزيارة';
+        statusSub = 'حالة الطلب محدثة في سجل الزيارات';
+        icon = Icons.info_outline;
+        statusColor = TamreedyColors.navy;
+        break;
       case VisitStage.scheduled:
         statusTitle = 'زيارة مجدولة';
         statusSub = 'يبدأ البحث قبل الموعد المحدد';

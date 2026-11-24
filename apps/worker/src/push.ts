@@ -9,6 +9,7 @@ export function pushCopy(type: string, payload: Record<string, any> = {}): { tit
     case 'pack.granted': return { title: 'تم تفعيل باقتك', body: 'خصم باقتك يُطبَّق تلقائيًا على زياراتك القادمة.' };
     case 'offer.closed':
     case 'offer.expired': return { title: 'أُغلق العرض', body: 'لم يعد هذا العرض متاحًا.' };
+    case 'visit.interrupted': return { title: 'توقفت الزيارة', body: 'افتح التطبيق لمراجعة حالة الطلب.' };
     case 'request.cancelled': return { title: 'أُلغيت الزيارة', body: 'افتح التطبيق لتحديث حالة الزيارة.' };
     case 'cancellation.appeal.resolved': return { title: 'تمت مراجعة الاعتراض', body: 'افتح التطبيق للاطلاع على النتيجة.' };
     case 'offer.created': return { title: 'طلب جديد قريب منك', body: 'لديك عرض محدود المدة، افتح التطبيق للقبول.' };

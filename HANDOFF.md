@@ -300,3 +300,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - The shared contact editor supports both apps, manually entered numbers, preferences, priority and separate location scope. A new contact remains pending. Editing the phone, method or location scope resets consent; removing the contact revokes it and preserves audit evidence.
 - The supervisor records the recipient decision after independent phone verification. The consent endpoint checks the observed phone and requires a verification reference. Recipient self-service, operational verification channel, and automatic messaging/sharing are not connected.
 - API build and targeted PGlite/route checks passed. Local demo suites compile both apps. No deployment. Continue with safe abort and staffed operations.
+
+### Guardian phase 6 — safe abort
+
+- Migration 033 adds safety_aborts and links assignment, incident and emergency event. The assigned nurse can call POST /v1/nurse/safety/assignments/:id/abort with an optional reason.
+- The transaction follows the dispatch lock order. It releases the assignment, marks the request interrupted, pauses nurse availability, and reuses an open SOS when linked to the session or creates one. Repeat calls return the same event. No billing, rating penalty or re-dispatch.
+- The nurse can end a mission from the Guardian sheet without a reason. Patient status and notification are neutral. The SOS and visit safety session stay open for staff action and separate safe checkout.
+- PGlite lifecycle and route checks cover ownership, replay, interruption, preserved SOS and patient payload minimization. No production deployment or physical test.
+- Remaining: verified emergency directory, staffed console and shifts, and field validation.

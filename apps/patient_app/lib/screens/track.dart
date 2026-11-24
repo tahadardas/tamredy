@@ -197,6 +197,20 @@ class TrackScreen extends StatelessWidget {
         ],
       );
     }
+    if (c.stage == VisitStage.interrupted) {
+      return TamScaffold(
+        title: 'توقفت الزيارة',
+        subtitle: 'أُغلقت متابعة هذا الطلب',
+        nav: nav,
+        children: [
+          const NoticeBox('يمكنك مراجعة حالة الطلب من سجل الزيارات.'),
+          SoftButton('عرض سجل الطلبات', onPressed: () {
+            c.resetToHome();
+            c.setTab(1);
+          }),
+        ],
+      );
+    }
     if (c.stage == VisitStage.scheduled) {
       return TamScaffold(
         title: 'زيارة مجدولة',

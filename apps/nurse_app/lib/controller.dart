@@ -221,6 +221,19 @@ class NurseController extends ChangeNotifier {
     }
   }
 
+  Future<void> safeAbort() async {
+    final id = assignmentId;
+    if (id == null || !await guardian.abortAssignment(id) || assignmentId != id) return;
+    assignmentId = null;
+    requestId = null;
+    stage = NurseStage.idle;
+    availabilityManager.applyServerUnavailable();
+    availabilityManager.setActiveAssignment(false);
+    _stopNavigation();
+    notifyListeners();
+    await restoreActiveAssignment();
+  }
+
   void setTab(int i) {
     tab = i;
     notifyListeners();

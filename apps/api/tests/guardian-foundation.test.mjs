@@ -10,6 +10,8 @@ import { StaffCasesRepository } from '../dist/safety/staff-cases.repository.js';
 import { StaffCasesService } from '../dist/safety/staff-cases.service.js';
 import { TrustedContactsRepository } from '../dist/trusted-contacts/trusted-contacts.repository.js';
 import { TrustedContactsService } from '../dist/trusted-contacts/trusted-contacts.service.js';
+import { SafeAbortRepository } from '../dist/safety/safe-abort.repository.js';
+import { SafeAbortService } from '../dist/safety/safe-abort.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
 import { SafetyService } from '../dist/safety/safety.service.js';
 
@@ -34,6 +36,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('030_guardian_staff_cases'));
   await db.exec(await read('031_guardian_sos_trigger_time'));
   await db.exec(await read('032_trusted_contacts'));
+  await db.exec(await read('033_safety_abort'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -108,6 +111,20 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     points: [{ ...point, sequence: 2, capturedAt: new Date(Date.now() + 10_000).toISOString() }],
   }), { status: 400 });
   assert.equal((await svc.event(nurse, sos.id)).state, 'RECEIVED');
+  const aborts = new SafeAbortService(new SafeAbortRepository(adapter), repo);
+  await assert.rejects(aborts.abort(outsider, assignment, {}), { status: 404 });
+  await db.query('INSERT INTO visits(assignment_id,arrived_at) VALUES($1,now())', [assignment]);
+  const result = await aborts.abort(nurse, assignment, {});
+  assert.deepEqual(result, { status: 'ESCALATED', eventId: sos.id });
+  assert.deepEqual(await aborts.abort(nurse, assignment, {}), result);
+  const terminated = (await db.query(`SELECT r.status,a.reason,n.work_status,v.outcome
+    FROM request_assignments a JOIN care_requests r ON r.id=a.request_id
+    JOIN nurses n ON n.id=a.nurse_id JOIN visits v ON v.assignment_id=a.id WHERE a.id=$1`, [assignment])).rows[0];
+  assert.deepEqual(terminated, { status: 'ESCALATED', reason: 'SAFETY_ABORT', work_status: 'PAUSED', outcome: 'ESCALATED' });
+  assert.equal((await svc.event(nurse, sos.id)).state, 'RECEIVED');
+  const patientNotice = (await db.query(`SELECT payload FROM outbox_events WHERE event_type='visit.interrupted'`)).rows[0].payload;
+  assert.equal(patientNotice.recipientUserId, requester);
+  assert.deepEqual(Object.keys(patientNotice).sort(), ['recipientUserId', 'requestId']);
   const ops = new StaffCasesService(new StaffCasesRepository(adapter));
   const plainAdmin = await makeUser('admin', 'ADMIN');
   const operator = await makeUser('operator', 'ADMIN');

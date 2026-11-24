@@ -32,10 +32,11 @@ export class StaffCasesRepository {
 
   async detail(client: PoolClient, id: string) {
     const information = (await client.query(`SELECT coalesce(a.kind,'SOS') AS kind,e.silent,e.triggered_at,e.received_at,
-      u.display_name AS reporter_name,s.assignment_id
+      u.display_name AS reporter_name,coalesce(s.assignment_id,ab.assignment_id) AS assignment_id
       FROM safety_cases c
       LEFT JOIN safety_alerts a ON a.id=c.alert_id
       LEFT JOIN emergency_events e ON e.id=c.emergency_event_id
+      LEFT JOIN safety_aborts ab ON ab.emergency_event_id=e.id
       LEFT JOIN safety_sessions s ON s.id=coalesce(a.session_id,e.session_id)
       LEFT JOIN request_assignments r ON r.id=s.assignment_id
       LEFT JOIN nurses n ON n.id=r.nurse_id

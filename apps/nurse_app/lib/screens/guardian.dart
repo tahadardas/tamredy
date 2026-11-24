@@ -55,6 +55,24 @@ class _GuardianSheet extends StatelessWidget {
                 ),
                 _SosPanel(guardian: safety),
                 const SizedBox(height: 16),
+                if (assignment != null && (onVisit || nurse.stage == NurseStage.assigned))
+                  AeroButton.danger(
+                    'إنهاء المهمة لأسباب السلامة',
+                    onPressed: safety.busy ? null : () async {
+                      final accepted = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('إنهاء المهمة لأسباب السلامة؟'),
+                          content: const Text('ينهي الإجراء المهمة ويسجل بلاغًا للمتابعة. يمكنك المغادرة دون كتابة تفاصيل.'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(context), child: const Text('رجوع')),
+                            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('تأكيد إنهاء المهمة')),
+                          ],
+                        ),
+                      );
+                      if (accepted == true) await nurse.safeAbort();
+                    },
+                  ),
                 if (safety.sessionId != null) ...[
                   const StatusChip('جلسة السلامة مفتوحة'),
                   const Text(
@@ -167,6 +185,7 @@ class _SosPanel extends StatelessWidget {
         ? 'لم يؤكد الخادم تسجيل البلاغ. أعد المحاولة عند توفر الاتصال.'
         : switch (state) {
             'RECEIVED' => 'سجّل الخادم البلاغ. بانتظار استلام موظف السلامة.',
+            'UNKNOWN' => 'توقفت المهمة. يمكنك تحديث حالة بلاغ السلامة.',
             'ACKNOWLEDGED' => 'استلم موظف السلامة البلاغ.',
             'ESCALATED' => 'صعّد موظف السلامة البلاغ.',
             'IN_PROGRESS' => 'بدأت معالجة البلاغ.',

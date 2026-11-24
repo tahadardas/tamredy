@@ -82,7 +82,7 @@ class WalletTx {
   const WalletTx(this.title, this.sub, this.amount);
 }
 
-enum VisitStage { none, scheduled, searching, assigned, enRoute, arrived, inService, completed, unfulfilled }
+enum VisitStage { none, scheduled, interrupted, searching, assigned, enRoute, arrived, inService, completed, unfulfilled }
 
 const List<ServiceItem> kSampleServices = [
   ServiceItem(
@@ -937,10 +937,11 @@ class PatientController extends ChangeNotifier {
         'IN_SERVICE' => VisitStage.inService,
         'COMPLETED' => VisitStage.completed,
         'UNFULFILLED' => VisitStage.unfulfilled,
+        'ESCALATED' => VisitStage.interrupted,
         'CANCELLED' => VisitStage.none,
         _ => VisitStage.searching,
       };
-      if (stage == VisitStage.unfulfilled || stage == VisitStage.none) {
+      if (stage == VisitStage.unfulfilled || stage == VisitStage.interrupted || stage == VisitStage.none) {
         _timer?.cancel();
       }
       final lat = num.tryParse('${d['nurse_lat']}'),

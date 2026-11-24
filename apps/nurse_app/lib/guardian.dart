@@ -233,6 +233,35 @@ class GuardianController extends ChangeNotifier {
     );
   }
 
+  Future<bool> abortAssignment(String assignment) async {
+    var finished = false;
+    await _run(() async {
+      await restoreSos();
+      final response = await api.post('/v1/nurse/safety/assignments/$assignment/abort', {});
+      final id = response['eventId'];
+      if (response['status'] != 'ESCALATED' || id is! String) {
+        throw StateError('Invalid safe exit response');
+      }
+      finished = true;
+      if (event?['id'] != id) {
+        _statusRead++;
+        event = {'id': id, 'state': 'UNKNOWN'};
+        if (_owner case final String owner) await _persistSos(owner);
+      }
+      try {
+        final receipt = await api.getMap('/v1/safety/events/$id');
+        if (receipt['id'] == id && receipt['state'] is String) {
+          _statusRead++;
+          event = receipt;
+          if (_owner case final String owner) await _persistSos(owner);
+        }
+      } catch (_) {
+        statusUnavailable = true;
+      }
+    });
+    return finished;
+  }
+
   Future<void> checkout() => _run(() async {
     final id = sessionId;
     if (id == null) return;

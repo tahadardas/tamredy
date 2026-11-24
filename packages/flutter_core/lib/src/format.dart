@@ -41,7 +41,7 @@ String requestStatusAr(String status) {
     case 'UNFULFILLED':
       return 'غير مستجاب';
     case 'ESCALATED':
-      return 'مرفوع للإشراف';
+      return 'توقفت الزيارة';
     default:
       return status;
   }
