@@ -2,21 +2,21 @@
   "projectName": "tamreedy",
   "branch": "feature/smart-booking-marketplace",
   "baselineCommit": "06768cf1ae45d8cb33b1945cc3f2f966a52b9fbf",
-  "latestCommit": "054379c fix(safety): grant ADMIN role supreme SAFETY_SUPERVISOR and export access automatically",
+  "latestCommit": "e4e5626 feat(ui): complete Medical Aero Premium overhaul for safety, night policy, emergency directory, and visit risk",
   "status": "COMPLETED",
   "testSweepResults": {
     "apiTests": "154/154 PASS",
     "workerTests": "13/13 PASS",
     "routesAudit": "3/3 PASS (100% routes aligned)",
-    "adminWebBuild": "PASS (Vite 0 errors, 1594 modules transformed)",
+    "adminWebBuild": "PASS (Vite 0 errors, 1595 modules transformed)",
     "flutterCoreTests": "19/19 PASS",
     "patientAppTests": "12/12 PASS",
     "nurseAppTests": "7/7 PASS",
     "flutterAnalyze": "0 errors / 0 issues (packages/flutter_core, apps/patient_app, apps/nurse_app)",
-    "uiUxAudit": "PASS (Modal Portal Rooted, Stacking Context Trapping Resolved, RenderFlex Overflows Eliminated)",
+    "uiUxAudit": "PASS (Medical Aero Premium Full Overhaul, Portal-Rooted Modals, Responsive Form Grids, Elimination of raw fieldsets)",
     "sessionPersistence": "PASS (Sliding 180-day refresh, resetOnError: false, silent me refresh, offlineWithSavedSession)",
     "apkBuild": "PASS (Patient App 62.8MB + Nurse App 62.5MB assembled & ready)",
-    "serverBundle": "PASS (tamreedy-server.tar.gz 1.23MB fresh packaging)"
+    "serverBundle": "PASS (tamreedy-server.tar.gz 1.18MB fresh packaging)"
   },
   "modulesCompleted": [
     "SBM-01 Unified Booking Modes & Request Schema",
@@ -48,6 +48,7 @@
     "UI-UX-03 Responsive Chip Rows & Arabic RTL Layout Resilience"
   ],
   "migrationsApplied": [
-    "050_smart_booking_and_open_marketplace.sql"
+    "050_smart_booking_and_open_marketplace.sql",
+    "051_admin_full_safety_supervisor_grants.sql"
   ]
 }
