@@ -4,6 +4,7 @@ import {createRoot} from 'react-dom/client';
 import {Bell, KeyRound, LogOut, RefreshCw, ChevronLeft, ShieldCheck, CheckCircle2} from 'lucide-react';
 import './style.css';
 import {Icon} from './ui';
+import {Modal} from './widgets';
 import {apiBase, getJson, login, logout, restore, sendJson, setLogoutHandler, startIdleWatch} from './session';
 import {Promos, ServicesPrices, TopNurses} from './pages_business';
 import {Dues, FeesSettings} from './pages_fees';
@@ -193,34 +194,35 @@ function ChangePassword({onClose, forced = false}: {onClose: () => void; forced?
   }
 
   return (
-    <div className="modal" onClick={forced ? undefined : onClose}>
-      <div className="panel modal-box" onClick={e => e.stopPropagation()}>
-        <h2>{forced ? 'يجب تغيير كلمة المرور للمتابعة' : 'تغيير كلمة المرور'}</h2>
-        <div className="form one">
-          <label>
-            كلمة المرور الحالية
-            <input type="password" dir="ltr" value={f.current} onChange={e => setF({...f, current: e.target.value})} />
-          </label>
-          <label>
-            كلمة المرور الجديدة (12 حرفاً على الأقل)
-            <input type="password" dir="ltr" value={f.next} onChange={e => setF({...f, next: e.target.value})} />
-          </label>
-          <label>
-            تأكيد كلمة المرور الجديدة
-            <input type="password" dir="ltr" value={f.again} onChange={e => setF({...f, again: e.target.value})} />
-          </label>
-        </div>
-        {msg && <p className="hint err">{msg}</p>}
-        <div className="actions">
-          <button className="pill on" onClick={() => void save()}>حفظ التغيير</button>
-          {forced ? (
-            <button className="pill" onClick={() => void logout()}>تسجيل الخروج</button>
-          ) : (
-            <button className="pill" onClick={onClose}>إلغاء</button>
-          )}
-        </div>
+    <Modal
+      title={forced ? 'يجب تغيير كلمة المرور للمتابعة' : 'تغيير كلمة المرور'}
+      onClose={forced ? () => {} : onClose}
+      maxWidth="480px"
+    >
+      <div className="form one">
+        <label>
+          كلمة المرور الحالية
+          <input type="password" dir="ltr" value={f.current} onChange={e => setF({...f, current: e.target.value})} />
+        </label>
+        <label>
+          كلمة المرور الجديدة (12 حرفاً على الأقل)
+          <input type="password" dir="ltr" value={f.next} onChange={e => setF({...f, next: e.target.value})} />
+        </label>
+        <label>
+          تأكيد كلمة المرور الجديدة
+          <input type="password" dir="ltr" value={f.again} onChange={e => setF({...f, again: e.target.value})} />
+        </label>
       </div>
-    </div>
+      {msg && <p className="hint err">{msg}</p>}
+      <div className="actions">
+        <button className="pill on" onClick={() => void save()}>حفظ التغيير</button>
+        {forced ? (
+          <button className="pill" onClick={() => void logout()}>تسجيل الخروج</button>
+        ) : (
+          <button className="pill" onClick={onClose}>إلغاء</button>
+        )}
+      </div>
+    </Modal>
   );
 }
 

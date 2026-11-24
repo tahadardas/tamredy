@@ -1261,37 +1261,165 @@ tbody tr:hover td {
 }
 
 /* ==========================================================================
-   Modals & Login
+   Modals (Medical Aero Premium — Portal Rooted & Viewport Protected)
    ========================================================================== */
 
 .modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(7, 30, 50, 0.65);
-  backdrop-filter: blur(4px);
-  display: grid;
-  place-items: center;
-  z-index: 100;
-  padding: 16px;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(4, 21, 38, 0.72) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 100000 !important;
+  padding: 24px 16px !important;
+  box-sizing: border-box !important;
+  animation: modal-fade-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .modal-box {
-  width: 100%;
-  max-width: 480px;
-  box-shadow: var(--shadow-lg);
-  animation: modal-enter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  background: #ffffff !important;
+  color: var(--navy) !important;
+  border: 1px solid rgba(7, 157, 144, 0.25) !important;
+  border-radius: 20px !important;
+  width: 100% !important;
+  max-width: 540px !important;
+  max-height: calc(100vh - 48px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  box-shadow: 0 28px 64px -12px rgba(4, 21, 38, 0.5), 0 0 0 1px rgba(7, 69, 119, 0.08) !important;
+  animation: modal-enter 0.24s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  overflow: hidden !important;
+  position: relative !important;
 }
 
 @keyframes modal-enter {
-  0% { transform: translateY(16px) scale(0.98); opacity: 0; }
+  0% { transform: translateY(20px) scale(0.97); opacity: 0; }
   100% { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 .modal-box.wide {
-  max-width: 780px;
-  width: 94%;
-  max-height: 90vh;
-  overflow: auto;
+  max-width: 840px !important;
+  width: 96% !important;
+}
+
+.modal-head {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 18px 24px !important;
+  border-bottom: 1px solid var(--border) !important;
+  background: #ffffff !important;
+  flex-shrink: 0 !important;
+  z-index: 10 !important;
+  position: sticky !important;
+  top: 0 !important;
+}
+
+.modal-head h2 {
+  margin: 0 !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+  color: var(--navy) !important;
+  letter-spacing: -0.3px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.modal-head button.ghost {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: var(--canvas) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--sub) !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  font-size: 16px !important;
+  padding: 0 !important;
+}
+
+.modal-head button.ghost:hover {
+  background: rgba(207, 83, 97, 0.12) !important;
+  border-color: rgba(207, 83, 97, 0.35) !important;
+  color: var(--danger) !important;
+  transform: rotate(90deg) !important;
+}
+
+.modal-content {
+  padding: 24px !important;
+  overflow-y: auto !important;
+  flex: 1 !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+.modal-box .actions {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 12px !important;
+  margin-top: 24px !important;
+  padding-top: 16px !important;
+  border-top: 1px solid var(--border) !important;
+  position: sticky !important;
+  bottom: 0 !important;
+  background: #ffffff !important;
+  z-index: 5 !important;
+}
+
+.modal-box h3 {
+  margin: 20px 0 12px !important;
+  font-size: 14.5px !important;
+  font-weight: 700 !important;
+  color: var(--navy) !important;
+  padding-bottom: 8px !important;
+  border-bottom: 1px dashed var(--border) !important;
+}
+
+.check {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: var(--navy) !important;
+  margin: 14px 0 !important;
+  user-select: none !important;
+}
+
+.check input[type="checkbox"] {
+  display: inline-block !important;
+  width: 18px !important;
+  height: 18px !important;
+  margin: 0 !important;
+  accent-color: var(--teal) !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+}
+
+.tabs {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-bottom: 20px !important;
+  padding-bottom: 12px !important;
+  border-bottom: 1px solid var(--border) !important;
+  overflow-x: auto !important;
+  flex-wrap: nowrap !important;
 }
 
 .login-wrap {

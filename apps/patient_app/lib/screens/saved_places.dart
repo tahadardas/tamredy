@@ -70,13 +70,14 @@ class _SavedPlacesState extends State<SavedPlaces> {
 
   Future<void> _reload() async {
     final rows = await widget.api.getList(_path);
-    if (mounted)
+    if (mounted) {
       setState(
         () => _places = [
           for (final row in rows)
             SavedPlace(Map<String, dynamic>.from(row as Map)),
         ],
       );
+    }
   }
 
   Future<void> _load() => _run(_reload);
@@ -223,13 +224,16 @@ class _PlaceEditorState extends State<_PlaceEditor> {
       } else {
         await widget.api.dio.put('$_path/$id', data: payload);
       }
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _busy = false;
           _failed = true;
         });
+      }
     }
   }
 

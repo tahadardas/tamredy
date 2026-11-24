@@ -172,14 +172,13 @@ void main() {
 
   testWidgets('AeroInstantTimeoutSheet triggers recovery actions', (WidgetTester tester) async {
     bool keepOpen = false;
-    bool retry = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: AeroInstantTimeoutSheet(
             onKeepOpenInMarketplace: () => keepOpen = true,
-            onRetryInstant: () => retry = true,
+            onRetryInstant: () {},
             onScheduleVisit: () {},
             onCancelRequest: () {},
           ),
@@ -198,7 +197,6 @@ void main() {
 
   testWidgets('AeroProposalCard displays nurse details and accepts proposal', (WidgetTester tester) async {
     bool accepted = false;
-    bool declined = false;
 
     final proposal = AeroProposalData(
       id: 'prop-123',
@@ -218,7 +216,7 @@ void main() {
           body: AeroProposalCard(
             proposal: proposal,
             onAccept: () => accepted = true,
-            onDecline: () => declined = true,
+            onDecline: () {},
           ),
         ),
       ),

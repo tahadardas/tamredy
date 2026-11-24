@@ -124,49 +124,53 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
             padding: const EdgeInsets.all(16),
             children: [
               // Distance filter chips
-              Row(
-                children: [
-                  Text(
-                    'نطاق المسافة:',
-                    style: aeroText(size: 12, weight: FontWeight.w600, color: AeroColors.textSecondary),
-                  ),
-                  const SizedBox(width: 8),
-                  ChoiceChip(
-                    label: Text('الكل', style: aeroText(size: 12, color: _maxDistanceFilter == null ? Colors.white : AeroColors.textPrimary)),
-                    selected: _maxDistanceFilter == null,
-                    selectedColor: AeroColors.accentTeal,
-                    onSelected: (val) {
-                      if (val) {
-                        setState(() => _maxDistanceFilter = null);
-                        c.loadMarketplaceRequests();
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 6),
-                  ChoiceChip(
-                    label: Text('حتى 5 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 5 ? Colors.white : AeroColors.textPrimary)),
-                    selected: _maxDistanceFilter == 5,
-                    selectedColor: AeroColors.accentTeal,
-                    onSelected: (val) {
-                      if (val) {
-                        setState(() => _maxDistanceFilter = 5);
-                        c.loadMarketplaceRequests(maxDistanceKm: 5);
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 6),
-                  ChoiceChip(
-                    label: Text('حتى 10 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 10 ? Colors.white : AeroColors.textPrimary)),
-                    selected: _maxDistanceFilter == 10,
-                    selectedColor: AeroColors.accentTeal,
-                    onSelected: (val) {
-                      if (val) {
-                        setState(() => _maxDistanceFilter = 10);
-                        c.loadMarketplaceRequests(maxDistanceKm: 10);
-                      }
-                    },
-                  ),
-                ],
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  children: [
+                    Text(
+                      'نطاق المسافة:',
+                      style: aeroText(size: 12, weight: FontWeight.w600, color: AeroColors.textSecondary),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: Text('الكل', style: aeroText(size: 12, color: _maxDistanceFilter == null ? Colors.white : AeroColors.textPrimary)),
+                      selected: _maxDistanceFilter == null,
+                      selectedColor: AeroColors.accentTeal,
+                      onSelected: (val) {
+                        if (val) {
+                          setState(() => _maxDistanceFilter = null);
+                          c.loadMarketplaceRequests();
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: Text('حتى 5 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 5 ? Colors.white : AeroColors.textPrimary)),
+                      selected: _maxDistanceFilter == 5,
+                      selectedColor: AeroColors.accentTeal,
+                      onSelected: (val) {
+                        if (val) {
+                          setState(() => _maxDistanceFilter = 5);
+                          c.loadMarketplaceRequests(maxDistanceKm: 5);
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: Text('حتى 10 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 10 ? Colors.white : AeroColors.textPrimary)),
+                      selected: _maxDistanceFilter == 10,
+                      selectedColor: AeroColors.accentTeal,
+                      onSelected: (val) {
+                        if (val) {
+                          setState(() => _maxDistanceFilter = 10);
+                          c.loadMarketplaceRequests(maxDistanceKm: 10);
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
 

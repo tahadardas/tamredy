@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Live } from './pages';
 import { Notice, Panel, AeroHero } from './ui';
+import { Modal } from './widgets';
 import { msgOf } from './session';
 
 export function DispatchMonitor({ live }: { live: Live }) {
@@ -268,48 +269,13 @@ export function DispatchMonitor({ live }: { live: Live }) {
         )}
       </Panel>
 
-      {/* Request Inspection Modal / Drawer */}
+      {/* Request Inspection Modal */}
       {selectedRequestId && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 9999,
-          padding: 20,
-        }}>
-          <div style={{
-            background: '#FFF',
-            borderRadius: 16,
-            maxWidth: 900,
-            width: '100%',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            padding: 24,
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #E2E8F0', paddingBottom: 14, marginBottom: 16 }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 18, color: '#1E293B' }}>
-                  فحص تشخيص الطلب: <span style={{ fontFamily: 'monospace' }}>{selectedRequestId}</span>
-                </h3>
-                <div style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>
-                  حالة التنفيذ والمطابقة وتدفق الإشعارات لهذا الطلب
-                </div>
-              </div>
-              <button
-                className="btn btn-secondary"
-                style={{ padding: '4px 12px', fontSize: 13 }}
-                onClick={() => { setSelectedRequestId(null); setRequestDetail(null); }}
-              >
-                ✕ إغلاق
-              </button>
-            </div>
+        <Modal
+          title={`فحص تشخيص الطلب: ${selectedRequestId}`}
+          onClose={() => { setSelectedRequestId(null); setRequestDetail(null); }}
+          maxWidth="940px"
+        >
 
             {detailLoading || !requestDetail ? (
               <p style={{ textAlign: 'center', padding: 40, color: '#64748B' }}>جاري تحميل سجلات التشخيص...</p>
@@ -448,8 +414,7 @@ export function DispatchMonitor({ live }: { live: Live }) {
                 </div>
               </div>
             )}
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

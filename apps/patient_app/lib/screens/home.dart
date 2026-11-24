@@ -403,11 +403,14 @@ class ActiveOrderBanner extends StatelessWidget {
                         children: [
                           Row(
                             children: [
-                              Text(
-                                statusTitle,
-                                style: tamText(size: 15, weight: FontWeight.w800, color: TamreedyColors.navy),
+                              Expanded(
+                                child: Text(
+                                  statusTitle,
+                                  style: tamText(size: 15, weight: FontWeight.w800, color: TamreedyColors.navy),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                              const Spacer(),
+                              const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(

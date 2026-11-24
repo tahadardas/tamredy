@@ -2,6 +2,7 @@ import {useEffect, useState} from 'react';
 import type {Live} from './pages';
 import {msgOf, getJson, sendJson} from './session';
 import {Panel} from './ui';
+import {Modal} from './widgets';
 
 export function AppointmentsSchedule({live}: {live: Live}) {
   const [loading, setLoading] = useState(false);
@@ -293,42 +294,52 @@ export function SupportReports({live}: {live: Live}) {
       </table>
 
       {selectedReport && (
-        <div className="modal-overlay" style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-        }}>
-          <div className="modal" style={{background: 'white', padding: '24px', borderRadius: '12px', maxWidth: '500px', width: '90%'}}>
-            <h3>معالجة البلاغ #{selectedReport.id}</h3>
-            <p style={{fontSize: '14px', color: '#475569'}}>{selectedReport.reason}</p>
-            <label style={{display: 'block', margin: '12px 0 6px', fontWeight: 600}}>
-              ملاحظات الإشراف والتسوية:
-            </label>
-            <textarea
-              style={{width: '100%', height: '80px', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1'}}
-              value={resolutionNote}
-              onChange={e => setResolutionNote(e.target.value)}
-              placeholder="سجل نتيجة التواصل والإجراء الإداري..."
-            />
-            <div style={{display: 'flex', gap: '8px', marginTop: '16px'}}>
-              <button
-                className="pill primary"
-                disabled={busy}
-                onClick={() => resolveReport(selectedReport.id, 'RESOLVE')}
-              >
-                إغلاق وتسوية البلاغ
-              </button>
-              <button
-                className="pill"
-                style={{background: '#fee2e2', color: '#991b1b'}}
-                disabled={busy}
-                onClick={() => resolveReport(selectedReport.id, 'ESCALATE_GUARDIAN')}
-              >
-                تصعيد إلى قضية سلامة (Guardian)
-              </button>
-              <button className="pill ghost" onClick={() => setSelectedReport(null)}>إلغاء</button>
-            </div>
+        <Modal
+          title={`معالجة البلاغ #${selectedReport.id}`}
+          onClose={() => setSelectedReport(null)}
+          maxWidth="560px"
+        >
+          <div style={{marginBottom: 16}}>
+            <span style={{fontSize: 12, color: 'var(--sub)'}}>سبب البلاغ أو الملاحظة:</span>
+            <p style={{fontSize: 14, color: 'var(--navy)', margin: '4px 0 0', fontWeight: 600, lineHeight: 1.5}}>
+              {selectedReport.reason}
+            </p>
           </div>
-        </div>
+          <label style={{display: 'block', margin: '14px 0 6px', fontSize: 13, fontWeight: 700, color: 'var(--navy)'}}>
+            ملاحظات الإشراف والتسوية الإدارية:
+          </label>
+          <textarea
+            style={{
+              width: '100%',
+              height: '90px',
+              padding: '10px 12px',
+              borderRadius: '10px',
+              border: '1px solid var(--border)',
+              font: 'inherit',
+              boxSizing: 'border-box',
+            }}
+            value={resolutionNote}
+            onChange={e => setResolutionNote(e.target.value)}
+            placeholder="سجل نتيجة التواصل مع المريض والممرض والإجراء المتخذ..."
+          />
+          <div className="actions">
+            <button
+              className="pill on"
+              disabled={busy}
+              onClick={() => resolveReport(selectedReport.id, 'RESOLVE')}
+            >
+              إغلاق وتسوية البلاغ
+            </button>
+            <button
+              className="pill danger"
+              disabled={busy}
+              onClick={() => resolveReport(selectedReport.id, 'ESCALATE_GUARDIAN')}
+            >
+              تصعيد إلى حماية (Guardian)
+            </button>
+            <button className="pill" onClick={() => setSelectedReport(null)}>إلغاء</button>
+          </div>
+        </Modal>
       )}
     </Panel>
   );

@@ -34,24 +34,24 @@ function NurseForm({initial, onSave, onCancel, isNew}: {initial: typeof empty; i
   });
   return <>
     <div className="form">
-      <label>الاسم الكامل<input value={f.displayName} onChange={set('displayName')}/></label>
+      <label>الاسم الكامل<input value={f.displayName} onChange={set('displayName')} placeholder="الاسم الثلاثي للممرض"/></label>
       <label>الهاتف (بصيغة دولية +963...)<input dir="ltr" value={f.phone} onChange={set('phone')} placeholder="+963911000000"/></label>
-      <label>رقم الممرض (اتركه فارغًا ليُولَّد تلقائيًا)<input dir="ltr" type="number" value={f.nurseNo} onChange={set('nurseNo')}/></label>
-      <label>المحافظة<select value={f.governorateId} onChange={e => setF({...f, governorateId: e.target.value, areaId: ''})}><option value="">— اختر —</option>{govs.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
-      <label>المنطقة<select value={f.areaId} disabled={!f.governorateId} onChange={set('areaId')}><option value="">— اختر —</option>{areas.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
-      <label>الاختصاص<input value={f.specialty} onChange={set('specialty')}/></label>
-      <label>الرقم الوطني (يُحفظ مشفّرًا){!isNew && ' — اتركه فارغًا لعدم التغيير'}<input dir="ltr" value={f.nationalId} onChange={set('nationalId')}/></label>
-      <label style={{gridColumn: '1/-1'}}>ملاحظات داخلية<input value={f.notes} onChange={set('notes')}/></label>
+      <label>رقم الممرض (اتركه فارغًا ليُولَّد تلقائيًا)<input dir="ltr" type="number" value={f.nurseNo} onChange={set('nurseNo')} placeholder="تلقائي"/></label>
+      <label>المحافظة<select value={f.governorateId} onChange={e => setF({...f, governorateId: e.target.value, areaId: ''})}><option value="">— اختر المحافظة —</option>{govs.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+      <label>المنطقة<select value={f.areaId} disabled={!f.governorateId} onChange={set('areaId')}><option value="">— اختر المنطقة —</option>{areas.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+      <label>الاختصاص التمريضي<input value={f.specialty} onChange={set('specialty')} placeholder="مثال: تمريض عام، عناية مركزة، أطفال"/></label>
+      <label>الرقم الوطني (يُحفظ مشفّرًا){!isNew && ' — اتركه فارغًا لعدم التغيير'}<input dir="ltr" value={f.nationalId} onChange={set('nationalId')} placeholder="11 رقماً وطنيًا"/></label>
+      <label style={{gridColumn: '1/-1'}}>ملاحظات وإرشادات داخلية<input value={f.notes} onChange={set('notes')} placeholder="أي ملاحظات إشرافية خاصة بالممرض..."/></label>
     </div>
     {isNew && <>
       <h3>رخصة أو شهادة مزاولة المهنة (اختياري الآن، ويمكن رفعها لاحقًا)</h3>
       <div className="form">
-        <label>نوع الوثيقة<select value={lic.docKind} onChange={e => setLic({...lic, docKind: e.target.value})}><option value="LICENSE">رخصة مزاولة</option><option value="PRACTICE_CERT">شهادة مزاولة المهنة</option></select></label>
-        <label>رقم الوثيقة<input dir="ltr" value={lic.licenseRef} onChange={e => setLic({...lic, licenseRef: e.target.value})}/></label>
-        <label>تاريخ انتهائها<input type="date" value={lic.expiresAt} onChange={e => setLic({...lic, expiresAt: e.target.value})}/></label>
-        <label>صورة/ملف الرخصة (PDF/JPG/PNG)<input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png"/></label>
+        <label>نوع الوثيقة<select value={lic.docKind} onChange={e => setLic({...lic, docKind: e.target.value})}><option value="LICENSE">رخصة مزاولة المهنة</option><option value="PRACTICE_CERT">شهادة مزاولة المهنة</option></select></label>
+        <label>رقم الوثيقة<input dir="ltr" value={lic.licenseRef} onChange={e => setLic({...lic, licenseRef: e.target.value})} placeholder="رقم الرخصة أو الشهادة"/></label>
+        <label>تاريخ انتهاء السريان<input type="date" value={lic.expiresAt} onChange={e => setLic({...lic, expiresAt: e.target.value})}/></label>
+        <label>ملف الرخصة الممسوح (PDF/JPG/PNG)<input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png"/></label>
       </div>
-      <label className="check"><input type="checkbox" checked={lic.approveNow} onChange={e => setLic({...lic, approveNow: e.target.checked})}/> اعتماد الرخصة فورًا (أنا راجعتها) ليدخل الممرض ويستقبل الطلبات مباشرة</label>
+      <label className="check"><input type="checkbox" checked={lic.approveNow} onChange={e => setLic({...lic, approveNow: e.target.checked})}/> اعتماد الرخصة فورًا (أنا راجعتها ودققت صلاحيتها) ليدخل الممرض ويستقبل الطلبات مباشرة</label>
     </>}
     {err && <p className="hint err">{err}</p>}
     <div className="actions"><button className="pill on" disabled={busy} onClick={() => void submit()}>{isNew ? 'إضافة الممرض' : 'حفظ التعديل'}</button><button className="pill" onClick={onCancel}>إلغاء</button></div>
@@ -100,7 +100,7 @@ function Detail({id, onClose, onChanged}: {id: string; onClose: () => void; onCh
   const load = useCallback(async () => { const d = await getJson(`/v1/admin/nurses/${id}/profile`); setP(d); setPicked(d.skills.filter((s: any) => s.approved).map((s: any) => s.id)); }, [id]);
   useEffect(() => { void load().catch(() => onClose()); }, [load]);
   if (!p) return <Modal title="..." onClose={onClose}><p className="hint">جارٍ التحميل...</p></Modal>;
-  return <Modal title={`${p.display_name} — رقم ${p.nurse_no}`} onClose={onClose}>
+  return <Modal title={`${p.display_name} — رقم ${p.nurse_no}`} onClose={onClose} maxWidth="840px">
     <div className="tabs">{[['info', 'البيانات'], ['skills', 'المهارات'], ['docs', `المستندات (${p.documents.length})`], ['lic', 'الرخص']].map(([k, l]) =>
       <button key={k} className={'pill ' + (tab === k ? 'on' : '')} onClick={() => setTab(k)}>{l}</button>)}</div>
     {tab === 'info' && <>
@@ -200,7 +200,7 @@ export function Nurses({live}: {live: Live}) {
         <button className="pill" onClick={() => { if (confirm(`استعادة كلمة المرور للممرض ${n.display_name}؟ تحقق أولًا من هوية صاحب الحساب. تصدر كلمة مؤقتة صالحة 30 دقيقة وتنتهي الجلسات الحالية.`)) void sendJson('POST', `/v1/admin/nurses/${n.id}/reset-password`).then(r => setSecret({pw: r.temporaryPassword})).catch(() => undefined); }}>استعادة كلمة المرور</button>
         <button className="pill danger" onClick={() => { if (confirm(`حذف الممرض ${n.display_name}؟ تبقى سجلاته المالية والزيارات محفوظة، ولا يستطيع الدخول بعد ذلك.`)) act(() => sendJson('DELETE', `/v1/admin/nurses/${n.id}/profile`)); }}>حذف</button></span>])}/>}
     {items && !items.length && <p className="hint">لا ممرضين مطابقين.</p>}
-    {adding && <Modal title="إضافة ممرض" onClose={() => setAdding(false)}>
+    {adding && <Modal title="إضافة كادر تمريضي جديد" onClose={() => setAdding(false)} maxWidth="840px">
       <NurseForm isNew initial={empty} onCancel={() => setAdding(false)} onSave={async (b, x) => {
         const r = await sendJson('POST', '/v1/admin/nurses/manage', b);
         let note = '';

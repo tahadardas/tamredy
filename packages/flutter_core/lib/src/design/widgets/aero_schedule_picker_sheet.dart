@@ -63,158 +63,161 @@ class _AeroSchedulePickerSheetState extends State<AeroSchedulePickerSheet> {
       textDirection: TextDirection.rtl,
       child: Padding(
         padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Title
-            Center(
-              child: Text(
-                'تحديد موعد الزيارة التمريضية',
-                style: aeroText(size: 18, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Mode Selector: Immediate vs Scheduled
-            Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setState(() => _isImmediate = true),
-                    child: AeroGlassCard(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      tintColor: _isImmediate ? AeroColors.aeroTint : Colors.white,
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.bolt,
-                            color: _isImmediate ? AeroColors.accentTeal : AeroColors.textMuted,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'الآن (فوري)',
-                            style: aeroText(
-                              size: 14,
-                              weight: _isImmediate ? FontWeight.w700 : FontWeight.w500,
-                              color: _isImmediate ? AeroColors.primaryNavy : AeroColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Title
+              Center(
+                child: Text(
+                  'تحديد موعد الزيارة التمريضية',
+                  style: aeroText(size: 18, weight: FontWeight.w700, color: AeroColors.primaryNavy),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setState(() => _isImmediate = false),
-                    child: AeroGlassCard(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      tintColor: !_isImmediate ? AeroColors.aeroTint : Colors.white,
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.calendar_month,
-                            color: !_isImmediate ? AeroColors.accentTeal : AeroColors.textMuted,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'موعد مسبق',
-                            style: aeroText(
-                              size: 14,
-                              weight: !_isImmediate ? FontWeight.w700 : FontWeight.w500,
-                              color: !_isImmediate ? AeroColors.primaryNavy : AeroColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            if (!_isImmediate) ...[
-              // Date Chips
-              Text(
-                'اختر التاريخ:',
-                style: aeroText(size: 14, weight: FontWeight.w600, color: AeroColors.textPrimary),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
+
+              // Mode Selector: Immediate vs Scheduled
               Row(
                 children: [
-                  _buildDateChip('اليوم', 0),
-                  const SizedBox(width: 8),
-                  _buildDateChip('غداً', 1),
-                  const SizedBox(width: 8),
-                  _buildDateChip('بعد غد', 2),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isImmediate = true),
+                      child: AeroGlassCard(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        tintColor: _isImmediate ? AeroColors.aeroTint : Colors.white,
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.bolt,
+                              color: _isImmediate ? AeroColors.accentTeal : AeroColors.textMuted,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'الآن (فوري)',
+                              style: aeroText(
+                                size: 14,
+                                weight: _isImmediate ? FontWeight.w700 : FontWeight.w500,
+                                color: _isImmediate ? AeroColors.primaryNavy : AeroColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isImmediate = false),
+                      child: AeroGlassCard(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        tintColor: !_isImmediate ? AeroColors.aeroTint : Colors.white,
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.calendar_month,
+                              color: !_isImmediate ? AeroColors.accentTeal : AeroColors.textMuted,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'موعد مسبق',
+                              style: aeroText(
+                                size: 14,
+                                weight: !_isImmediate ? FontWeight.w700 : FontWeight.w500,
+                                color: !_isImmediate ? AeroColors.primaryNavy : AeroColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
 
-              // Time Window Chips
-              Text(
-                'النافذة الزمنية للزيارة (توقيت دمشق UTC+3):',
-                style: aeroText(size: 14, weight: FontWeight.w600, color: AeroColors.textPrimary),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _windows.map((w) {
-                  final isSelected = _selectedWindow == w;
-                  return ChoiceChip(
-                    label: Text(w, style: aeroText(size: 12, color: isSelected ? Colors.white : AeroColors.textPrimary)),
-                    selected: isSelected,
-                    selectedColor: AeroColors.accentTeal,
-                    backgroundColor: AeroColors.lightCanvas,
-                    onSelected: (selected) {
-                      if (selected) setState(() => _selectedWindow = w);
-                    },
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 12),
-
-              // Buffer notice
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AeroColors.aeroTintLight,
-                  borderRadius: BorderRadius.circular(AeroRadii.badge),
-                  border: Border.all(color: AeroColors.borderLight),
+              if (!_isImmediate) ...[
+                // Date Chips
+                Text(
+                  'اختر التاريخ:',
+                  style: aeroText(size: 14, weight: FontWeight.w600, color: AeroColors.textPrimary),
                 ),
-                child: Row(
+                const SizedBox(height: 8),
+                Row(
                   children: [
-                    const Icon(Icons.info_outline, size: 16, color: AeroColors.accentTeal),
+                    _buildDateChip('اليوم', 0),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'يتم احتساب هامش انتقال مدته 30 دقيقة بين المواعيد لضمان التزام الممرض بالوقت المحدد.',
-                        style: aeroText(size: 11, color: AeroColors.primaryNavy, height: 1.3),
-                      ),
-                    ),
+                    _buildDateChip('غداً', 1),
+                    const SizedBox(width: 8),
+                    _buildDateChip('بعد غد', 2),
                   ],
                 ),
-              ),
-              const SizedBox(height: 16),
-            ],
+                const SizedBox(height: 16),
 
-            // Confirm Button
-            AeroButton.teal(
-              _isImmediate ? 'تأكيد الطلب الفوري' : 'تثبيت الموعد المجدول',
-              onPressed: () {
-                Navigator.of(context).pop();
-                widget.onConfirm(AeroScheduleResult(
-                  isImmediate: _isImmediate,
-                  scheduledDate: _isImmediate ? null : _getSelectedDate(),
-                  timeWindow: _isImmediate ? null : _selectedWindow,
-                ));
-              },
-            ),
-          ],
+                // Time Window Chips
+                Text(
+                  'النافذة الزمنية للزيارة (توقيت دمشق UTC+3):',
+                  style: aeroText(size: 14, weight: FontWeight.w600, color: AeroColors.textPrimary),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _windows.map((w) {
+                    final isSelected = _selectedWindow == w;
+                    return ChoiceChip(
+                      label: Text(w, style: aeroText(size: 12, color: isSelected ? Colors.white : AeroColors.textPrimary)),
+                      selected: isSelected,
+                      selectedColor: AeroColors.accentTeal,
+                      backgroundColor: AeroColors.lightCanvas,
+                      onSelected: (selected) {
+                        if (selected) setState(() => _selectedWindow = w);
+                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+
+                // Buffer notice
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AeroColors.aeroTintLight,
+                    borderRadius: BorderRadius.circular(AeroRadii.badge),
+                    border: Border.all(color: AeroColors.borderLight),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 16, color: AeroColors.accentTeal),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'يتم احتساب هامش انتقال مدته 30 دقيقة بين المواعيد لضمان التزام الممرض بالوقت المحدد.',
+                          style: aeroText(size: 11, color: AeroColors.primaryNavy, height: 1.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // Confirm Button
+              AeroButton.teal(
+                _isImmediate ? 'تأكيد الطلب الفوري' : 'تثبيت الموعد المجدول',
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  widget.onConfirm(AeroScheduleResult(
+                    isImmediate: _isImmediate,
+                    scheduledDate: _isImmediate ? null : _getSelectedDate(),
+                    timeWindow: _isImmediate ? null : _selectedWindow,
+                  ));
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );

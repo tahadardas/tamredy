@@ -1,9 +1,37 @@
 import {useState, type ReactNode} from 'react';
+import {createPortal} from 'react-dom';
 import {api} from './session';
 
-export const Modal = ({title, onClose, children}: {title: string; onClose: () => void; children: ReactNode}) =>
-  <div className="modal" onClick={onClose}><div className="panel modal-box wide" onClick={e => e.stopPropagation()}>
-    <div className="modal-head"><h2>{title}</h2><button className="ghost" onClick={onClose} aria-label="إغلاق">✕</button></div>{children}</div></div>;
+export const Modal = ({
+  title,
+  onClose,
+  children,
+  maxWidth,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  maxWidth?: string | number;
+}) => {
+  return createPortal(
+    <div className="modal" onClick={onClose} role="dialog" aria-modal="true">
+      <div
+        className="modal-box wide"
+        style={maxWidth ? {maxWidth} : undefined}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="modal-head">
+          <h2>{title}</h2>
+          <button className="ghost" onClick={onClose} aria-label="إغلاق" type="button">✕</button>
+        </div>
+        <div className="modal-content">
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
 
 /** Shows a secret exactly once (temporary password). */
 export const Secret = ({label, value, onClose}: {label: string; value: string; onClose: () => void}) =>

@@ -178,12 +178,14 @@ class AeroProposalCard extends StatelessWidget {
                 children: [
                   const Icon(Icons.access_time_filled_rounded, color: AeroColors.accentTeal, size: 18),
                   const SizedBox(width: 8),
-                  Text(
-                    arrivalText,
-                    style: aeroText(
-                      size: 13,
-                      weight: FontWeight.w600,
-                      color: AeroColors.accentTeal,
+                  Expanded(
+                    child: Text(
+                      arrivalText,
+                      style: aeroText(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: AeroColors.accentTeal,
+                      ),
                     ),
                   ),
                 ],

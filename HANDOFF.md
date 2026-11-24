@@ -1,9 +1,27 @@
-# TAMREEDY HANDOFF — SMART BOOKING, OPEN MARKETPLACE & INTELLIGENT REQUEST RECOVERY
+# TAMREEDY HANDOFF — SMART BOOKING, OPEN MARKETPLACE & UI/UX MASTER ARCHITECTURE
 ## Production-Grade Engineering Master Report
 
-**Status:** SBM_COMPLETE_VERIFIED  
+**Status:** SBM_COMPLETE_VERIFIED & UI_UX_POLISHED_VERIFIED  
 **Branch:** `feature/smart-booking-marketplace`  
-**Overall Status:** Green (All Tests Passing, 154/154 API Tests PASS, 13/13 Worker Tests PASS, 19/19 Flutter Core Tests PASS, 12/12 Patient App Tests PASS, 6/6 Nurse App Tests PASS, Admin Build Clean, Flutter Clean)
+**Overall Status:** Green (All Tests Passing, 154/154 API Tests PASS, 13/13 Worker Tests PASS, 19/19 Flutter Core Tests PASS, 12/12 Patient App Tests PASS, 7/7 Nurse App Tests PASS, Admin Build Clean, Flutter Clean, 0 Lint Issues)
+
+---
+
+## 0. UI/UX & ADMIN WEB / MOBILE DESIGN AUDIT (COMPLETED & VERIFIED)
+
+1. **Admin Web Modal Architecture & Stacking Context Isolation:**
+   - **Root Cause Fixed:** Modals in `apps/admin_web` were previously constrained within `.panel` DOM elements which use `backdrop-filter: blur(14px)`. Under CSS specifications, backdrop filters establish a local stacking context and containing block for `position: fixed` elements, causing the sticky `<header>` (`z-index: 20`) to paint on top of modals.
+   - **React Portal Solution:** Refactored `Modal` in `apps/admin_web/src/widgets.tsx` to render via `createPortal(..., document.body)`.
+   - **Stacking & Viewport Safety:** Updated `.modal` CSS to `z-index: 100000; position: fixed; inset: 0; width: 100vw; height: 100vh;` with a refined backdrop overlay.
+   - **Dedicated Aero Card Styling:** Replaced nested `.panel` inheritance on `.modal-box` with a solid elevated card (`box-shadow: 0 28px 64px -12px rgba(4, 21, 38, 0.5)`), sticky header (`.modal-head`) with title and smooth close button, scrollable body (`.modal-content`), and sticky bottom actions (`.modal-box .actions`).
+   - **Refactored All Modals:** Converted `NurseForm` (+ إضافة ممرض), `Detail` in `pages_nurses.tsx`, `ChangePassword` in `main.tsx`, `SupportReports` in `pages_expansion.tsx`, and `DispatchMonitor` in `pages_dispatch.tsx`.
+   - **Form Polish & RTL/LTR:** Standardized Syrian phone placeholders (`+963 9XX XXX XXX`), national IDs (`11 رقماً`), and added explicit styling for checkboxes (`.check`) and tabs (`.tabs`).
+
+2. **Mobile Apps UI/UX Resilience & Overflow Elimination (Flutter Core, Patient App, Nurse App):**
+   - **Keyboard Avoidance & Safe Scrolling:** Wrapped modal bottom sheets (`AeroBookingModePickerSheet`, `AeroInstantTimeoutSheet`, `AeroProposalSubmissionSheet`, `AeroSchedulePickerSheet`) in `SingleChildScrollView(physics: const BouncingScrollPhysics(), child: ...)` to prevent `RenderFlex overflow` when virtual keyboards appear or on compact devices.
+   - **Text & Chip Overflow Prevention:** Wrapped booking mode card titles in `Flexible(child: Text(..., overflow: TextOverflow.ellipsis))` and proposal arrival text in `Expanded(child: Text(...))`.
+   - **Horizontal Chip Row Protection:** Wrapped distance filter chips in `NurseMarketplaceScreen` in `SingleChildScrollView(scrollDirection: Axis.horizontal, ...)` for seamless responsiveness across 320px–360px screens.
+   - **Static Analysis & Lint Cleanliness:** Fixed `curly_braces_in_flow_control_structures` and `unused_local_variable` warnings. `flutter analyze` reports `No issues found!`.
 
 ---
 

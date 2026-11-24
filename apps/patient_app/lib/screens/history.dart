@@ -90,9 +90,12 @@ class HistoryScreen extends StatelessWidget {
           child: FutureBuilder<BillInfo>(
             future: bill,
             builder: (context, snapshot) {
-              if (snapshot.hasError)
+              if (snapshot.hasError) {
                 return const NoticeBox('تعذر تحميل الفاتورة. حاول مجددًا.');
-              if (!snapshot.hasData) return const LinearProgressIndicator();
+              }
+              if (!snapshot.hasData) {
+                return const LinearProgressIndicator();
+              }
               return BillCard(bill: snapshot.data!);
             },
           ),
