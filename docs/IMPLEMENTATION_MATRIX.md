@@ -1,0 +1,59 @@
+# Tamreedy Guardian implementation matrix
+
+Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BLOCKED. Existing Open Dispatch functionality requires evidence against the new requirements before promotion.
+
+| Specification section | Status | Evidence or remaining work |
+| --- | --- | --- |
+| 1. تعريف المهمة الرئيسية | IN_PROGRESS | |
+| 2. تعليمات غير قابلة للتفاوض | IN_PROGRESS | |
+| 3. استمرارية التنفيذ بين نماذج الذكاء الاصطناعي | IN_PROGRESS | |
+| 4. الهوية البصرية الإلزامية | NOT_STARTED | |
+| 5. فلسفة تجربة الاستخدام — Map-First | NOT_STARTED | |
+| 6. الشاشة الرئيسية للمريض | NOT_STARTED | |
+| 7. القائمة الجانبية للمريض | NOT_STARTED | |
+| 8. تسجيل الدخول وإنشاء الحساب واستعادة كلمة المرور | NOT_STARTED | |
+| 9. محرك اختيار العناوين — Location Experience | NOT_STARTED | |
+| 10. الأماكن المحفوظة | NOT_STARTED | |
+| 11. رحلة إنشاء الطلب | NOT_STARTED | |
+| 12. طريقة الدفع | NOT_STARTED | |
+| 13. طلب الخدمة الآن أو لاحقًا | NOT_STARTED | |
+| 14. شاشة البحث عن ممرض | NOT_STARTED | |
+| 15. شاشة تتبع الممرض | NOT_STARTED | |
+| 16. سياسة الإلغاء المعتمدة | NOT_STARTED | |
+| 17. سجل الزيارات | NOT_STARTED | |
+| 18. المحفظة | NOT_STARTED | |
+| 19. الملف الشخصي والإعدادات | NOT_STARTED | |
+| 20. تصميم تطبيق الممرض | NOT_STARTED | |
+| 21. Tamreedy Guardian — المعمارية الأساسية | NOT_STARTED | |
+| 22. شاشة الطوارئ والسلامة | NOT_STARTED | |
+| 23. زر SOS العائم | NOT_STARTED | |
+| 24. الاستغاثة الصامتة — Silent SOS | NOT_STARTED | |
+| 25. حالات الاستغاثة | NOT_STARTED | |
+| 26. المناوبات ومركز السلامة | NOT_STARTED | |
+| 27. نظام إدارة المناوبات | NOT_STARTED | |
+| 28. جهات الاتصال الموثوقة | NOT_STARTED | |
+| 29. دليل أرقام الطوارئ | NOT_STARTED | |
+| 30. تتبع مسارات الزيارات — Safety Location Evidence | NOT_STARTED | |
+| 31. تخزين نقاط GPS | NOT_STARTED | |
+| 32. العمل عند ضعف الإنترنت | NOT_STARTED | |
+| 33. التحقق الدوري من السلامة — Safety Check-In | NOT_STARTED | |
+| 34. سياسة الممرضات والعمل الليلي | NOT_STARTED | |
+| 35. توثيق المريض والحد من إساءة الاستخدام | NOT_STARTED | |
+| 36. Safety PIN والتحقق من الزيارة | NOT_STARTED | |
+| 37. الإنهاء الآمن للزيارة | NOT_STARTED | |
+| 38. نظام الحوادث الأمنية | NOT_STARTED | |
+| 39. ملف الأدلة الرقمية | NOT_STARTED | |
+| 40. منع التسجيل السري للصوت والصورة | NOT_STARTED | |
+| 41. قاعدة البيانات | NOT_STARTED | |
+| 42. حماية البيانات وسياسة الاحتفاظ | NOT_STARTED | |
+| 43. الصلاحيات | NOT_STARTED | |
+| 44. واجهات API | NOT_STARTED | |
+| 45. الإشعارات والتصعيد | NOT_STARTED | |
+| 46. مشاركة الزيارة مع شخص موثوق | NOT_STARTED | |
+| 47. Google Play Compliance | NOT_STARTED | |
+| 48. الأداء وسرعة التطبيق | NOT_STARTED | |
+| 49. الاختبارات الإلزامية للتصميم | NOT_STARTED | |
+| 50. الاختبارات الإلزامية لنظام Guardian | NOT_STARTED | |
+| 51. مراحل التنفيذ | NOT_STARTED | |
+| 52. شروط اكتمال المشروع | NOT_STARTED | |
+| 53. التقرير النهائي | NOT_STARTED | |

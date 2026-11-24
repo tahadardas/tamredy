@@ -154,3 +154,13 @@ If resuming:
 - Phase 9 evidence: 22 notification/worker/performance tests passed, nurse Flutter 5/5, patient Flutter 6/6. Recovered an expired claim after a simulated worker crash, verified independent channel claims and dedup of recorded deliveries. Firebase acceptance remains distinct from device receipt; live FCM, independent PostGIS sessions, and delivery across device restarts remain unverified.
 
 - Phase 10 evidence: pnpm -r build green; Node API and worker 119 passed / 2 skipped (live PostgreSQL missing); Flutter patient 6, nurse 5, and shared 12 passed. Added the genuine multi-connection test for ten acceptors and cancellation racing acceptance. Delayed reminders tested once without creating a penalty. Declared Android real device unavailable. No deploy or push. See docs/OPEN_DISPATCH_DELIVERY_AR.md.
+
+## Guardian Safety and Aero Map-First
+
+Phase 0 recorded on 2026-11-24. Branch: codex/guardian-safety.
+Local baseline: 827b02370035ed0c3006d481037e799979d4328c (Open Dispatch).
+Remote reference: feature/aero-signature at cb0066ea6a925aeac16e85852c18897ab5691b34.
+API, Worker and Admin Web built successfully. Baseline Node command exited 0.
+Scope and evidence are tracked in docs/IMPLEMENTATION_MATRIX.md.
+Next: enforce HTTPS and verify owner-bound session revocation across HTTP and Socket.IO, then audit the recovery workflow.
+Production deployment is deferred. No schema or endpoint changes in phase 0.

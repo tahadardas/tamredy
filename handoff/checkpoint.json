@@ -1,10 +1,10 @@
 {
   "projectName": "tamreedy",
-  "branch": "codex/open-dispatch",
-  "baselineCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
-  "phase": 10,
-  "status": "LOCAL_VERIFIED_STAGING_PENDING",
-  "nextAction": "Apply 021–024 on disposable PostgreSQL/PostGIS, run TEST_DATABASE_URL concurrency, verify physical FCM delivery and obtain rollout authorization.",
-  "localVerification": {"nodePassed": 119, "postgresConcurrencySkipped": 2, "flutterPassed": 23},
+  "branch": "codex/guardian-safety",
+  "baselineCommit": "827b02370035ed0c3006d481037e799979d4328c",
+  "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
+  "phase": 0,
+  "status": "BASELINE_VERIFIED",
+  "nextAction": "Enforce HTTPS, verify owner-bound sessions, and audit password recovery",
   "productionDeploymentAuthorized": false
 }
