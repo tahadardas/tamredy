@@ -213,3 +213,10 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - The visit location picker can save a pin, list and select places, edit details, set a default and delete. Selection updates recency and still requires address confirmation before booking. The default sorts first.
 - API built. One PGlite lifecycle and access-control test, three route audits and nine patient Flutter tests passed. The saved place Flutter test uses a simulated API response. No server deployment or physical verification.
 - Remaining: wallet status and real ledger availability, physical map/GPS and accessibility, and later Guardian phases.
+
+### Guardian phase 3 — wallet availability
+
+- The production wallet screen reads GET /v1/wallet/status, shows server-disabled or retry states, and omits local demo balance and transactions. Cash is the initial production payment choice.
+- Provider and ledger remain unavailable on the current backend. No payment API, prices, fees or migrations changed.
+- Nine patient demo tests and one non-demo wallet widget test passed. The wallet test simulates an API failure followed by a disabled response.
+- ADB found no device. Physical phase 3 verification remains pending. Continue with the phase 4 booking and tracking flow review alongside that release check.

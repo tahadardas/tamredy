@@ -183,7 +183,7 @@ class PatientController extends ChangeNotifier {
   int _pollCount = 0;
   Timer? _demoMove;
   DateTime? _searchStart;
-  String payMethod = 'wallet'; // wallet | cash | mixed
+  String payMethod = kDemoMode ? 'wallet' : 'cash'; // wallet | cash | mixed
   int rating = 5;
 
   // Price estimate + promo

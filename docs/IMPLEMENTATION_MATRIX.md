@@ -21,7 +21,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 15. شاشة تتبع الممرض | NOT_STARTED | |
 | 16. سياسة الإلغاء المعتمدة | NOT_STARTED | |
 | 17. سجل الزيارات | NOT_STARTED | |
-| 18. المحفظة | NOT_STARTED | |
+| 18. المحفظة | IN_PROGRESS | Existing server status shown in production, retry tested. Authoritative ledger unavailable. |
 | 19. الملف الشخصي والإعدادات | NOT_STARTED | |
 | 20. تصميم تطبيق الممرض | NOT_STARTED | |
 | 21. Tamreedy Guardian — المعمارية الأساسية | NOT_STARTED | |

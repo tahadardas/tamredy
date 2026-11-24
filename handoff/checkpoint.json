@@ -4,7 +4,7 @@
   "baselineCommit": "827b02370035ed0c3006d481037e799979d4328c",
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 3,
-  "status": "IN_PROGRESS",
-  "nextAction": "Verify wallet availability via the existing API and avoid presenting fabricated production balances. Run physical map and saved-place checks before closing phase 3.",
+  "status": "LOCAL_IMPLEMENTED_DEVICE_VERIFICATION_PENDING",
+  "nextAction": "Review phase 4 booking and tracking from service selection through history. Keep physical phase 3 verification pending until Android is attached.",
   "productionDeploymentAuthorized": false
 }
