@@ -30,6 +30,11 @@ export class AvailabilityDto {
 export class ReviewDto {
   @IsNumber() @Min(1) @Max(5) stars!: number;
   @IsOptional() @IsString() @MaxLength(1200) comment?: string;
+  @IsOptional() @IsNumber() @Min(1) @Max(5) punctualityStars?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(5) conductStars?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(5) clinicalStars?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(5) hygieneStars?: number;
+  @IsOptional() @IsNumber() @Min(1) @Max(5) overallStars?: number;
 }
 export class NurseReportDto {
   @IsIn(['NORMAL','ADDRESS_INCORRECT','NO_SHOW','SAFETY_CONCERN','PAYMENT_DISPUTE']) category!: string;

@@ -99,6 +99,12 @@ import { CarePlansController } from './care-plans/care-plans.controller.js';
 import { CarePlansService } from './care-plans/care-plans.service.js';
 import { HealthRecordsController } from './health-records/health-records.controller.js';
 import { HealthRecordsService } from './health-records/health-records.service.js';
+import { ClinicalReportsController } from './clinical-reports/clinical-reports.controller.js';
+import { ClinicalReportsService } from './clinical-reports/clinical-reports.service.js';
+import { FavoritesController } from './nurses/favorites.controller.js';
+import { FavoritesService } from './nurses/favorites.service.js';
+import { PackagesController } from './marketing/packages.controller.js';
+import { PackagesService } from './marketing/packages.service.js';
 import {
   VerificationProvider,
   TestVerificationProvider,
@@ -113,10 +119,10 @@ import {
       limit: 120,
     }]),
   ],
-  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController,RetentionController,ChatController,TrustController,NurseCalendarController,CarePlansController,HealthRecordsController],
+  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController,RetentionController,ChatController,TrustController,NurseCalendarController,CarePlansController,HealthRecordsController,ClinicalReportsController,FavoritesController,PackagesController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,ChatService,TrustService,NurseCalendarService,CarePlansService,HealthRecordsService,
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,ChatService,TrustService,NurseCalendarService,CarePlansService,HealthRecordsService,ClinicalReportsService,FavoritesService,PackagesService,
     TestVerificationProvider,SmsVerificationProvider,WhatsAppVerificationProvider,
     {
       provide: VerificationProvider,
