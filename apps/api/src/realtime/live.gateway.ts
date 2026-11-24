@@ -55,6 +55,10 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     }
     await requireActiveDeviceSession(this.db, payload.sub, payload.dsi);
   }
+  async sendToUser(userId: string, type: string, payload: unknown) {
+    await this.deliverPrivateEvent(userId, type, payload);
+  }
+
   private async deliverPrivateEvent(userId: string, type: string, payload: unknown) {
     const users = this.io?.sockets;
     const recipients = this.io?.adapter.rooms.get(`user:${userId}`);

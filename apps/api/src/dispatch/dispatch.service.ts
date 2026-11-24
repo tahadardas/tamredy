@@ -60,6 +60,14 @@ export class DispatchService {
       if(!nurse?.verified || nurse.work_status !== 'AVAILABLE' || nurse.availability_intent!=='AVAILABLE') {
         conflict('NURSE_NOT_AVAILABLE');
       }
+      const blocked = await c.query(`
+        SELECT 1 FROM user_blocks ub
+        WHERE ((ub.blocker_user_id = $1 AND ub.blocked_user_id = $2)
+           OR (ub.blocker_user_id = $2 AND ub.blocked_user_id = $1))
+          AND ub.revoked_at IS NULL
+        LIMIT 1
+      `, [userId, request.requester_user_id]);
+      if (blocked.rowCount) conflict('MUTUALLY_BLOCKED');
       const ready = await c.query(`SELECT 1 FROM nurses n
         JOIN users u ON u.id=n.user_id AND u.status='ACTIVE'
         JOIN care_requests r ON r.id=$2

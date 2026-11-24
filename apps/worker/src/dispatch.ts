@@ -37,6 +37,12 @@ async function diagnoseExclusions(c: pg.PoolClient, requestId: string, serviceId
              OR EXISTS (SELECT 1 FROM care_request_items cri WHERE cri.request_id = $1 AND NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = cri.service_id AND ns.approved = true)) THEN 'SKILL_NOT_APPROVED'
         WHEN EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id = n.id AND a.status = 'ACTIVE') THEN 'ACTIVE_ASSIGNMENT'
         WHEN EXISTS (SELECT 1 FROM request_offers ro WHERE ro.request_id = $1 AND ro.nurse_id = n.id) THEN 'OFFER_ALREADY_SENT'
+        WHEN EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ((ub.blocker_user_id = req.requester_user_id AND ub.blocked_user_id = n.user_id)
+             OR (ub.blocker_user_id = n.user_id AND ub.blocked_user_id = req.requester_user_id))
+            AND ub.revoked_at IS NULL
+        ) THEN 'MUTUALLY_BLOCKED'
         WHEN NOT ST_DWithin(nl.location, req.location, $3::double precision) THEN 'OUTSIDE_RADIUS'
         ELSE 'ELIGIBLE'
       END AS status,
@@ -156,6 +162,12 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
           AND NOT EXISTS (SELECT 1 FROM request_assignments a
                          WHERE a.nurse_id = n.id AND a.status = 'ACTIVE')
           ${nightPolicyEnabled() ? 'AND guardian_dispatch_denial(n.id,req.id,statement_timestamp()) IS NULL' : ''}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE ((ub.blocker_user_id = req.requester_user_id AND ub.blocked_user_id = n.user_id)
+               OR (ub.blocker_user_id = n.user_id AND ub.blocked_user_id = req.requester_user_id))
+              AND ub.revoked_at IS NULL
+          )
           AND ST_DWithin(nl.location, req.location, $3::double precision)
       ), inserted AS (
         INSERT INTO request_offers(request_id, nurse_id, wave_no, expires_at)

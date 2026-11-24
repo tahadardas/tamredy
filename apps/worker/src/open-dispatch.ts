@@ -52,6 +52,12 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
               WHERE ns.nurse_id = n.id AND ns.service_id = cri.service_id AND ns.approved
             )
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ub
+          WHERE ((ub.blocker_user_id = r.requester_user_id AND ub.blocked_user_id = n.user_id)
+             OR (ub.blocker_user_id = n.user_id AND ub.blocked_user_id = r.requester_user_id))
+            AND ub.revoked_at IS NULL
+        )
         ${nightPolicyEnabled() ? 'AND guardian_dispatch_denial(n.id,r.id,statement_timestamp()) IS NULL' : ''}
         AND n.last_heartbeat_at > statement_timestamp()-r.search_max_heartbeat_seconds*interval '1 second'
         AND l.recorded_at > statement_timestamp()-r.search_max_location_seconds*interval '1 second'
