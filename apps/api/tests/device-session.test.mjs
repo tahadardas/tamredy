@@ -23,3 +23,30 @@ test('device session lookup failure prevents authentication', async () => {
   const db = { async query() { throw unavailable; } };
   await assert.rejects(requireActiveDeviceSession(db, owner, session), unavailable);
 });
+
+test('connected sockets stop receiving private events after device revocation', async () => {
+  const { LiveGateway } = await import('../dist/realtime/live.gateway.js');
+  let revoked = false;
+  const gateway = new LiveGateway({
+    async query(sql) {
+      if (sql.includes('FROM users')) return { rowCount: 1, rows: [{ auth_version: null }] };
+      return { rows: revoked ? [] : [{}] };
+    },
+  }, {});
+  let delivered = 0;
+  let disconnected = false;
+  const socket = {
+    data: { auth: { sub: owner, dsi: session, exp: Math.floor(Date.now() / 1000) + 60 } },
+    emit() { delivered++; },
+    disconnect() { disconnected = true; },
+  };
+  gateway.io = {
+    sockets: new Map([['socket', socket]]),
+    adapter: { rooms: new Map([['user:' + owner, new Set(['socket'])]]) },
+  };
+  await gateway.deliverPrivateEvent(owner, 'request.updated', {});
+  revoked = true;
+  await gateway.deliverPrivateEvent(owner, 'request.updated', {});
+  assert.equal(delivered, 1);
+  assert.equal(disconnected, true);
+});

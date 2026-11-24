@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Param, Post, Query, Request
 import { IsDateString, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { defaultPasswordFor, generatePassword, hashPassword } from '../auth/auth.service.js';
+import { issueManualRecoveryPassword } from '../auth/manual-password-recovery.js';
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
 
@@ -71,13 +72,10 @@ export class AdminUsersController {
 
   @Post(':id/reset-password') async reset(@Request() r: AuthRequest, @Param('id') id: string) {
     requireRole(r.user!, 'ADMIN');
-    const target = (await this.db.query('SELECT role FROM users WHERE id=$1', [id])).rows[0];
-    if (!target) missing();
-    const password = target.role === 'ADMIN' || target.role === 'CLINICAL_REVIEWER' ? generatePassword() : await defaultPasswordFor(this.db);
     return this.db.transaction(async c => {
-      const u = await c.query(`UPDATE users SET password_hash=$2,must_change_password=true,failed_logins=0,locked_until=NULL WHERE id=$1 RETURNING id`, [id, hashPassword(password)]);
-      if (!u.rowCount) missing();
-      await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [id]);
+      const target = await c.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' FOR UPDATE", [id]);
+      if (!target.rowCount) missing();
+      const password = await issueManualRecoveryPassword(c, id);
       await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id) VALUES($1,'user.password_reset','user',$2)`, [r.user!.id, id]);
       return { id, temporaryPassword: password };
     });

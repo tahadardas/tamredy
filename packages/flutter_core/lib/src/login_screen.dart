@@ -49,6 +49,45 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
+  void dispose() {
+    _phone.dispose();
+    _code.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _showRecovery() async {
+    const supportContact = String.fromEnvironment('RECOVERY_SUPPORT_CONTACT');
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('استعادة كلمة المرور'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'تواصل مع دعم تمريضي عبر القناة الرسمية للتحقق من هويتك. '
+              'بعد التحقق، يصدر الدعم كلمة مرور مؤقتة صالحة لمدة 30 دقيقة. '
+              'سجّل الدخول بها واختر كلمة مرور جديدة.',
+            ),
+            if (supportContact.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const SelectableText(supportContact),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) => TamScaffold(
     title: 'تسجيل الدخول',
     subtitle: _pw
@@ -183,6 +222,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? 'الرمز غير صحيح أو منتهٍ، أو الحساب غير مناسب لهذا التطبيق'
                       : 'تعذر إرسال الرمز؛ حاول لاحقًا',
                 ),
+        ),
+      if (_pw)
+        TextButton(
+          onPressed: _busy ? null : _showRecovery,
+          child: const Text('نسيت كلمة المرور؟'),
         ),
       if (_pw)
         Center(

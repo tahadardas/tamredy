@@ -17,6 +17,7 @@ const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(
 await pg.exec(strip(readFileSync(resolve(root, 'infra/db/migrations/001_core.sql'), 'utf8')));
 await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/004_auth_otp_refresh.sql'), 'utf8'));
 await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/019_device_sessions_and_persistent_auth.sql'), 'utf8'));
+await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/025_manual_password_recovery.sql'), 'utf8'));
 
 // Minimal DbService stand-in: one connection, serialised transactions.
 let chain = Promise.resolve();

@@ -24,9 +24,13 @@ export class AuthGuard implements CanActivate {
       payload = decoded;
     } catch { throw new UnauthorizedException('INVALID_TOKEN'); }
     if (typeof payload.sub !== 'string') throw new UnauthorizedException('INVALID_SUBJECT');
-    const result = await this.db.query('SELECT id,role,status,must_change_password FROM users WHERE id=$1', [payload.sub]);
+    const result = await this.db.query('SELECT id,role,status,must_change_password,auth_version,temporary_password_expires_at FROM users WHERE id=$1', [payload.sub]);
     const row = result.rows[0];
     if (!row || row.status !== 'ACTIVE') throw new UnauthorizedException('ACCOUNT_INACTIVE');
+    if ((payload.av ?? null) !== (row.auth_version ?? null) ||
+        (row.temporary_password_expires_at && new Date(row.temporary_password_expires_at) <= new Date())) {
+      throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+    }
     await requireActiveDeviceSession(this.db, row.id, payload.dsi);
     // Until the initial password is replaced, only the auth routes (me / change-password) work.
     if (row.must_change_password && !(request.url ?? '').startsWith('/v1/auth/')) throw new ForbiddenException({ code: 'PASSWORD_CHANGE_REQUIRED' });

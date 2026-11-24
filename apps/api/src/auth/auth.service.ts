@@ -92,7 +92,7 @@ export class AuthService {
     if (authMode() !== 'password') throw new HttpException({ code: 'AUTH_MODE_OTP' }, 404);
     if (!PHONE.test(phone) || typeof password !== 'string' || password.length < 6 || password.length > 128) throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
     return this.db.transaction(async c => {
-      const u = (await c.query('SELECT id,role,status,password_hash,failed_logins,locked_until,must_change_password FROM users WHERE phone_e164=$1 FOR UPDATE', [phone])).rows[0];
+      const u = (await c.query('SELECT id,role,status,password_hash,failed_logins,locked_until,must_change_password,temporary_password_expires_at FROM users WHERE phone_e164=$1 FOR UPDATE', [phone])).rows[0];
       const ok = verifyPassword(password, u?.password_hash ?? null);
       if (!u || u.status !== 'ACTIVE') throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
       if (u.locked_until && new Date(u.locked_until) > new Date()) throw new HttpException({ code: 'ACCOUNT_LOCKED' }, 429);
@@ -101,6 +101,9 @@ export class AuthService {
         await c.query(`UPDATE users SET failed_logins=$2,locked_until=CASE WHEN $3::boolean THEN now()+($4||' minutes')::interval END WHERE id=$1`,
           [u.id, locked ? 0 : u.failed_logins + 1, locked, String(LOCK_MINUTES)]);
         await c.query('COMMIT'); await c.query('BEGIN');
+        throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
+      }
+      if (u.temporary_password_expires_at && new Date(u.temporary_password_expires_at) <= new Date()) {
         throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
       }
       await c.query('UPDATE users SET failed_logins=0,locked_until=NULL WHERE id=$1', [u.id]);
@@ -149,6 +152,17 @@ export class AuthService {
   async refresh(refreshToken: string, deviceId?: string) {
     const h = hashToken(refreshToken ?? '');
     return this.db.transaction(async c => {
+      const owner = (await c.query('SELECT user_id FROM refresh_tokens WHERE token_hash=$1', [h])).rows[0];
+      if (!owner) throw new UnauthorizedException({ code: 'REFRESH_INVALID' });
+      const u = (await c.query(
+        'SELECT id,role,status,auth_version,temporary_password_expires_at FROM users WHERE id=$1 FOR UPDATE',
+        [owner.user_id],
+      )).rows[0];
+      if (!u || u.status !== 'ACTIVE') throw new UnauthorizedException({ code: 'ACCOUNT_INACTIVE' });
+      if (u.temporary_password_expires_at && new Date(u.temporary_password_expires_at) <= new Date()) {
+        throw new UnauthorizedException({ code: 'REFRESH_EXPIRED' });
+      }
+
       const r = (await c.query(`
         SELECT rt.*
         FROM refresh_tokens rt
@@ -175,8 +189,6 @@ export class AuthService {
       }
 
       if (new Date(r.expires_at) <= new Date()) throw new UnauthorizedException({ code: 'REFRESH_EXPIRED' });
-      const u = (await c.query('SELECT id,role,status FROM users WHERE id=$1', [r.user_id])).rows[0];
-      if (!u || u.status !== 'ACTIVE') throw new UnauthorizedException({ code: 'ACCOUNT_INACTIVE' });
 
       // Sliding session update: extend device session last_seen_at
       let dsi = r.device_session_id;
@@ -195,7 +207,7 @@ export class AuthService {
         VALUES($1,$2,$3,now()+($4||' days')::interval,$5)`,
         [u.id, r.family_id, nextHash, String(REFRESH_TTL_DAYS), dsi]);
 
-      const accessToken = jwt.sign({ dsi }, secret(), {
+      const accessToken = jwt.sign({ dsi, av: u.auth_version }, secret(), {
         algorithm: 'HS256', subject: u.id, expiresIn: ACCESS_TTL_SECONDS,
         issuer: process.env.JWT_ISSUER ?? 'tamreedy-api', audience: process.env.JWT_AUDIENCE ?? 'tamreedy-mobile',
       });
@@ -228,7 +240,8 @@ export class AuthService {
     await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id)
       VALUES($1,$2,$3,now()+($4||' days')::interval,$5)`,
       [userId, family, hashToken(refreshToken), String(REFRESH_TTL_DAYS), deviceSessionId ?? null]);
-    const accessToken = jwt.sign({ dsi: deviceSessionId }, secret(), {
+    const { auth_version: av } = (await c.query('SELECT auth_version FROM users WHERE id=$1', [userId])).rows[0];
+    const accessToken = jwt.sign({ dsi: deviceSessionId, av }, secret(), {
       algorithm: 'HS256', subject: userId, expiresIn: ACCESS_TTL_SECONDS,
       issuer: process.env.JWT_ISSUER ?? 'tamreedy-api', audience: process.env.JWT_AUDIENCE ?? 'tamreedy-mobile',
     });

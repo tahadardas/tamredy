@@ -3,6 +3,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from '../auth/auth.guard.js';
 import { defaultPasswordFor, hashPassword } from '../auth/auth.service.js';
+import { issueManualRecoveryPassword } from '../auth/manual-password-recovery.js';
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
 import { DocStore, MAX_FILE_BYTES, KIND_LABEL, docFileName } from './doc-store.js';
@@ -133,15 +134,12 @@ export class AdminNursesController {
     });
   }
 
-  /** Recovery: sets the initial password again (must be changed at next login) and ends all sessions. */
   @Post('nurses/:id/reset-password') async resetPassword(@Request() r: AuthRequest, @Param('id') id: string) {
     requireRole(r.user!, 'ADMIN');
-    const password = await defaultPasswordFor(this.db);
     return this.db.transaction(async c => {
-      const n = (await c.query(`SELECT n.user_id FROM nurses n JOIN users u ON u.id=n.user_id WHERE n.id=$1 AND u.status<>'DELETED'`, [id])).rows[0];
+      const n = (await c.query(`SELECT n.user_id FROM nurses n JOIN users u ON u.id=n.user_id WHERE n.id=$1 AND u.status='ACTIVE' FOR UPDATE OF u`, [id])).rows[0];
       if (!n) missing();
-      await c.query('UPDATE users SET password_hash=$2,must_change_password=true,failed_logins=0,locked_until=NULL WHERE id=$1', [n.user_id, hashPassword(password)]);
-      await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [n.user_id]);
+      const password = await issueManualRecoveryPassword(c, n.user_id);
       await this.audit(c, r.user!.id, 'nurse.password_reset', id);
       return { id, temporaryPassword: password };
     });

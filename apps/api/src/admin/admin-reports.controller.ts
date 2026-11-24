@@ -4,7 +4,7 @@ import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from '../auth/aut
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
 import { nextWave } from '../common/states.js';
-import { defaultPasswordFor, hashPassword } from '../auth/auth.service.js';
+import { defaultPasswordFor, hashPassword, verifyPassword } from '../auth/auth.service.js';
 
 class CredentialDecisionDto {
   @IsIn(['APPROVE', 'REJECT', 'NEEDS_INFO']) decision!: 'APPROVE' | 'REJECT' | 'NEEDS_INFO';
@@ -80,8 +80,8 @@ export class AdminReportsController {
       if (dto.decision === 'APPROVE') {
         const u = (await c.query(`SELECT u.id,u.phone_e164,u.display_name,u.password_hash,u.must_change_password,u.status FROM nurses n JOIN users u ON u.id=n.user_id WHERE n.id=$1 FOR UPDATE OF u`, [row.nurse_id])).rows[0];
         if (u && u.status === 'ACTIVE') {
-          let initial = !!u.must_change_password;
           const def = await defaultPasswordFor(this.db);
+          let initial = u.must_change_password && verifyPassword(def, u.password_hash);
           if (!u.password_hash) {
             await c.query('UPDATE users SET password_hash=$2,must_change_password=true WHERE id=$1', [u.id, hashPassword(def)]);
             initial = true;

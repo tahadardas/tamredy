@@ -197,7 +197,7 @@ export function Nurses({live}: {live: Live}) {
       n.documents, n.skills, n.rating ?? '—', n.account_status === 'ACTIVE' ? 'نشط' : 'موقوف',
       <span className="acts" key="a"><button className="pill" onClick={() => setOpen(n.id)}>فتح</button>
         <button className="pill" onClick={() => act(() => sendJson('POST', `/v1/admin/nurses/${n.id}/status`, {status: n.account_status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'}))}>{n.account_status === 'ACTIVE' ? 'إيقاف' : 'تفعيل'}</button>
-        <button className="pill" onClick={() => { if (confirm(`استعادة كلمة المرور للممرض ${n.display_name}؟ تُعاد إلى الكلمة الافتراضية ويُجبر على تغييرها عند الدخول، وتنتهي جلساته الحالية.`)) void sendJson('POST', `/v1/admin/nurses/${n.id}/reset-password`).then(r => setSecret({pw: r.temporaryPassword})).catch(() => undefined); }}>استعادة كلمة المرور</button>
+        <button className="pill" onClick={() => { if (confirm(`استعادة كلمة المرور للممرض ${n.display_name}؟ تحقق أولًا من هوية صاحب الحساب. تصدر كلمة مؤقتة صالحة 30 دقيقة وتنتهي الجلسات الحالية.`)) void sendJson('POST', `/v1/admin/nurses/${n.id}/reset-password`).then(r => setSecret({pw: r.temporaryPassword})).catch(() => undefined); }}>استعادة كلمة المرور</button>
         <button className="pill danger" onClick={() => { if (confirm(`حذف الممرض ${n.display_name}؟ تبقى سجلاته المالية والزيارات محفوظة، ولا يستطيع الدخول بعد ذلك.`)) act(() => sendJson('DELETE', `/v1/admin/nurses/${n.id}/profile`)); }}>حذف</button></span>])}/>}
     {items && !items.length && <p className="hint">لا ممرضين مطابقين.</p>}
     {adding && <Modal title="إضافة ممرض" onClose={() => setAdding(false)}>

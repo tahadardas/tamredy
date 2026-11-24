@@ -64,7 +64,7 @@ export function Accounts({live}: {live: Live}) {
       u.status === 'ACTIVE' ? (u.locked_until && new Date(u.locked_until) > new Date() ? 'مقفل مؤقتًا' : 'نشط') : 'موقوف', fmtDate(u.created_at),
       <span className="acts" key="a">
         {tab === 'STAFF' && <button className="pill" onClick={() => setEdit(u)}>تعديل</button>}
-        <button className="pill" onClick={() => { if (confirm('إصدار كلمة مرور جديدة؟ تنتهي جلساته الحالية.')) void act(() => sendJson('POST', `/v1/admin/users/${u.id}/reset-password`), r => setSecret(r.temporaryPassword)); }}>كلمة مرور جديدة</button>
+        <button className="pill" onClick={() => { if (confirm('هل تحققت من هوية صاحب الحساب؟ تصدر كلمة مؤقتة صالحة 30 دقيقة وتنتهي الجلسات الحالية.')) void act(() => sendJson('POST', `/v1/admin/users/${u.id}/reset-password`), r => setSecret(r.temporaryPassword)); }}>كلمة مرور جديدة</button>
         <button className="pill" onClick={() => void act(() => sendJson('POST', `/v1/admin/users/${u.id}/status`, {status: u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'}))}>{u.status === 'ACTIVE' ? 'إيقاف' : 'تفعيل'}</button>
         {tab === 'STAFF' && <button className="pill danger" onClick={() => { if (confirm('حذف الحساب؟')) void act(() => sendJson('DELETE', `/v1/admin/staff/${u.id}`)); }}>حذف</button>}</span>])}/>}
     {adding && <NewAccount onClose={() => setAdding(false)} onDone={pw => { setAdding(false); setSecret(pw); void load(); }}/>}

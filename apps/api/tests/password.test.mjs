@@ -23,7 +23,7 @@ const { DocStore } = await import('../dist/admin/doc-store.js');
 
 const pg = new PGlite();
 const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(Point,4326\)/g, 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
-for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '006_pricing_promos_rewards', '009_nurse_admin_documents_settings', '011_regions', '013_default_password', '014_applications_doc_kinds', '019_device_sessions_and_persistent_auth'])
+for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '006_pricing_promos_rewards', '009_nurse_admin_documents_settings', '011_regions', '013_default_password', '014_applications_doc_kinds', '019_device_sessions_and_persistent_auth', '025_manual_password_recovery'])
   await pg.exec(strip(readFileSync(resolve(root, `infra/db/migrations/${f}.sql`), 'utf8')));
 let chain = Promise.resolve();
 const db = {
@@ -73,20 +73,26 @@ test('change password: rejects weak/default/wrong values, then unlocks the accou
   await assert.rejects(account.change(me, { currentPassword: '123456', newPassword: '11111111' }), code('WEAK_PASSWORD'));
   const fresh = await account.change(me, { currentPassword: '123456', newPassword: 'my-new-password' });
   assert.ok(fresh.accessToken);
+  await assert.rejects(guard.canActivate(ctx(t.accessToken, '/v1/auth/me')), code('SESSION_REVOKED'));
   assert.equal(await guard.canActivate(ctx(fresh.accessToken, '/v1/nurse/me/summary')), true);   // now unrestricted
   await assert.rejects(auth.login(phone, '123456'), code('LOGIN_INVALID'));
   assert.equal((await auth.login(phone, 'my-new-password')).mustChangePassword, false);
   await assert.rejects(auth.refresh(t.refreshToken), e => true);                                  // the old session was revoked
 });
 
-test('recovery from the dashboard: reset restores the default password, forces a change, ends sessions', async () => {
+test('recovery from the dashboard: reset issues an expiring random password, forces a change, ends sessions', async () => {
+  const old = await auth.login(phone, 'my-new-password');
   const r = await nurses.resetPassword(asAdmin, nurseId);
-  assert.equal(r.temporaryPassword, '123456');
-  assert.equal((await auth.login(phone, '123456')).mustChangePassword, true);
+  assert.equal(r.temporaryPassword.length, 20);
+  assert.equal((await auth.login(phone, r.temporaryPassword)).mustChangePassword, true);
+  await assert.rejects(guard.canActivate(ctx(old.accessToken, '/v1/auth/me')), code('SESSION_REVOKED'));
+  await assert.rejects(auth.refresh(old.refreshToken));
+  await pg.query("UPDATE users SET temporary_password_expires_at=now()-interval '1 minute' WHERE phone_e164=$1", [phone]);
+  await assert.rejects(auth.login(phone, r.temporaryPassword), code('LOGIN_INVALID'));
   await assert.rejects(nurses.resetPassword({ user: { id: adminId, role: 'CLINICAL_REVIEWER' } }, nurseId), e => e.getStatus?.() === 403);
-  // generic accounts endpoint: patient gets the default, staff get a random password
+  // The same unique credential policy applies to both patient and staff.
   const pid = (await pg.query(`INSERT INTO users(phone_e164,role,password_hash) VALUES('+963911200009','PATIENT','x') RETURNING id`)).rows[0].id;
-  assert.equal((await users.reset(asAdmin, pid)).temporaryPassword, '123456');
+  assert.equal((await users.reset(asAdmin, pid)).temporaryPassword.length, 20);
   const sid = (await pg.query(`INSERT INTO users(phone_e164,role,password_hash) VALUES('+963900000005','ADMIN','x') RETURNING id`)).rows[0].id;
   assert.notEqual((await users.reset(asAdmin, sid)).temporaryPassword, '123456');
 });
@@ -107,8 +113,8 @@ test('licence queue: a licence upload always reaches the approval list with the 
   assert.equal(pending.length, 1);
   assert.equal(pending[0].nurse_name, 'ممرض افتراضي'); assert.equal(pending[0].document_id, up.id);
   const done = await reports.decide(asAdmin, up.credentialId, { decision: 'APPROVE' });
-  // approval hands back the ready-to-use login (this nurse still has the initial password)
-  assert.deepEqual([done.account.phone, done.account.usingDefaultPassword, done.account.defaultPassword], [phone, true, '123456']);
+  // Approval must not advertise the shared default after a manual reset.
+  assert.deepEqual([done.account.phone, done.account.usingDefaultPassword, done.account.defaultPassword], [phone, false, undefined]);
   assert.equal((await reports.pending(asAdmin)).items.length, 0);
   assert.equal((await pg.query('SELECT verified FROM nurses WHERE id=$1', [nurseId])).rows[0].verified, true);
 });

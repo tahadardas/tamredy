@@ -175,3 +175,12 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Existing open Socket.IO connections still need revocation handling. Complete recovery design and delivery verification.
 - Existing refresh/logout contracts and database schema were retained. No endpoints or migrations added. No deployment performed.
 - Continue phase 1 before Aero phase 2. The matrix records all subsequent sections as pending.
+
+### Guardian phase 1 — manual recovery and session revocation
+
+- Added migration 025 for recovery expiry and token version. Apply before starting the updated API.
+- Existing admin reset routes now issue unique 30-minute credentials and revoke sessions. Account password changes also retire prior access tokens.
+- Restricted device revocation to the authenticated owner. Already connected sockets are rechecked before private event delivery.
+- Both login screens have a manual recovery entry point. See docs/PASSWORD_RECOVERY_AR.md for verification, delivery and the build-time support contact.
+- Node workspace build, focused auth and socket regressions, and the shared Flutter suite passed. Production DNS still failed and ADB found no attached devices. Verify production TLS, configured support and physical Android releases before rollout.
+- No new HTTP endpoints. No server deployment. Continue with Aero phase 2.
