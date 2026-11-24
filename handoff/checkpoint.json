@@ -2,8 +2,18 @@
   "projectName": "tamreedy",
   "branch": "feature/competitive-expansion",
   "baselineCommit": "a38dfe7 feat(guardian): add restricted safety evidence bundle exports",
+  "latestCommit": "06768cf1ae45d8cb33b1945cc3f2f966a52b9fbf",
   "phase": 11,
   "status": "COMPLETED",
+  "testSweepResults": {
+    "apiTests": "141/141 PASS",
+    "workerTests": "13/13 PASS",
+    "adminWebBuild": "PASS (Vite 0 errors, 1594 modules transformed)",
+    "flutterCoreTests": "16/16 PASS",
+    "patientAppTests": "12/12 PASS",
+    "nurseAppTests": "9/9 PASS",
+    "flutterAnalyze": "0 errors / 0 issues (packages/flutter_core, apps/patient_app, apps/nurse_app)"
+  },
   "expansionModules": [
     "EXP-01 Security & Verification Provider Architecture",
     "EXP-02 Advanced Medical Catalog & 5 Categories",

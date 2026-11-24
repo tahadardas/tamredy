@@ -105,16 +105,22 @@ The Tamreedy Home Healthcare Platform has been successfully expanded with compet
 
 ## 3. TEST SUITE & VERIFICATION EVIDENCE
 
-- **Backend Expansion Suite:** `node --test apps/api/tests/*.test.mjs`
-  - 29/29 tests PASS (Catalog, Multi-service, Phone Shield, Mutual Block, Scheduling, Health Records, Reports, Retention, Ledger, Voice, Notifications).
+- **Backend API Full Suite:** `node --test apps/api/tests/*.test.mjs`
+  - 141/141 tests PASS (Full suite: Auth, Catalog, Multi-service, Phone Shield, Mutual Block, Scheduling, Health Records, Clinical Reports, Retention, Ledger, Voice, Notifications Center, Performance, Route Audits).
 - **Backend Worker Suite:** `node --test apps/worker/tests/*.test.mjs`
-  - 11/11 tests PASS (Dispatch, Open Dispatch, Scheduling, Push, Outbox, Marketing).
+  - 13/13 tests PASS (Dispatch, Open Dispatch, Departure Reminders, Scheduling, Push Alerts, Outbox Leases, Marketing).
 - **Admin Web Dashboard Build:** `npm run build --prefix apps/admin_web`
   - TypeScript + Vite build: 0 errors, 1594 modules transformed, 426 kB bundle.
 - **Flutter Core Design Tests:** `cd packages/flutter_core; flutter test`
-  - All tests passed! Zero analyzer warnings or errors on `packages/flutter_core`.
-- **Flutter Mobile Apps:**
-  - `apps/patient_app` and `apps/nurse_app` compile cleanly and run with 0 errors.
+  - 16/16 tests PASS! Zero analyzer warnings or errors on `packages/flutter_core`.
+- **Patient Mobile App Tests:** `cd apps/patient_app; flutter test`
+  - 12/12 tests PASS! (Booking confirmation, flow, saved places, tracking, payment refresh, wallet status, pricing flow).
+- **Nurse Mobile App Tests:** `cd apps/nurse_app; flutter test --dart-define=DEMO=true`
+  - 9/9 tests PASS! (Alarm duration and stale suppression, cash collection, availability -> offer -> accept -> complete, guardian SOS recovery, guardian location batching).
+- **Flutter Static Analysis:**
+  - `flutter analyze packages/flutter_core`: 0 errors / 0 issues
+  - `flutter analyze apps/patient_app`: 0 errors / 0 issues
+  - `flutter analyze apps/nurse_app`: 0 errors / 0 issues
 
 ---
 
