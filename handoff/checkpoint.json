@@ -2,7 +2,7 @@
   "projectName": "tamreedy",
   "branch": "feature/smart-booking-marketplace",
   "baselineCommit": "06768cf1ae45d8cb33b1945cc3f2f966a52b9fbf",
-  "latestCommit": "52a2e16 fix(auth): enable silent refresh for /v1/auth/me and configure AndroidOptions resetOnError: false",
+  "latestCommit": "04178e2 feat(deploy): add automated APK build scripts and configure pilot IP network security",
   "status": "COMPLETED",
   "testSweepResults": {
     "apiTests": "154/154 PASS",
@@ -14,7 +14,9 @@
     "nurseAppTests": "7/7 PASS",
     "flutterAnalyze": "0 errors / 0 issues (packages/flutter_core, apps/patient_app, apps/nurse_app)",
     "uiUxAudit": "PASS (Modal Portal Rooted, Stacking Context Trapping Resolved, RenderFlex Overflows Eliminated)",
-    "sessionPersistence": "PASS (Sliding 180-day refresh, resetOnError: false, silent me refresh, offlineWithSavedSession)"
+    "sessionPersistence": "PASS (Sliding 180-day refresh, resetOnError: false, silent me refresh, offlineWithSavedSession)",
+    "apkBuild": "PASS (Patient App 62.8MB + Nurse App 62.5MB assembled & ready)",
+    "serverBundle": "PASS (tamreedy-server.tar.gz 1.23MB fresh packaging)"
   },
   "modulesCompleted": [
     "SBM-01 Unified Booking Modes & Request Schema",
