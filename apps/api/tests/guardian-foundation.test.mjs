@@ -21,6 +21,8 @@ import { DirectoryService } from '../dist/safety/directory.service.js';
 import { ShiftsRepository } from '../dist/safety/shifts.repository.js';
 import { ShiftsService } from '../dist/safety/shifts.service.js';
 import { HandoversService } from '../dist/safety/handovers.js';
+import { RetentionService } from '../dist/safety/retention.js';
+import { runSafetyRetention } from '../../worker/src/safety-retention.ts';
 import { EvidenceRepository } from '../dist/safety/evidence.repository.js';
 import { EvidenceService } from '../dist/safety/evidence.service.js';
 import { SafetyRepository } from '../dist/safety/safety.repository.js';
@@ -61,6 +63,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('040_guardian_schedule_preflight'));
   await db.exec(await read('021_open_dispatch_and_cancellation_foundation'));
   await db.exec(await read('041_guardian_evidence_exports'));
+  await db.exec(await read('042_guardian_retention'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -408,5 +411,27 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal((await db.query("SELECT id FROM audit_log WHERE action='safety.evidence_downloaded'")).rows.length,1);
   await db.query('UPDATE safety_evidence_export_grants SET revoked_at=now() WHERE user_id=$1',[separate]);
   await assert.rejects(evidence.download(separate,exported.id), {status: 403});
+
+  const retention = new RetentionService(adapter,grants);
+  assert.equal(await runSafetyRetention(pool),false);
+  await assert.rejects(retention.configure(operator,{pointDays: 2,exportDays: 2}),{status: 403});
+  await retention.configure(supervisor,{pointDays: 2,exportDays: 2});
+  await db.query("UPDATE safety_location_points SET received_at=now()-interval '3 days' WHERE session_id=$1",[session.id]);
+  await db.query("UPDATE safety_evidence_exports SET created_at=now()-interval '3 days' WHERE id=$1",[exported.id]);
+  await db.query("UPDATE safety_evidence_approvals SET created_at=now()-interval '4 days',expires_at=now()-interval '3 days' WHERE id=$1",[approval.id]);
+  const hold = await retention.hold(supervisor,entry.id,{reason:'حفظ أدلة للمراجعة',reference:'hold-test'});
+  assert.equal(await runSafetyRetention(pool),false);
+  await retention.release(supervisor,entry.id,hold.id,{reason:'أُغلقت المراجعة'});
+  // The other open check-in cases still protect the session.
+  assert.equal(await runSafetyRetention(pool),true);
+  const exportedRecord = (await db.query('SELECT sealed_bundle,sha256,purged_at FROM safety_evidence_exports WHERE id=$1',[exported.id])).rows[0];
+  assert.equal(exportedRecord.sealed_bundle,null);
+  assert.equal(exportedRecord.sha256,exported.sha256);
+  assert.ok(exportedRecord.purged_at);
+  assert.equal((await db.query('SELECT count(*)::int AS total FROM safety_location_points WHERE session_id=$1',[session.id])).rows[0].total,1);
+  await db.query("UPDATE safety_cases SET state='RESOLVED',assigned_user_id=$1 WHERE alert_id IS NOT NULL",[supervisor]);
+  assert.equal(await runSafetyRetention(pool),true);
+  assert.equal((await db.query('SELECT count(*)::int AS total FROM safety_location_points WHERE session_id=$1',[session.id])).rows[0].total,0);
+  assert.equal((await retention.status(supervisor)).recentRuns.length,2);
 
 });

@@ -75,7 +75,7 @@ export class EvidenceRepository {
   async download(client: PoolClient, actor: string, id: string) {
     return (await client.query(`SELECT e.approval_id,e.sealed_bundle,e.sha256,a.case_id
       FROM safety_evidence_exports e JOIN safety_evidence_approvals a ON a.id=e.approval_id
-      WHERE e.id=$1 AND e.exported_by=$2 AND a.expires_at>clock_timestamp()`,
+      WHERE e.id=$1 AND e.exported_by=$2 AND a.expires_at>clock_timestamp() AND e.purged_at IS NULL`,
     [id,actor])).rows[0];
   }
 }

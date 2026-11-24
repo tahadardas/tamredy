@@ -45,7 +45,7 @@ Source: safety.md. Statuses: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, BL
 | 39. ملف الأدلة الرقمية | IN_PROGRESS | Migration 041 and encrypted export with SHA-256 manifest. PDF, attachments and retention pending. |
 | 40. منع التسجيل السري للصوت والصورة | NOT_STARTED | |
 | 41. قاعدة البيانات | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
-| 42. حماية البيانات وسياسة الاحتفاظ | NOT_STARTED | |
+| 42. حماية البيانات وسياسة الاحتفاظ | IN_PROGRESS | Migration 042 adds policy versions, audited automated cleanup and case holds. Backup lifecycle and approved production periods pending. |
 | 43. الصلاحيات | IN_PROGRESS | Migration 030 and restricted staff case actions tested. Shift scoping, dashboard and evidence access pending. |
 | 44. واجهات API | IN_PROGRESS | Migration 028 and nurse tracking/SOS foundation tested with PGlite. Lifecycle, operations and real PostGIS verification pending. |
 | 45. الإشعارات والتصعيد | IN_PROGRESS | Migration 036 enables durable timed routing behind a flag. Physical alert delivery and staffed handover pending. |

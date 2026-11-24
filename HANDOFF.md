@@ -379,3 +379,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - The envelope contains case JSON, GPS CSV and GeoJSON and a SHA-256 manifest. AES-256-GCM protects the stored envelope using GUARDIAN_EVIDENCE_KEY. No live key or grants were provisioned. No legal authentication claim.
 - API build and the four local tests passed. Test covers distinct grant, encrypted storage/decryption round trip, per-file fingerprints, one export per approval and revocation. Geography is substituted in the PGlite harness.
 - Pending: legal holds and retention worker, encrypted backups and key rotation, PDF, attachments, console UI, real PostGIS and access review. No deployment.
+
+### Guardian phase 9 — retention policy and legal holds
+
+- Migration 042 adds configurable retention policy versions, case holds and batch audit counts. Expired bundle bytes can be removed while preserving export manifests, hashes and audit history.
+- Added supervisor GET/POST /v1/admin/safety/retention-policy and case-scoped GET/POST legal holds plus POST release. Holds identify a reference, actor and reason. No retention policy is seeded.
+- Retention worker is disabled by default. It deletes eligible expired GPS only after checkout or the capture cap, and preserves sessions with unresolved or held cases. It purges expired bundles only for resolved, unheld cases. The worker and hold edits serialize via a transaction lock. GPS uploads have a 24-hour grace period after capture ends.
+- API and Worker build and four PGlite/route checks passed. The integrated test covers no policy, authorization, legal hold protection, release, unresolved case protection, purge and manifest preservation.
+- No live policy configured, worker activation or deployment. Legal approval of production periods, backup retention/key management, export UI, PDF and attachments remain.

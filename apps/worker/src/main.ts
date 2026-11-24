@@ -6,6 +6,7 @@ import 'dotenv/config';
 import { FcmClient, loadServiceAccount, pushDeliverBatch, retryPendingPushes } from './push.js';
 import { notifyDelayedDepartures } from './departure-reminders.js';
 import { deliverOutbox } from './outbox.js';
+import { runSafetyRetention } from './safety-retention.js';
 import { routeSafetyCase } from './safety-routing.js';
 import { runSafetyCheckin } from './safety-checkins.js';
 import { releaseScheduledVisit } from './scheduling.js';
@@ -77,10 +78,15 @@ async function runWorker(): Promise<void> {
     }
   }
 
+  let lastSafetyRetention = 0;
   async function runBackgroundJobs(): Promise<boolean> {
     if (Date.now() - lastDepartureCheck > 5000) {
       lastDepartureCheck = Date.now();
       await notifyDelayedDepartures(pool);
+    }
+    if (process.env.GUARDIAN_RETENTION_ENABLED === 'true' && Date.now() - lastSafetyRetention > 3600_000) {
+      lastSafetyRetention = Date.now();
+      if (await runSafetyRetention(pool)) lastSafetyRetention = 0;
     }
     if (fcm && Date.now() - lastPushRetry > 5000) {
       lastPushRetry = Date.now();

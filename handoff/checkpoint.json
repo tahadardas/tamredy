@@ -5,6 +5,6 @@
   "referenceCommit": "cb0066ea6a925aeac16e85852c18897ab5691b34",
   "phase": 9,
   "status": "IN_PROGRESS",
-  "nextAction": "Implement legal holds and configurable retention worker before rollout, then PDF/attachments and export console.",
+  "nextAction": "Add evidence/hold console and PDF/attachments. Verify production retention settings, backups and key management before activating cleanup.",
   "productionDeploymentAuthorized": false
 }

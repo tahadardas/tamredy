@@ -34,10 +34,14 @@ export class SafetyService {
       if (!session) missing();
       const started = new Date(session.started_at).getTime();
       const now = Date.now();
+      const stopped = session.checked_out_at ? new Date(session.checked_out_at).getTime() : Infinity;
+      if (now > Math.min(stopped,started + maxTrackingHours * 3_600_000) + 24 * 3_600_000) {
+        conflict('SAFETY_UPLOAD_WINDOW_EXPIRED');
+      }
       const maximum = Math.min(
         now + clockToleranceMs,
         started + maxTrackingHours * 3_600_000,
-        session.checked_out_at ? new Date(session.checked_out_at).getTime() : Infinity,
+        stopped,
       );
       const points = new Map<number, SafetyPointRecord>();
       for (const point of dto.points) {

@@ -87,6 +87,9 @@ import { EvidenceController } from './safety/evidence.controller.js';
 import { EvidenceRepository } from './safety/evidence.repository.js';
 import { EvidenceService } from './safety/evidence.service.js';
 
+import { RetentionController } from './safety/retention.controller.js';
+import { RetentionService } from './safety/retention.js';
+
 @Module({
   imports: [
     ThrottlerModule.forRoot([{
@@ -94,10 +97,10 @@ import { EvidenceService } from './safety/evidence.service.js';
       limit: 120,
     }]),
   ],
-  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController],
+  controllers:[AuthController,AppController,CatalogController,RequestsController,NursesController,ReviewsController,WalletController,AdminController,AdminReportsController,AdminUsersController,AdminNursesController,AdminSettingsController,RegionsPublicController,AdminRegionsController,RegistrationController,NurseOnboardingController,ApplicationsPublicController,AdminApplicationsController,AccountController,DevicesController,RoutesController,PricingController,AdminBusinessController,AdminFeesController,AdminDispatchController,MarketingController,MeController,ReferralController,NurseMeController,CommitmentController,AppealsController,SavedPlacesController,SafetyController,StaffCasesController,TrustedContactsController,DirectoryController,ShiftsController,NightPolicyController,VisitRiskController,EvidenceController,RetentionController],
   providers:[
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService
   ],
 })
 export class AppModule {}
