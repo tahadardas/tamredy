@@ -24,7 +24,10 @@ async function raw(path: string, init: RequestInit = {}, token = access) {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   try { return await fetch(`${apiBase}${path}`, {...init, headers}); }
-  catch { throw new Error('تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى'); }
+  catch (e) {
+    console.error(`[Admin API Error] ${init.method ?? 'GET'} ${apiBase}${path}:`, e);
+    throw new Error('تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى');
+  }
 }
 
 export async function login(phone: string, password: string): Promise<void> {
