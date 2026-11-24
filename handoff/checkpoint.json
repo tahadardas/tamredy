@@ -2,7 +2,7 @@
   "projectName": "tamreedy",
   "branch": "feature/smart-booking-marketplace",
   "baselineCommit": "06768cf1ae45d8cb33b1945cc3f2f966a52b9fbf",
-  "latestCommit": "04178e2 feat(deploy): add automated APK build scripts and configure pilot IP network security",
+  "latestCommit": "aeeeb67 fix(security): disable HSTS and CSP upgradeInsecureRequests in HTTP pilot mode to prevent browser fetch SSL aborts",
   "status": "COMPLETED",
   "testSweepResults": {
     "apiTests": "154/154 PASS",
