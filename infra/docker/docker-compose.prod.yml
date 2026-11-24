@@ -11,6 +11,7 @@ x-api-env: &api-env
   JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>=32 chars)}
   JWT_ISSUER: tamreedy-api
   JWT_AUDIENCE: tamreedy-mobile
+  GUARDIAN_NIGHT_POLICY_ENABLED: ${GUARDIAN_NIGHT_POLICY_ENABLED:-false}
   GUARDIAN_ROUTING_ENABLED: ${GUARDIAN_ROUTING_ENABLED:-false}
   API_PORT: "3000"
   SCHEDULED_VISITS_ENABLED: ${SCHEDULED_VISITS_ENABLED:-false}
@@ -81,6 +82,7 @@ services:
     restart: unless-stopped
     mem_limit: 250m   # one runaway service must not take the whole server down
     environment:
+      GUARDIAN_NIGHT_POLICY_ENABLED: ${GUARDIAN_NIGHT_POLICY_ENABLED:-false}
       GUARDIAN_ROUTING_ENABLED: ${GUARDIAN_ROUTING_ENABLED:-false}
       GUARDIAN_ACK_SECONDS: ${GUARDIAN_ACK_SECONDS:-30}
       GUARDIAN_CHECKINS_ENABLED: ${GUARDIAN_CHECKINS_ENABLED:-false}

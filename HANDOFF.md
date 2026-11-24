@@ -347,3 +347,11 @@ Production deployment is deferred. No schema or endpoint changes in phase 0.
 - Added offer and acceptance controls to the safety console. The exchange is audited, and the recipient inbox uses the existing console polling cadence.
 - Workspace build and four local Guardian/route checks passed. Tests cover owner retention, duplicate request and acceptance, denial for wrong recipient, stale presence, and revoked old-assignee detail access.
 - No operational handover or deployment performed. Next: verify staffed alert delivery and start phase 8 night policy / dispatch integration.
+
+### Guardian phase 8 — night eligibility foundation
+
+- Migration 038 adds versioned night rules and explicit nurse opt-in. Rules are evaluated in Asia/Damascus, including overnight windows. Scope uses nurse governorate/area and service. No sex inference or classification.
+- Added GET/POST /v1/admin/safety/night-policy and GET/PUT /v1/nurse/safety/night-preference. The supervisor editor publishes versions; the nurse sees the opt-in and Arabic exclusion reasons.
+- GUARDIAN_NIGHT_POLICY_ENABLED defaults off on API/Worker. When on, open and wave dispatch filter unsuitable candidates, acceptance rechecks policy, and the Worker closes newly ineligible open offers. Existing assignments continue. Scheduled jobs are checked when offers are generated, without a guarantee before release.
+- Covered modes: ordinary eligibility, restricted window, present safety staff, explicit opt-in plus coverage. Companion/risk policies, dedicated schedule-time assessment and field rollout are pending.
+- Workspace build and local checks completed. No policies configured live or deployment performed. Verify co-enabled staffed coverage, PostgreSQL concurrency and UI field behavior before activation.

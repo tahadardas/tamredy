@@ -63,6 +63,11 @@ export class DispatchService {
             AND ST_DWithin(nl.location,r.location,r.search_radius_meters)
           ))`,[nurseId,requestId]);
       if (!ready.rowCount) conflict('NURSE_NOT_AVAILABLE');
+      if (process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true') {
+        const denial = (await c.query(`SELECT guardian_night_denial($1,$2,statement_timestamp()) AS reason`,
+          [nurseId,request.service_id])).rows[0]?.reason;
+        if (denial) conflict(denial);
+      }
       const qualified=await c.query(`SELECT 1 FROM nurse_skills sk
         WHERE sk.nurse_id=$1 AND sk.service_id=$2 AND sk.approved=true AND EXISTS(
           SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id=sk.nurse_id
@@ -84,7 +89,9 @@ export class DispatchService {
         closed_at=statement_timestamp(),close_reason='ASSIGNED',updated_at=statement_timestamp()
         WHERE id=$1 AND status='OFFERING'
           AND (search_expires_at IS NULL OR search_expires_at>statement_timestamp())
-          AND EXISTS (SELECT 1 FROM request_offers WHERE id=$2 AND expires_at>statement_timestamp())`,[requestId,offerId]);
+          AND EXISTS (SELECT 1 FROM request_offers o WHERE o.id=$2 AND o.expires_at>statement_timestamp()
+            ${process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true'
+              ? 'AND guardian_night_denial(o.nurse_id,care_requests.service_id,statement_timestamp()) IS NULL' : ''})`,[requestId,offerId]);
       if(updateRequest.rowCount!==1) gone();
       // Distance the nurse must cover (straight line x 1.3 road factor) -> automatic travel fee when enabled.
       await c.query(`UPDATE care_requests SET travel_distance_m=(SELECT round(ST_Distance(nl.location,cr.location)*1.3)::int

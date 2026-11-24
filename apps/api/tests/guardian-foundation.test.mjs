@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import { closeNightIneligibleOffers } from '../../worker/src/night-safety.ts';
+import { NightPolicyService } from '../dist/safety/night-policy.js';
 import { routeSafetyCase } from '../../worker/src/safety-routing.ts';
 import { runSafetyCheckin } from '../../worker/src/safety-checkins.ts';
 import { CheckinsRepository } from '../dist/safety/checkins.repository.js';
@@ -48,6 +50,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('035_safety_shifts'));
   await db.exec(await read('036_guardian_case_routing'));
   await db.exec(await read('037_guardian_handovers'));
+  await db.exec(await read('038_guardian_night_policy'));
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -294,5 +297,35 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal((await routeStatus()).assigned_user_id, supervisor);
   assert.equal((await svc.event(nurse, another.id)).state, 'ACKNOWLEDGED');
   await assert.rejects(ops.detail(operator, routed.id), {status: 404});
+
+  const policy = new NightPolicyService(adapter, grants);
+  const nurseId = (await db.query('SELECT id FROM nurses WHERE user_id=$1', [nurse])).rows[0].id;
+  const visitInfo = (await db.query(`SELECT r.id,r.service_id,r.beneficiary_id
+    FROM care_requests r JOIN request_assignments a ON a.request_id=r.id WHERE a.id=$1`, [assignment])).rows[0];
+  const reason = async (when) => (await db.query('SELECT guardian_night_denial($1,$2,$3) AS reason',
+    [nurseId,visitInfo.service_id,when])).rows[0].reason;
+  const policyWindow = {startsAt: '22:00', endsAt: '06:00', mode: 'REQUIRE_OPT_IN_AND_COVERAGE'};
+  await assert.rejects(policy.publish(operator,policyWindow), {status: 403});
+  await policy.publish(supervisor,policyWindow);
+  assert.equal(await reason('2024-11-25T00:01:00+03:00'), 'NIGHT_POLICY_OPT_IN_REQUIRED');
+  assert.equal(await reason('2024-11-25T06:00:00+03:00'), null);
+  await policy.preferenceUpdate(nurse,{optedIn: true});
+  assert.equal(await reason('2024-11-25T00:01:00+03:00'), 'NIGHT_POLICY_COVERAGE_REQUIRED');
+  const current = (await db.query("SELECT (now() AT TIME ZONE 'Asia/Damascus')::time::text AS time")).rows[0].time;
+  const hour = Number(current.slice(0,2));
+  const endsAt = String((hour + 1) % 24).padStart(2, '0')+':00';
+  const startsAt = String((hour + 23) % 24).padStart(2, '0')+':00';
+  await policy.publish(supervisor, {mode: 'REQUIRE_COVERAGE', startsAt, endsAt});
+  assert.equal(await reason(new Date().toISOString()), null);
+  await policy.publish(supervisor, {mode: 'RESTRICT', startsAt, endsAt});
+  const offering = (await db.query(`INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,
+    location_source,address_text,price_amount,currency_code,commission_bps)
+    VALUES($1,$2,$3,'','MANUAL_PIN','دمشق',100,'SYP',100) RETURNING id`,
+  [requester,visitInfo.beneficiary_id,visitInfo.service_id])).rows[0];
+  await db.query("INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at) VALUES($1,$2,1,now()+interval '1 minute')",
+    [offering.id,nurseId]);
+  assert.equal(await closeNightIneligibleOffers({query: adapter.query}), true);
+  assert.equal((await db.query('SELECT status FROM request_offers WHERE request_id=$1', [offering.id])).rows[0].status, 'CLOSED');
+  assert.equal((await db.query('SELECT status FROM care_requests WHERE id=$1', [visitInfo.id])).rows[0].status, 'ESCALATED');
 
 });

@@ -320,6 +320,8 @@ class NurseController extends ChangeNotifier {
       final id = payload['offerId'];
       if (id is String) {
         OfferAlarm.cancelOffer(id);
+        final policyMessage = nightPolicyMessage(payload['reason']);
+        if (offer?.id == id && policyMessage != null) error = policyMessage;
         if (stage == NurseStage.offer && offer?.id == id && !busy) {
           offer = null;
           stage = NurseStage.idle;

@@ -1,3 +1,4 @@
+import { closeNightIneligibleOffers, nightPolicyEnabled } from './night-safety.js';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import Redis from 'ioredis';
@@ -96,6 +97,7 @@ async function runWorker(): Promise<void> {
     ...(process.env.SCHEDULED_VISITS_ENABLED === 'true' ? [poll('Scheduled Visits', () => releaseScheduledVisit(pool))] : []),
     ...(process.env.GUARDIAN_CHECKINS_ENABLED === 'true' ? [poll('Safety Check-ins', () => runSafetyCheckin(pool))] : []),
     ...(process.env.GUARDIAN_ROUTING_ENABLED === 'true' ? [poll('Safety Case Routing', () => routeSafetyCase(pool))] : []),
+    ...(nightPolicyEnabled() ? [poll('Night Safety Offers', () => closeNightIneligibleOffers(pool))] : []),
     poll('Dispatch', () => doDispatch(pool)),
     poll('Realtime', flushRealtimeOutbox),
     poll('Push', flushPushOutbox),
