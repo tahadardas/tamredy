@@ -202,7 +202,7 @@ class AeroScaffold extends StatelessWidget {
             children: [
               if (showBack)
                 _buildCircularGlassButton(
-                  icon: Icons.arrow_back_ios_new_rounded,
+                  icon: Icons.arrow_back_rounded,
                   onTap: onBack ?? () => Navigator.of(context).maybePop(),
                 )
               else if (leading != null)

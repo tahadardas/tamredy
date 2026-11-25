@@ -229,7 +229,13 @@ export class BookingModeService {
       [requestId, policy?.offerDurationSeconds ?? 60, policy?.radiusMeters ?? 10000],
     );
 
-    await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1)`, [requestId]);
+    await client.query(
+      `INSERT INTO dispatch_jobs(request_id, attempts, next_run_at, updated_at)
+       VALUES($1, 0, statement_timestamp(), statement_timestamp())
+       ON CONFLICT (request_id) DO UPDATE
+       SET attempts = 0, next_run_at = statement_timestamp(), updated_at = statement_timestamp()`,
+      [requestId],
+    );
 
     await client.query(
       `INSERT INTO request_booking_transitions(

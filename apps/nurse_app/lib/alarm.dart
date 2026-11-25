@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 /// Android channel for new-request alarms. The id carries a version: Android freezes a channel's sound/importance
 /// once created, so changing the tone later means shipping a new id.
 const alarmChannelId = 'tamreedy_offers_v1';
+const nurseUpdatesChannelId = 'tamreedy_nurse_updates_v1';
 const alarmSound = RawResourceAndroidNotificationSound(
   'tamreedy_alert',
 ); // android/app/src/main/res/raw/tamreedy_alert.wav
@@ -28,7 +29,7 @@ class AlarmData {
     }
     if (ttl <= 1) return null;
     return AlarmData(
-      '${d['offerId'] ?? ''}',
+      '${d['offerId'] ?? d['proposalId'] ?? d['callId'] ?? d['requestId'] ?? ''}',
       '${d['title'] ?? 'طلب جديد قريب منك'}',
       '${d['body'] ?? 'افتح التطبيق للقبول'}',
       ttl.clamp(1, 60),
@@ -61,8 +62,10 @@ class OfferAlarm {
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       ),
       onDidReceiveNotificationResponse: (r) {
-        cancelAll(); // tapping silences the alarm and opens the app on the offer
-        onTap?.call();
+        cancelAll(); // tapping or muting silences the alarm immediately
+        if (r.actionId != 'mute_alarm') {
+          onTap?.call();
+        }
       },
     );
     final android = _plugin
@@ -89,6 +92,17 @@ class OfferAlarm {
           1200,
         ]),
         audioAttributesUsage: AudioAttributesUsage.alarm,
+        showBadge: true,
+      ),
+    );
+    await android?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        nurseUpdatesChannelId,
+        'تحديثات الطلبات والزيارات',
+        description: 'إشعارات اعتيادية لحالة الزيارات والمدفوعات بدون رنين متكرر',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
         showBadge: true,
       ),
     );
@@ -150,6 +164,14 @@ class OfferAlarm {
                 a.ttlSeconds * 1000, // stops by itself when the offer expires
             visibility: NotificationVisibility.public,
             ticker: a.title,
+            actions: const [
+              AndroidNotificationAction(
+                'mute_alarm',
+                'إيقاف الرنين',
+                cancelNotification: true,
+                showsUserInterface: false,
+              ),
+            ],
           ),
         ),
       );
@@ -160,6 +182,35 @@ class OfferAlarm {
     }
   }
 
+  static Future<void> showStandardNotification({
+    required String id,
+    required String title,
+    required String body,
+  }) async {
+    if (disabledForTesting || kIsWeb || !Platform.isAndroid) return;
+    try {
+      await init();
+      if (!_ready) return;
+      await _plugin.show(
+        AlarmData.notificationIdFor(id),
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            nurseUpdatesChannelId,
+            'تحديثات الطلبات والزيارات',
+            importance: Importance.high,
+            priority: Priority.high,
+            autoCancel: true,
+            playSound: true,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('notification not shown: $e');
+    }
+  }
+
   static Future<void> handle(Map<String, dynamic> data) async {
     if (data['type'] == 'offer.closed' || data['type'] == 'offer.expired') {
       final id = data['offerId'];
@@ -167,7 +218,17 @@ class OfferAlarm {
       return;
     }
     final alarm = AlarmData.from(data);
-    if (alarm != null) await show(alarm);
+    if (alarm != null) {
+      await show(alarm);
+      return;
+    }
+    final title = data['title']?.toString();
+    final body = data['body']?.toString();
+    if (title != null && title.isNotEmpty && body != null && body.isNotEmpty) {
+      final id =
+          '${data['requestId'] ?? data['proposalId'] ?? DateTime.now().millisecondsSinceEpoch}';
+      await showStandardNotification(id: id, title: title, body: body);
+    }
   }
 
   static Future<void> cancelOffer(String offerId) async {
@@ -188,6 +249,10 @@ class OfferAlarm {
 /// Runs in a background isolate when a push arrives while the app is closed or in the background.
 @pragma('vm:entry-point')
 Future<void> offerBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // Firebase options may not be configured in dev/staging builds.
+  }
   await OfferAlarm.handle(message.data);
 }

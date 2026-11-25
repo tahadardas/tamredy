@@ -156,3 +156,24 @@ This engine addresses the core business objective: **drastically reducing unfulf
 - **Admin Web Dashboard (`apps/admin_web`):**
   * `apps/admin_web/src/main.tsx`
   * `apps/admin_web/src/pages_expansion.tsx`
+
+### Guardian phase 9 - evidence operations interface
+
+- Admin Web now exposes export approval, bundle generation, authenticated download with SHA-256, case legal holds and retention policy/run history through existing Guardian API routes.
+- Admin Web TypeScript and Vite build passed. No server settings, endpoints or migrations changed. Browser workflow with authorized accounts remains unverified.
+- Next: PDF export and attachments, then Play readiness and end-to-end verification.
+
+### Administrative visit record and evidence context
+
+- Existing care_requests retain the submitted visit address, geographic point, status and creation timestamp, including without assignment or completion.
+- New admin-only GET /v1/admin/requests/:id/visit-record reads the stored point, visit and payment clocks, recorded durations and actual cash collections and audits access. The Requests detail panel links to OpenStreetMap only on click.
+- Guardian evidence snapshots now also include the submitted visit address, creation clock, recorded duration and sum of cash collections when linked to a visit.
+- Local API build, Admin Web build and four integrated/route tests passed. No migration. No server deployment or physical test.
+
+### Admin scheduled operations and account removal
+
+- The appointments page reads actual scheduled requests and care plans, with paginated active and archived lists. Assignment and actual arrival are displayed separately. Visit details retain the facility-independent visit timeline, stored point, collected amount and all recorded nurse assignments.
+- Migration 052 adds `scheduled_visits.admin_removed_at`. Admin schedule removal archives closed records or cancels and archives a still-scheduled, unassigned visit. The cancel event and patient notification are queued in the same transaction. In-progress visits are blocked.
+- Admin users can remove patient, nurse and staff accounts. The operation revokes sessions and push tokens, releases the phone number and keeps operational and audit references. It blocks self-removal and removal while a request is open.
+- API routes: GET /v1/admin/schedule/visits, GET /v1/admin/schedule/care-plans, DELETE /v1/admin/schedule/visits/:id, DELETE /v1/admin/users/:id.
+- Deploy migration 052 before enabling the updated admin dashboard. Run a scheduled visit on staging and verify the arrival record and notification before release.

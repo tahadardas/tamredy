@@ -1,3 +1,4 @@
+import { lockAccountAdministration, removeAccount } from './account-removal.js';
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Request, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
@@ -122,7 +123,9 @@ export class AdminNursesController {
   @Post('nurses/:id/status') async status(@Request() r: AuthRequest, @Param('id') id: string, @Body() d: StatusDto) {
     requireRole(r.user!, 'ADMIN');
     return this.db.transaction(async c => {
-      const n = (await c.query('SELECT user_id FROM nurses WHERE id=$1', [id])).rows[0];
+      await lockAccountAdministration(c,r.user!.id);
+      const n = (await c.query(`SELECT n.user_id FROM nurses n JOIN users u ON u.id=n.user_id
+        WHERE n.id=$1 AND u.status<>'DELETED' FOR UPDATE OF n`, [id])).rows[0];
       if (!n) missing();
       await c.query('UPDATE users SET status=$2 WHERE id=$1', [n.user_id, d.status]);
       if (d.status === 'SUSPENDED') {
@@ -149,14 +152,9 @@ export class AdminNursesController {
   @Delete('nurses/:id/profile') async remove(@Request() r: AuthRequest, @Param('id') id: string) {
     requireRole(r.user!, 'ADMIN');
     return this.db.transaction(async c => {
-      const n = (await c.query(`SELECT n.user_id,n.work_status FROM nurses n WHERE n.id=$1 FOR UPDATE`, [id])).rows[0];
-      if (!n) missing();
-      if (['RESERVED', 'EN_ROUTE', 'IN_SERVICE'].includes(n.work_status)) conflict('NURSE_ON_ACTIVE_VISIT');
-      await c.query(`UPDATE users SET status='DELETED',phone_e164='deleted-'||id::text WHERE id=$1`, [n.user_id]); // frees the phone number
-      await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [n.user_id]);
-      await c.query('DELETE FROM device_tokens WHERE user_id=$1', [n.user_id]);
-      await c.query(`UPDATE nurses SET availability_intent='OFFLINE',work_status='OFFLINE',updated_at=now() WHERE id=$1`, [id]);
-      await this.audit(c, r.user!.id, 'nurse.deleted', id);
+      const nurse = (await c.query('SELECT user_id FROM nurses WHERE id=$1', [id])).rows[0];
+      if (!nurse) missing();
+      await removeAccount(c,r.user!.id,nurse.user_id,['NURSE']);
       return { id, deleted: true };
     });
   }

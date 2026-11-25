@@ -32,27 +32,10 @@ class _CarePlansScreenState extends State<CarePlansScreen> {
         });
       }
     } catch (_) {
-      // Offline fallback mock data
-      if (_plans.isEmpty) {
-        _plans.addAll([
-          {
-            'id': 'plan-1',
-            'title': 'خطة علاج وريدي ومحاليل',
-            'frequency': 'يومي',
-            'total_occurrences': 7,
-            'completed_occurrences': 3,
-            'status': 'ACTIVE',
-            'next_occurrence_at': DateTime.now().add(const Duration(hours: 18)).toIso8601String(),
-          },
-          {
-            'id': 'plan-2',
-            'title': 'متابعة سكر الدم وضغط الدم',
-            'frequency': '3 مرات أسبوعياً',
-            'total_occurrences': 12,
-            'completed_occurrences': 12,
-            'status': 'COMPLETED',
-          },
-        ]);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر تحميل خطط الرعاية، تحقق من الاتصال وحاول مجدداً')),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

@@ -14,6 +14,7 @@ class HealthRecordScreen extends StatefulWidget {
 class _HealthRecordScreenState extends State<HealthRecordScreen> {
   final List<Map<String, dynamic>> _profiles = [];
   bool _isLoading = false;
+  String? _error;
   String? _selectedProfileId;
 
   @override
@@ -23,192 +24,183 @@ class _HealthRecordScreenState extends State<HealthRecordScreen> {
   }
 
   Future<void> _loadHealthData() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     try {
       final res = await widget.c.api.getMap('/v1/health-records/profiles');
-      if (res['profiles'] is List) {
-        setState(() {
-          _profiles.clear();
-          _profiles.addAll(List<Map<String, dynamic>>.from(res['profiles']));
-          if (_profiles.isNotEmpty) {
-            _selectedProfileId = _profiles.first['id'];
-          }
-        });
+      final list = res['profiles'];
+      if (list is List) {
+        _profiles
+          ..clear()
+          ..addAll(
+            list
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e)),
+          );
+        if (_profiles.isNotEmpty) {
+          _selectedProfileId ??= '${_profiles.first['id'] ?? ''}';
+        }
       }
-    } catch (_) {
-      // Offline fallback
-      if (_profiles.isEmpty) {
-        _profiles.addAll([
-          {
-            'id': 'prof-1',
-            'full_name': 'المريض الأساسي',
-            'relationship': 'SELF',
-            'blood_type': 'O+',
-            'chronic_diseases': ['ارتفاع ضغط الدم'],
-          },
-          {
-            'id': 'prof-2',
-            'full_name': 'الوالد (عمر)',
-            'relationship': 'FATHER',
-            'blood_type': 'A+',
-            'chronic_diseases': ['السكري النوع الثاني'],
-          },
-        ]);
-        _selectedProfileId = 'prof-1';
-      }
+    } catch (e) {
+      _error = 'تعذر تحميل الملف الصحي من الخادم حالياً.';
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  Map<String, dynamic>? get _activeProfile {
+    if (_profiles.isEmpty) return null;
+    for (final p in _profiles) {
+      if ('${p['id']}' == _selectedProfileId) return p;
+    }
+    return _profiles.first;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: AeroColors.lightCanvas,
-        appBar: AppBar(
-          title: Text(
-            'السجل الصحي والملاحظات السريرية',
-            style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+    final tc = context.tamColors;
+    final active = _activeProfile;
+    final bloodType = active?['blood_type'] ?? active?['bloodType'];
+    final allergies = active?['allergies'];
+    final chronic = active?['chronic_diseases'] ?? active?['chronicDiseases'];
+    final medications = active?['medications'];
+    final observations = active?['observations'] ?? active?['latestObservations'];
+
+    return TamScaffold(
+      title: 'السجل الصحي',
+      subtitle: 'البيانات الطبية والقياسات المعتمدة للمستفيد',
+      showBack: true,
+      onRefresh: _loadHealthData,
+      children: [
+        if (_isLoading) ...[
+          const TamSkeleton.card(height: 120),
+          const SizedBox(height: TamSpacing.md),
+          const TamSkeleton.card(height: 140),
+        ] else if (_error != null) ...[
+          TamErrorState(
+            title: 'تعذر تحميل السجل الصحي',
+            message: _error!,
+            onRetry: _loadHealthData,
           ),
-          backgroundColor: Colors.white,
-          elevation: 0,
-          centerTitle: true,
-          iconTheme: const IconThemeData(color: AeroColors.primaryNavy),
-        ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: AeroColors.accentTeal))
-            : ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // Beneficiary Profiles Selector
-                  Text(
-                    'المستفيدون المسجلون:',
-                    style: aeroText(size: 14, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 48,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _profiles.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final prof = _profiles[index];
-                        final isSelected = prof['id'] == _selectedProfileId;
-                        return ChoiceChip(
-                          label: Text(
-                            prof['full_name'] ?? 'مستفيد',
-                            style: aeroText(
-                              size: 13,
-                              weight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                              color: isSelected ? Colors.white : AeroColors.textPrimary,
-                            ),
-                          ),
-                          selected: isSelected,
-                          selectedColor: AeroColors.accentTeal,
-                          backgroundColor: Colors.white,
-                          onSelected: (val) {
-                            if (val) setState(() => _selectedProfileId = prof['id']);
-                          },
-                        );
-                      },
+        ] else if (_profiles.isEmpty) ...[
+          const TamEmptyState(
+            icon: Icons.folder_shared_outlined,
+            title: 'لا توجد ملفات صحية مسجلة',
+            message:
+                'سيظهر ملفك الصحي والقياسات السريرية هنا بعد توثيقها من قبل الممرض أو إضافتها في ملف المستفيد.',
+          ),
+        ] else ...[
+          const SectionTitle('المستفيدون المسجلون'),
+          SizedBox(
+            height: 48,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _profiles.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final prof = _profiles[index];
+                final id = '${prof['id'] ?? ''}';
+                final isSelected = id == _selectedProfileId;
+                return ChoiceChip(
+                  label: Text(
+                    '${prof['full_name'] ?? prof['fullName'] ?? 'مستفيد'}',
+                    style: aeroText(
+                      size: 13,
+                      weight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: isSelected ? Colors.white : tc.textPrimary,
                     ),
                   ),
-                  const SizedBox(height: 16),
-
-                  // Profile Card
-                  AeroGlassCard(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'بيانات الملف الصحي المعتمد',
-                              style: aeroText(size: 15, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: AeroColors.aeroTint,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text('موثق', style: aeroText(size: 11, color: AeroColors.accentTeal, weight: FontWeight.w700)),
-                            ),
-                          ],
+                  selected: isSelected,
+                  selectedColor: tc.primary,
+                  backgroundColor: tc.surface,
+                  side: BorderSide(color: isSelected ? tc.primary : tc.border),
+                  onSelected: (val) {
+                    if (val) setState(() => _selectedProfileId = id);
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: TamSpacing.lg),
+          TamCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'البيانات الطبية الأساسية',
+                        style: aeroText(
+                          size: 15,
+                          weight: FontWeight.w800,
+                          color: tc.textPrimary,
                         ),
-                        const SizedBox(height: 10),
-                        Text('فصيلة الدم: O+', style: aeroText(size: 13, color: AeroColors.textSecondary)),
-                        const SizedBox(height: 4),
-                        Text('الأمراض المزمنة: ارتفاع ضغط الدم (متابع)', style: aeroText(size: 13, color: AeroColors.textSecondary)),
-                        const SizedBox(height: 4),
-                        Text('الحساسية الدوائية: البنسلين ومشتقاته', style: aeroText(size: 13, color: const Color(0xFFDC2626))),
-                      ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Recent Clinical Observations
-                  Text(
-                    'أحدث القراءات السريرية المسجلة:',
-                    style: aeroText(size: 14, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-                  ),
-                  const SizedBox(height: 8),
-                  AeroGlassCard(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      children: [
-                        _buildReadingRow('ضغط الدم', '125 / 82', 'mmHg', Icons.speed),
-                        const Divider(height: 16),
-                        _buildReadingRow('النبض', '74', 'bpm', Icons.favorite),
-                        const Divider(height: 16),
-                        _buildReadingRow('سكر الدم (عشوائي)', '112', 'mg/dL', Icons.bloodtype),
-                        const Divider(height: 16),
-                        _buildReadingRow('تشبع الأكسجين SpO2', '98%', '%', Icons.air),
-                      ],
+                    const TamStatusBadge(
+                      labelOverride: 'خصوصية محمية',
+                      iconOverride: Icons.verified_user_outlined,
+                      compact: true,
                     ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Download Clinical Report CTA
-                  AeroButton.teal(
-                    'عرض وتنزيل التقرير السريري المعتمد (PDF مع QR)',
-                    leadingIcon: const Icon(Icons.picture_as_pdf, color: Colors.white, size: 20),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('تم إصدار التقرير الطبي بصيغة PDF وتجهيز رمز QR للتحقق الرسمي')),
-                      );
-                    },
-                  ),
+                  ],
+                ),
+                const SizedBox(height: TamSpacing.md),
+                KeyValueRow(
+                  'فصيلة الدم',
+                  bloodType != null && '$bloodType'.isNotEmpty
+                      ? '$bloodType'
+                      : 'غير مسجلة',
+                ),
+                KeyValueRow(
+                  'الأمراض المزمنة',
+                  _formatListOrText(chronic, fallback: 'لا توجد بيانات مسجلة'),
+                ),
+                KeyValueRow(
+                  'الحساسية',
+                  _formatListOrText(allergies, fallback: 'لا توجد حساسية مسجلة'),
+                ),
+                KeyValueRow(
+                  'الأدوية الحالية',
+                  _formatListOrText(medications, fallback: 'لا توجد أدوية مسجلة'),
+                ),
+              ],
+            ),
+          ),
+          const SectionTitle('أحدث القياسات الحيوية'),
+          if (observations is List && observations.isNotEmpty)
+            TamCard(
+              child: Column(
+                children: [
+                  for (var i = 0; i < observations.length; i++)
+                    if (observations[i] is Map)
+                      KeyValueRow(
+                        '${observations[i]['label'] ?? observations[i]['type'] ?? 'قياس'}',
+                        '${observations[i]['value'] ?? '—'} ${observations[i]['unit'] ?? ''}'
+                            .trim(),
+                      ),
                 ],
               ),
-      ),
+            )
+          else
+            const TamEmptyState(
+              icon: Icons.monitor_heart_outlined,
+              title: 'لا توجد قياسات سريرية مسجلة',
+              message:
+                  'ستظهر قراءات الضغط والنبض والسكر هنا فور تسجيلها خلال الزيارات المنزلية.',
+            ),
+        ],
+      ],
     );
   }
 
-  Widget _buildReadingRow(String title, String val, String unit, IconData icon) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 18, color: AeroColors.accentTeal),
-            const SizedBox(width: 8),
-            Text(title, style: aeroText(size: 13, color: AeroColors.textPrimary)),
-          ],
-        ),
-        Row(
-          children: [
-            Text(val, style: aeroText(size: 14, weight: FontWeight.w700, color: AeroColors.primaryNavy)),
-            const SizedBox(width: 4),
-            Text(unit, style: aeroText(size: 11, color: AeroColors.textMuted)),
-          ],
-        ),
-      ],
-    );
+  String _formatListOrText(dynamic raw, {required String fallback}) {
+    if (raw is List && raw.isNotEmpty) {
+      return raw.map((e) => '$e').join('، ');
+    }
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+    return fallback;
   }
 }

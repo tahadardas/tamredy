@@ -1,5 +1,7 @@
 import {useState, useEffect} from 'react';
-import {Chip, Notice, Panel, Row, Stat, Table, Icon, AeroHero} from './ui';
+import {Chip, Notice, Panel, Row, Stat, Table, Icon, AeroHero, SidePanel, StatusBadge} from './ui';
+
+import {RequestVisitRecord} from './request_visit_record';
 
 export type Metrics = {
   available_nurses: number;
@@ -212,6 +214,7 @@ const allFilterKeys = [
 export function Requests({live}: {live: Live}) {
   const [f, setF] = useState('الكل');
   const [q, setQ] = useState('');
+  const [selected, setSelected] = useState<RequestRow | null>(null);
 
   const filteredRaw = live.requests.filter(r => {
     const stLabel = statusConfig[r.status]?.label ?? r.status;
@@ -226,12 +229,18 @@ export function Requests({live}: {live: Live}) {
   });
 
   const rows = filteredRaw.map(r => {
-    const st = statusConfig[r.status] ?? {label: r.status, tone: 'default'};
     return [
-      <span key="id" className="mono-code">#{r.id.slice(0, 6)}</span>,
+      <button
+        key="id"
+        className="ghost mono-code"
+        onClick={() => setSelected(r)}
+        title="عرض تفاصيل الطلب"
+      >
+        #{r.id.slice(0, 6)}
+      </button>,
       <strong key="srv">{r.service_title ?? '—'}</strong>,
       r.beneficiary_name ?? '—',
-      <Chip key="st" tone={st.tone}>{st.label}</Chip>,
+      <StatusBadge key="st" status={r.status} />,
       <span key="tm" className="text-muted">{ago(r.created_at)}</span>,
     ];
   });
@@ -271,6 +280,35 @@ export function Requests({live}: {live: Live}) {
       )}
     </Panel>
     <Notice tone="info">نظام التوزيع الذكي يمنع أي إسناد مزدوج للطلب ويضمن التوزيع لأقرب ممرض مؤهل معتمد.</Notice>
+    <SidePanel
+      open={!!selected}
+      title={selected ? `تفاصيل الطلب #${selected.id.slice(0, 8)}` : ''}
+      onClose={() => setSelected(null)}
+    >
+      {selected && (
+        <div style={{display: 'flex', flexDirection: 'column', gap: 14}}>
+          <div>
+            <small className="hint">الحالة الحالية</small>
+            <div style={{marginTop: 6}}><StatusBadge status={selected.status} /></div>
+          </div>
+          <div>
+            <small className="hint">الخدمة المطلوبة</small>
+            <p style={{margin: '4px 0', fontWeight: 700}}>{selected.service_title ?? '—'}</p>
+          </div>
+          <div>
+            <small className="hint">المستفيد</small>
+            <p style={{margin: '4px 0', fontWeight: 600}}>{selected.beneficiary_name ?? '—'}</p>
+          </div>
+          <div>
+            <small className="hint">المعرّف الكامل</small>
+            <p className="mono-code" dir="ltr" style={{margin: '4px 0'}}>{selected.id}</p>
+          </div>
+          <div>
+            <RequestVisitRecord key={selected.id} id={selected.id} />
+          </div>
+        </div>
+      )}
+    </SidePanel>
   </>;
 }
 

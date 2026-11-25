@@ -11,43 +11,46 @@ class BillCard extends StatelessWidget {
   final BillInfo bill;
   const BillCard({super.key, required this.bill});
   @override
-  Widget build(BuildContext context) => TamCard(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'المبلغ المطلوب',
-          style: tamText(size: 12, color: TamreedyColors.subtext),
-        ),
-        Text(
-          formatMoney(bill.due),
-          style: tamText(
-            size: 30,
-            weight: FontWeight.w800,
-            color: TamreedyColors.navy,
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    return TamCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'المبلغ المطلوب',
+            style: tamText(size: 12, color: tc.textSecondary),
           ),
-        ),
-        const Divider(color: TamreedyColors.border),
-        KeyValueRow('مدة الزيارة', '${bill.minutes} دقيقة'),
-        KeyValueRow('قيمة الخدمة', formatMoney(bill.gross - bill.surcharge)),
-        if (bill.surcharge > 0)
-          KeyValueRow('رسم ليلي/عطلة', formatMoney(bill.surcharge)),
-        if (bill.distanceFee > 0)
-          KeyValueRow('رسم المسافة', formatMoney(bill.distanceFee)),
-        if (bill.discount > 0)
-          KeyValueRow(
-            bill.promoCode == null ? 'الخصم' : 'خصم ${bill.promoCode}',
-            '−${formatMoney(bill.discount)}',
+          Text(
+            formatMoney(bill.due),
+            style: tamText(
+              size: 30,
+              weight: FontWeight.w800,
+              color: tc.textPrimary,
+            ),
           ),
-        if (bill.tax > 0) KeyValueRow(bill.taxLabel, formatMoney(bill.tax)),
-        if (bill.tip > 0) KeyValueRow('إكرامية للممرض', formatMoney(bill.tip)),
-        if (bill.collected > 0)
-          KeyValueRow('المدفوع', formatMoney(bill.collected)),
-        if (bill.status == 'PARTIAL')
-          KeyValueRow('المتبقي', formatMoney(bill.remaining)),
-      ],
-    ),
-  );
+          Divider(color: tc.border),
+          KeyValueRow('مدة الزيارة', '${bill.minutes} دقيقة'),
+          KeyValueRow('قيمة الخدمة', formatMoney(bill.gross - bill.surcharge)),
+          if (bill.surcharge > 0)
+            KeyValueRow('رسم ليلي/عطلة', formatMoney(bill.surcharge)),
+          if (bill.distanceFee > 0)
+            KeyValueRow('رسم المسافة', formatMoney(bill.distanceFee)),
+          if (bill.discount > 0)
+            KeyValueRow(
+              bill.promoCode == null ? 'الخصم' : 'خصم ${bill.promoCode}',
+              '−${formatMoney(bill.discount)}',
+            ),
+          if (bill.tax > 0) KeyValueRow(bill.taxLabel, formatMoney(bill.tax)),
+          if (bill.tip > 0) KeyValueRow('إكرامية للممرض', formatMoney(bill.tip)),
+          if (bill.collected > 0)
+            KeyValueRow('المدفوع', formatMoney(bill.collected)),
+          if (bill.status == 'PARTIAL')
+            KeyValueRow('المتبقي', formatMoney(bill.remaining)),
+        ],
+      ),
+    );
+  }
 }
 
 /// Animated radar ripple for searching phase (P04).
@@ -133,6 +136,23 @@ class TrackScreen extends StatelessWidget {
   final PatientController c;
   final TamBottomNav nav;
   const TrackScreen({super.key, required this.c, required this.nav});
+
+  Future<void> _runRecoveryAction(
+    BuildContext context,
+    Future<bool> Function() action,
+  ) async {
+    final succeeded = await action();
+    if (!succeeded && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            c.error ?? 'تعذر تنفيذ الإجراء. حاول مرة أخرى',
+            textDirection: TextDirection.rtl,
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -234,6 +254,7 @@ class TrackScreen extends StatelessWidget {
               ],
             ),
           ),
+          _RequestJourneyInfographic(c: c),
         ],
       );
     }
@@ -285,11 +306,15 @@ class TrackScreen extends StatelessWidget {
 
                 // Recovery Action 1: Keep Open
                 AeroButton(
-                  'إبقاء الطلب مفتوحاً لاستقبال العروض',
+                  'إبقاء الطلب مفتوحاً للعروض',
                   leadingIcon: const Icon(Icons.storefront_rounded, color: Colors.white, size: 20),
-                  onPressed: c.busy ? null : () async {
-                    await c.switchToOpenMarketplace();
-                  },
+                  isLoading: c.recoveryAction == RecoveryAction.openMarketplace,
+                  onPressed: c.busy
+                      ? null
+                      : () => _runRecoveryAction(
+                          context,
+                          c.switchToOpenMarketplace,
+                        ),
                 ),
                 const SizedBox(height: 10),
 
@@ -298,9 +323,13 @@ class TrackScreen extends StatelessWidget {
                   'إعادة البحث الفوري الآن',
                   variant: AeroButtonVariant.secondary,
                   leadingIcon: const Icon(Icons.refresh_rounded, color: AeroColors.primaryNavy, size: 20),
-                  onPressed: c.busy ? null : () async {
-                    await c.retryInstantDispatch();
-                  },
+                  isLoading: c.recoveryAction == RecoveryAction.retryInstant,
+                  onPressed: c.busy
+                      ? null
+                      : () => _runRecoveryAction(
+                          context,
+                          c.retryInstantDispatch,
+                        ),
                 ),
                 const SizedBox(height: 10),
 
@@ -342,6 +371,7 @@ class TrackScreen extends StatelessWidget {
             KeyValueRow('الموعد', '${MaterialLocalizations.of(context).formatMediumDate(appointment)} • ${TimeOfDay.fromDateTime(appointment).format(context)}'),
           KeyValueRow('عنوان الزيارة', c.visitAddress),
           const NoticeBox('بانتظار بدء البحث عن ممرض. سنخبرك عند تأكيد الإسناد.'),
+          _RequestJourneyInfographic(c: c),
           SoftButton('إلغاء الطلب', onPressed: c.busy ? null : () => showCancellationSheet(context, c)),
         ],
       );
@@ -382,6 +412,7 @@ class TrackScreen extends StatelessWidget {
               ],
             ),
           ),
+          _RequestJourneyInfographic(c: c),
           SoftButton(
             'إلغاء الطلب',
             onPressed: c.busy ? null : () => showCancellationSheet(context, c),
@@ -458,6 +489,50 @@ class TrackScreen extends StatelessWidget {
         ),
         if (c.stage == VisitStage.completed && c.bill != null)
           BillCard(bill: c.bill!),
+        if (c.stage != VisitStage.completed)
+          TamCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'مراحل الزيارة',
+                  style: aeroText(
+                    size: 14.5,
+                    weight: FontWeight.w700,
+                    color: context.tamColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: TamSpacing.md),
+                TamTimeline(
+                  items: [
+                    TamTimelineItem(
+                      title: 'تم الإسناد إلى الممرض',
+                      isDone: c.stage.index > VisitStage.assigned.index,
+                      isCurrent: c.stage == VisitStage.assigned,
+                    ),
+                    TamTimelineItem(
+                      title: 'الممرض في الطريق',
+                      subtitle: c.route?.etaLabel != null
+                          ? 'الوصول التقديري: ${c.route!.etaLabel}'
+                          : null,
+                      isDone: c.stage.index > VisitStage.enRoute.index,
+                      isCurrent: c.stage == VisitStage.enRoute,
+                    ),
+                    TamTimelineItem(
+                      title: 'وصل الممرض إلى الموقع',
+                      isDone: c.stage.index > VisitStage.arrived.index,
+                      isCurrent: c.stage == VisitStage.arrived,
+                    ),
+                    TamTimelineItem(
+                      title: 'الخدمة قيد التنفيذ',
+                      isDone: c.stage == VisitStage.completed,
+                      isCurrent: c.stage == VisitStage.inService,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         if (c.stage == VisitStage.completed)
           PrimaryButton(
             'متابعة إلى الدفع',
@@ -470,7 +545,7 @@ class TrackScreen extends StatelessWidget {
             children: [
               Expanded(
                 child: PrimaryButton(
-                  'محادثة (Connect)',
+                  'محادثة',
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => PatientChatScreen(
@@ -485,23 +560,17 @@ class TrackScreen extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: SoftButton(
-                  'اتصال (Voice)',
-                  onPressed: () async {
-                    try {
-                      await c.api.post('/v1/calls/initiate', {'requestId': c.requestId});
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('جارٍ بدء الاتصال الصوتي الآمن...')),
-                        );
-                      }
-                    } catch (_) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('الاتصال الصوتي متاح فقط أثناء الزيارة النشطة')),
-                        );
-                      }
-                    }
-                  },
+                  'اتصال عبر التطبيق',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TamInAppCallScreen(
+                        api: c.api,
+                        requestId: c.requestId ?? '',
+                        peerName: c.nurseBadge?['name']?.toString() ?? 'الممرض المعتمد',
+                        peerRole: 'ممرض مرخص معتمد',
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -519,27 +588,144 @@ class TrackScreen extends StatelessWidget {
     );
   }
 
-  Widget _tile(String a, String b, String sub) => Container(
-    margin: const EdgeInsets.only(top: 12),
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: TamreedyColors.canvas,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(a, style: tamText(size: 12, color: TamreedyColors.subtext)),
-        Text(
-          b,
-          style: tamText(
-            size: 17,
-            weight: FontWeight.w800,
-            color: TamreedyColors.navy,
-          ),
+  Widget _tile(String a, String b, String sub) => Builder(
+    builder: (context) {
+      final tc = context.tamColors;
+      return Container(
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: tc.surfaceElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: tc.border),
         ),
-        Text(sub, style: tamText(size: 11, color: TamreedyColors.subtext)),
-      ],
-    ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(a, style: tamText(size: 12, color: tc.textSecondary)),
+            Text(
+              b,
+              style: tamText(
+                size: 17,
+                weight: FontWeight.w800,
+                color: tc.textPrimary,
+              ),
+            ),
+            Text(sub, style: tamText(size: 11, color: tc.textSecondary)),
+          ],
+        ),
+      );
+    },
   );
+}
+
+
+/// Visual step-by-step infographic of the patient's request journey across all stages.
+class _RequestJourneyInfographic extends StatelessWidget {
+  final PatientController c;
+  const _RequestJourneyInfographic({required this.c});
+
+  @override
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    final st = c.stage;
+    final statusCode = switch (st) {
+      VisitStage.scheduled => 'SCHEDULED',
+      VisitStage.searching => 'OFFERING',
+      VisitStage.openMarketplace => 'OPEN_FOR_PROPOSALS',
+      VisitStage.unfulfilled => 'UNFULFILLED',
+      VisitStage.assigned => 'ASSIGNED',
+      VisitStage.enRoute => 'EN_ROUTE',
+      VisitStage.arrived => 'ARRIVED',
+      VisitStage.inService => 'IN_SERVICE',
+      VisitStage.completed => 'COMPLETED',
+      VisitStage.interrupted => 'ESCALATED',
+      VisitStage.none => 'DRAFT',
+    };
+
+    final pastSearching = [
+      VisitStage.assigned,
+      VisitStage.enRoute,
+      VisitStage.arrived,
+      VisitStage.inService,
+      VisitStage.completed,
+    ].contains(st);
+
+    return TamCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.route_rounded, color: tc.primary, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'مسار الطلب والخطوات',
+                  style: aeroText(
+                    size: 15,
+                    weight: FontWeight.w800,
+                    color: tc.textPrimary,
+                  ),
+                ),
+              ),
+              TamStatusBadge(status: statusCode, compact: true),
+            ],
+          ),
+          const SizedBox(height: TamSpacing.md),
+          TamTimeline(
+            items: [
+              const TamTimelineItem(
+                title: 'تم استلام طلبك بنجاح',
+                subtitle: 'تأكيد الخدمة وموقع الزيارة',
+                isDone: true,
+              ),
+              TamTimelineItem(
+                title: st == VisitStage.openMarketplace
+                    ? 'منشور في سوق الطلبات المفتوح'
+                    : st == VisitStage.scheduled
+                        ? 'مجدول للموعد المحدد'
+                        : 'البحث عن أقرب ممرض مؤهل',
+                subtitle: st == VisitStage.openMarketplace
+                    ? (c.activeProposalsCount > 0
+                        ? 'وصلك ${c.activeProposalsCount} عروض جاهزية للمقارنة'
+                        : 'بانتظار تقديم الممرضين لعروضهم')
+                    : st == VisitStage.unfulfilled
+                        ? 'لم يقبل ممرض فورياً — يمكنك النشر في السوق أو إعادة البحث'
+                        : null,
+                isDone: pastSearching,
+                isCurrent: st == VisitStage.searching ||
+                    st == VisitStage.openMarketplace ||
+                    st == VisitStage.scheduled,
+                isError: st == VisitStage.unfulfilled,
+              ),
+              TamTimelineItem(
+                title: 'تم إسناد الطلب إلى ممرض',
+                isDone: st.index > VisitStage.assigned.index && pastSearching,
+                isCurrent: st == VisitStage.assigned,
+              ),
+              TamTimelineItem(
+                title: 'الممرض في الطريق إليك',
+                subtitle: c.route?.etaLabel != null && st == VisitStage.enRoute
+                    ? 'الوصول التقديري: ${c.route!.etaLabel}'
+                    : null,
+                isDone: st.index > VisitStage.enRoute.index && pastSearching,
+                isCurrent: st == VisitStage.enRoute,
+              ),
+              TamTimelineItem(
+                title: 'وصول الممرض وبدء الرعاية',
+                isDone: st == VisitStage.completed,
+                isCurrent:
+                    st == VisitStage.arrived || st == VisitStage.inService,
+              ),
+              TamTimelineItem(
+                title: 'اكتمال الزيارة والفاتورة',
+                isDone: st == VisitStage.completed,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }

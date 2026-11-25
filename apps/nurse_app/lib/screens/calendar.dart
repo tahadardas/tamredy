@@ -29,39 +29,49 @@ class _NurseCalendarScreenState extends State<NurseCalendarScreen> {
       final to = DateTime(now.year, now.month, now.day + 7).toIso8601String();
 
       final res = await widget.c.api.getMap('/v1/nurse-calendar?from=$from&to=$to');
-      if (res['blocks'] is List) {
-        setState(() {
-          _blocks.clear();
-          _blocks.addAll(List<Map<String, dynamic>>.from(res['blocks']));
-        });
+      final combined = <Map<String, dynamic>>[];
+      if (res['visits'] is List) {
+        for (final raw in res['visits'] as List) {
+          final v = Map<String, dynamic>.from(raw as Map);
+          final startStr = (v['appointment_at'] ?? v['accepted_at'])?.toString();
+          final mins = int.tryParse('${v['expected_minutes'] ?? 45}') ?? 45;
+          final endStr = startStr != null
+              ? DateTime.parse(startStr).add(Duration(minutes: mins)).toIso8601String()
+              : null;
+          combined.add({
+            'id': v['request_id'],
+            'block_type': 'SCHEDULED_VISIT',
+            'title': '${v['service_title'] ?? 'زيارة تمريضية'} — ${v['beneficiary_name'] ?? 'المريض'}',
+            'start_time': startStr,
+            'end_time': endStr,
+          });
+        }
       }
-    } catch (_) {
-      // Offline fallback mock data
-      if (_blocks.isEmpty) {
-        final now = DateTime.now();
-        _blocks.addAll([
-          {
-            'id': 'blk-1',
-            'block_type': 'SCHEDULED_VISIT',
-            'title': 'زيارة مجدولة: حقن وريدي ومحاليل',
-            'start_time': DateTime(now.year, now.month, now.day, 10, 0).toIso8601String(),
-            'end_time': DateTime(now.year, now.month, now.day, 11, 30).toIso8601String(),
-          },
-          {
-            'id': 'blk-2',
+      if (res['blocks'] is List) {
+        for (final raw in res['blocks'] as List) {
+          final b = Map<String, dynamic>.from(raw as Map);
+          combined.add({
+            'id': b['id'],
             'block_type': 'BUSY_PERSONAL',
-            'title': 'مشغول (استراحة شخصية)',
-            'start_time': DateTime(now.year, now.month, now.day, 13, 0).toIso8601String(),
-            'end_time': DateTime(now.year, now.month, now.day, 14, 30).toIso8601String(),
-          },
-          {
-            'id': 'blk-3',
-            'block_type': 'SCHEDULED_VISIT',
-            'title': 'زيارة مجدولة: غيار جراحي',
-            'start_time': DateTime(now.year, now.month, now.day + 1, 16, 0).toIso8601String(),
-            'end_time': DateTime(now.year, now.month, now.day + 1, 17, 0).toIso8601String(),
-          },
-        ]);
+            'title': (b['reason']?.toString().trim().isNotEmpty == true)
+                ? b['reason'].toString()
+                : 'انشغال شخصي',
+            'start_time': b['start_time'],
+            'end_time': b['end_time'],
+          });
+        }
+      }
+      combined.sort((a, b) => '${a['start_time'] ?? ''}'.compareTo('${b['start_time'] ?? ''}'));
+      setState(() {
+        _blocks
+          ..clear()
+          ..addAll(combined);
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر تحميل جدول المواعيد، تحقق من الاتصال')),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -69,70 +79,130 @@ class _NurseCalendarScreenState extends State<NurseCalendarScreen> {
   }
 
   void _showAddBlockDialog() {
+    final reasonCtrl = TextEditingController();
+    int hours = 2;
+    bool saving = false;
     showDialog(
       context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: Text(
-            'إضافة حظر زمني / انشغال شخصي',
-            style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'عند تسجيل انشغال شخصي، لن يتم توجيه أي زيارات مجدولة لك خلال هذه الفترة مع احتساب هامش 30 دقيقة قبلها وبعدها.',
-                style: aeroText(size: 12, color: AeroColors.textSecondary, height: 1.4),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                decoration: InputDecoration(
-                  labelText: 'سبب الانشغال',
-                  labelStyle: aeroText(size: 13),
-                  hintText: 'مثلاً: ارتباط أكاديمي أو عائلي',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: Text(
+              'إضافة حظر زمني / انشغال شخصي',
+              style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'عند تسجيل انشغال شخصي، لن يتم توجيه أي زيارات مجدولة لك خلال هذه الفترة مع احتساب هامش 30 دقيقة قبلها وبعدها.',
+                  style: aeroText(size: 12, color: AeroColors.textSecondary, height: 1.4),
                 ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  initialValue: hours,
+                  decoration: const InputDecoration(labelText: 'مدة الانشغال من الآن'),
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('ساعة واحدة')),
+                    DropdownMenuItem(value: 2, child: Text('ساعتان')),
+                    DropdownMenuItem(value: 4, child: Text('4 ساعات')),
+                    DropdownMenuItem(value: 8, child: Text('8 ساعات')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setDlgState(() => hours = v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: reasonCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'سبب الانشغال',
+                    labelStyle: aeroText(size: 13),
+                    hintText: 'مثلاً: ارتباط أكاديمي أو عائلي',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => Navigator.of(ctx).pop(),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        setDlgState(() => saving = true);
+                        try {
+                          final start = DateTime.now().toUtc();
+                          final end = start.add(Duration(hours: hours));
+                          await widget.c.api.post('/v1/nurse-calendar/blocks', {
+                            'startTime': start.toIso8601String(),
+                            'endTime': end.toIso8601String(),
+                            if (reasonCtrl.text.trim().isNotEmpty) 'reason': reasonCtrl.text.trim(),
+                          });
+                          if (ctx.mounted) Navigator.of(ctx).pop();
+                          await _loadCalendar();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('تم تسجيل حظر الوقت في جدولك بنجاح')),
+                            );
+                          }
+                        } catch (e) {
+                          setDlgState(() => saving = false);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(explainError(e, fallback: 'تعذر حفظ فترة الانشغال'))),
+                            );
+                          }
+                        }
+                      },
+                child: Text(saving ? 'جارٍ الحفظ...' : 'حفظ'),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تم تسجيل حظر الوقت في جدولك بنجاح')),
-                );
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
         ),
       ),
     );
   }
 
+  Future<void> _removeBlock(String blockId) async {
+    try {
+      await widget.c.api.delete('/v1/nurse-calendar/blocks/$blockId');
+      await _loadCalendar();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(explainError(e, fallback: 'تعذر حذف فترة الانشغال'))),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: AeroColors.lightCanvas,
+        backgroundColor: tc.background,
         appBar: AppBar(
           title: Text(
             'جدول مواعيد الممرض والزيارات',
-            style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+            style: aeroText(size: 16, weight: FontWeight.w700, color: tc.textPrimary),
           ),
-          backgroundColor: Colors.white,
+          backgroundColor: tc.surface,
           elevation: 0,
           centerTitle: true,
-          iconTheme: const IconThemeData(color: AeroColors.primaryNavy),
+          leading: IconButton(
+            tooltip: 'رجوع',
+            icon: Icon(Icons.arrow_back_rounded, color: tc.textPrimary),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
           actions: [
             IconButton(
-              icon: const Icon(Icons.add_circle_outline, color: AeroColors.accentTeal),
+              icon: Icon(Icons.add_circle_outline, color: tc.primary),
               tooltip: 'إضافة فترة انشغال',
               onPressed: _showAddBlockDialog,
             ),
@@ -229,6 +299,12 @@ class _NurseCalendarScreenState extends State<NurseCalendarScreen> {
                               ),
                             ),
                           ),
+                          if (blk['block_type'] != 'SCHEDULED_VISIT' && blk['id'] != null)
+                            IconButton(
+                              tooltip: 'إزالة الحظر',
+                              icon: const Icon(Icons.delete_outline, color: Color(0xFFDC2626), size: 20),
+                              onPressed: () => _removeBlock(blk['id'].toString()),
+                            ),
                         ],
                       ),
                     ),

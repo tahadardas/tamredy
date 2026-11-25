@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DuesService } from '../pricing/fees.service.js';
 import { DbService } from '../db/db.service.js';
 import { PoolClient, QueryResult, QueryResultRow } from 'pg';
 
@@ -13,7 +14,7 @@ interface Queryable {
 
 @Injectable()
 export class MarketplaceEligibilityService {
-  constructor(private readonly db: DbService) {}
+  constructor(private readonly db: DbService, private readonly dues: DuesService = new DuesService()) {}
 
   private getRunner(client?: PoolClient): Queryable {
     return (client as unknown as Queryable) ?? this.db;
@@ -148,18 +149,8 @@ export class MarketplaceEligibilityService {
     }
 
     // Check financial settlement restriction
-    const duesRes = await dbClient.query(
-      `SELECT n.dues_ceiling_amount, n.current_dues_amount
-       FROM nurses n
-       WHERE n.id = $1`,
-      [nurseId],
-    ).catch(() => ({ rows: [] }));
-    if (duesRes.rows.length > 0) {
-      const ceiling = Number(duesRes.rows[0].dues_ceiling_amount);
-      const dues = Number(duesRes.rows[0].current_dues_amount);
-      if (ceiling > 0 && dues >= ceiling) {
-        return { eligible: false, reason: 'SETTLEMENT_REQUIRED' };
-      }
+    if ((await this.dues.balance(dbClient, nurseId)).blocked) {
+      return { eligible: false, reason: 'SETTLEMENT_REQUIRED' };
     }
 
     return { eligible: true };
@@ -187,7 +178,7 @@ export class MarketplaceEligibilityService {
          AND (start_time < $3::timestamptz AND end_time > $2::timestamptz)
        LIMIT 1`,
       [nurseId, windowStart, windowEnd],
-    ).catch(() => ({ rowCount: 0 }));
+    );
     if (calRes.rowCount && calRes.rowCount > 0) return true;
 
     // 2. Check active assignments
@@ -198,12 +189,12 @@ export class MarketplaceEligibilityService {
          AND ra.status = 'ACTIVE'
          AND cr.status IN ('ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
          AND (
-           coalesce(ra.expected_arrival_at, ra.created_at) < $3::timestamptz
-           AND coalesce(ra.expected_arrival_at, ra.created_at) + interval '90 minutes' > $2::timestamptz
+           coalesce(ra.expected_arrival_at, ra.accepted_at) < $3::timestamptz
+           AND coalesce(ra.expected_arrival_at, ra.accepted_at) + interval '90 minutes' > $2::timestamptz
          )
        LIMIT 1`,
       [nurseId, windowStart, windowEnd],
-    ).catch(() => ({ rowCount: 0 }));
+    );
     if (assignRes.rowCount && assignRes.rowCount > 0) return true;
 
     return false;

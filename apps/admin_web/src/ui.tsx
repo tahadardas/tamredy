@@ -186,3 +186,68 @@ export const MapArt = ({height = 250}: {height?: number}) => (
     <div className="map-tag"><Chip tone="info">مسار توضيحي</Chip><small>2.4 كم</small></div>
   </div>
 );
+
+
+const STATUS_MAP: Record<string, { label: string; tone: 'teal' | 'info' | 'success' | 'warn' | 'danger' | 'muted' }> = {
+  SCHEDULED: { label: 'مجدولة', tone: 'info' },
+  OFFERING: { label: 'قيد البحث', tone: 'teal' },
+  AWAITING_RECOVERY_CHOICE: { label: 'بانتظار قرار المريض', tone: 'warn' },
+  OPEN_FOR_PROPOSALS: { label: 'مفتوح للعروض', tone: 'info' },
+  ASSIGNED: { label: 'تم الإسناد', tone: 'teal' },
+  EN_ROUTE: { label: 'في الطريق', tone: 'info' },
+  ARRIVED: { label: 'وصل الممرض', tone: 'teal' },
+  IN_SERVICE: { label: 'قيد التنفيذ', tone: 'teal' },
+  COMPLETED: { label: 'مكتملة', tone: 'success' },
+  CANCELLED: { label: 'ملغاة', tone: 'danger' },
+  UNFULFILLED: { label: 'غير مستجاب', tone: 'warn' },
+  EXPIRED: { label: 'منتهي الصلاحية', tone: 'warn' },
+  ESCALATED: { label: 'تصعيد / تدخل', tone: 'danger' },
+};
+
+export const StatusBadge = ({ status }: { status?: string | null }) => {
+  const key = (status ?? '').trim().toUpperCase();
+  const meta = STATUS_MAP[key] ?? { label: status || 'غير معروف', tone: 'muted' as const };
+  return <span className={`status-badge ${meta.tone}`}>{meta.label}</span>;
+};
+
+export const SidePanel = ({
+  open,
+  title,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) => {
+  if (!open) return null;
+  return (
+    <div className="side-panel-backdrop" onClick={onClose}>
+      <aside className="side-panel" onClick={e => e.stopPropagation()}>
+        <div className="side-panel-head">
+          <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
+          <button className="ghost" onClick={onClose} aria-label="إغلاق">
+            ✕
+          </button>
+        </div>
+        <div className="side-panel-body">{children}</div>
+      </aside>
+    </div>
+  );
+};
+
+export const EmptyState = ({ title, subtitle }: { title: string; subtitle?: string }) => (
+  <div className="panel" style={{ textAlign: 'center', padding: '36px 20px' }}>
+    <strong style={{ display: 'block', marginBottom: 6 }}>{title}</strong>
+    {subtitle && <span className="hint">{subtitle}</span>}
+  </div>
+);
+
+export const SkeletonRows = ({ count = 4 }: { count?: number }) => (
+  <div className="panel" style={{ padding: 20 }}>
+    {Array.from({ length: count }).map((_, i) => (
+      <div key={i} className="skeleton-line" style={{ width: `${92 - i * 8}%` }} />
+    ))}
+  </div>
+);

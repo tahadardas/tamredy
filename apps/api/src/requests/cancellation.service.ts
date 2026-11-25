@@ -66,7 +66,16 @@ export async function cancelRequest(
   }
   if (request.status === 'ARRIVED') conflict('ARRIVAL_REVIEW_REQUIRED');
   if (request.status === 'IN_SERVICE') conflict('EARLY_TERMINATION_REQUIRED');
-  if (!['SCHEDULED', 'OFFERING', 'ASSIGNED', 'EN_ROUTE', 'UNFULFILLED'].includes(request.status)) {
+  if (![
+    'REQUESTED',
+    'SCHEDULED',
+    'OFFERING',
+    'AWAITING_RECOVERY_CHOICE',
+    'OPEN_FOR_PROPOSALS',
+    'ASSIGNED',
+    'EN_ROUTE',
+    'UNFULFILLED',
+  ].includes(request.status)) {
     conflict('REQUEST_CANNOT_BE_CANCELLED');
   }
   if (dto.expectedVersion !== undefined && dto.expectedVersion !== request.version) {
@@ -138,6 +147,13 @@ export async function cancelRequest(
       VALUES($1,$2,'MEDIUM','Patient reported a system or location problem during cancellation')`, [requestId,userId]);
   }
   await closeOpenOffers(client, requestId, 'CANCELLED');
+  await client.query(
+    `UPDATE marketplace_proposals
+     SET status = 'EXPIRED', updated_at = $2
+     WHERE request_id = $1 AND status = 'PENDING'`,
+    [requestId, snapshot.cancelled_at],
+  );
+  await client.query(`DELETE FROM dispatch_jobs WHERE request_id = $1`, [requestId]);
   await client.query(`UPDATE care_requests SET status='CANCELLED',version=version+1,updated_at=$2,
     closed_at=coalesce(closed_at,$2),close_reason=coalesce(close_reason,'CANCELLED') WHERE id=$1`,
   [requestId, snapshot.cancelled_at]);

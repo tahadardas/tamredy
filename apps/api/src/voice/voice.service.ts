@@ -21,12 +21,21 @@ export class VoiceService {
     private readonly trust: TrustService,
   ) {}
 
-  /** Standard public STUN configuration for WebRTC ICE negotiation */
+  /** Standard public STUN + optional TURN configuration for reliable WebRTC audio across NAT/4G */
   private getIceServers() {
-    return [
+    const servers: Record<string, unknown>[] = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
     ];
+    const turnUrls = process.env.TURN_URLS?.split(',').map(s => s.trim()).filter(Boolean);
+    if (turnUrls && turnUrls.length > 0) {
+      servers.push({
+        urls: turnUrls,
+        ...(process.env.TURN_USERNAME ? { username: process.env.TURN_USERNAME } : {}),
+        ...(process.env.TURN_CREDENTIAL ? { credential: process.env.TURN_CREDENTIAL } : {}),
+      });
+    }
+    return servers;
   }
 
   /** Initiates an in-app voice call session between visit participants */
@@ -256,11 +265,11 @@ export class VoiceService {
     return { relayed: true };
   }
 
-  /** Gets call session details */
+  /** Gets call session details (never exposes private phone numbers) and peer WebRTC signals */
   async getCall(userId: string, callId: string) {
     const res = await this.db.query(`
       SELECT s.*,
-             u1.phone_e164 AS caller_phone, u2.phone_e164 AS receiver_phone
+             u1.display_name AS caller_name, u2.display_name AS receiver_name
       FROM voice_call_sessions s
       JOIN users u1 ON u1.id = s.caller_user_id
       JOIN users u2 ON u2.id = s.receiver_user_id
@@ -274,6 +283,18 @@ export class VoiceService {
       throw new ForbiddenException({ code: 'NOT_CALL_PARTICIPANT' });
     }
 
-    return call;
+    const signalsRes = await this.db.query(`
+      SELECT id, actor_user_id, event_type, event_data, created_at
+      FROM voice_call_events
+      WHERE session_id = $1
+        AND actor_user_id <> $2
+        AND event_type IN ('SDP_OFFER', 'SDP_ANSWER', 'ICE_CANDIDATE')
+      ORDER BY created_at ASC, id ASC
+    `, [callId, userId]);
+
+    return {
+      ...call,
+      signals: signalsRes.rows,
+    };
   }
 }

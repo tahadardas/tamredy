@@ -17,15 +17,18 @@ class HistoryScreen extends StatelessWidget {
     nav: nav,
     onRefresh: kDemoMode ? null : c.loadHistory,
     children: [
-      if (c.historyError != null) ...[
-        NoticeBox(c.historyError!),
-        OutlinedButton(
-          onPressed: c.loadHistory,
-          child: const Text('إعادة المحاولة'),
+      if (c.historyError != null)
+        TamErrorState(
+          title: 'تعذر تحميل سجل الطلبات',
+          message: c.historyError!,
+          onRetry: c.loadHistory,
         ),
-      ],
       if (c.history.isEmpty && c.historyError == null)
-        const NoticeBox('لا توجد حجوزات بعد.')
+        const TamEmptyState(
+          icon: Icons.calendar_today_outlined,
+          title: 'لا توجد حجوزات بعد',
+          message: 'ستظهر طلباتك السابقة والمكتملة هنا مع تفاصيل الفاتورة.',
+        )
       else if (c.history.isNotEmpty)
         TamCard(
           child: Column(
@@ -34,12 +37,16 @@ class HistoryScreen extends StatelessWidget {
                 ListRow(
                   icon: c.history[i].status == 'ملغاة'
                       ? Icons.calendar_today_outlined
-                      : Icons.check,
+                      : Icons.check_circle_outline_rounded,
+                  tone: c.history[i].status == 'ملغاة' ? Tone.danger : Tone.teal,
                   title: c.history[i].title,
                   subtitle: c.history[i].status == 'مكتملة'
                       ? '${c.history[i].date} • ${formatMoney(c.history[i].price)}'
                       : c.history[i].date,
-                  trailing: StatusChip(c.history[i].status),
+                  trailing: TamStatusBadge(
+                    labelOverride: c.history[i].status,
+                    compact: true,
+                  ),
                   divider: i != c.history.length - 1,
                   onTap:
                       c.history[i].requestId != null &&

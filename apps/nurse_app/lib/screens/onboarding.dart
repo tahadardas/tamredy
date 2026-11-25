@@ -162,19 +162,29 @@ class _NurseApprovalGateState extends State<NurseApprovalGate> {
   Widget build(BuildContext context) {
     if (kDemoMode || (_s?['verified'] == true)) return widget.child(context);
     if (_s == null) {
-      return Scaffold(
-        body: Center(
-          child: _failed
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('تعذر الاتصال بالخادم'),
-                    TextButton(onPressed: _load, child: const Text('إعادة المحاولة')),
-                    TextButton(onPressed: widget.onLogout, child: const Text('تسجيل الخروج')),
-                  ],
-                )
-              : const CircularProgressIndicator(),
-        ),
+      if (!_failed) {
+        return const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        );
+      }
+      return TamScaffold(
+        title: 'حالة الحساب المهني',
+        subtitle: 'التحقق من أهلية استقبال الطلبات',
+        children: [
+          TamErrorState(
+            title: 'تعذر الاتصال بالخادم',
+            message: 'تأكد من اتصال الإنترنت أو توفر الخادم ثم أعد المحاولة.',
+            onRetry: () {
+              setState(() => _failed = false);
+              _load();
+            },
+          ),
+          const SizedBox(height: TamSpacing.md),
+          AeroButton.secondary(
+            'تسجيل الخروج',
+            onPressed: widget.onLogout,
+          ),
+        ],
       );
     }
     final lic = _s!['license'] as Map<String, dynamic>?;

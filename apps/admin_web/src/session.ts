@@ -101,6 +101,8 @@ const messages: Record<string, string> = {
   CANNOT_CHANGE_OWN_ROLE: 'لا يمكنك تغيير صلاحيتك', CANNOT_DELETE_SELF: 'لا يمكنك حذف حسابك', LAST_ADMIN: 'لا يمكن حذف أو إيقاف آخر مدير', INVALID_ROLE: 'نوع الحساب غير صالح',
   ROLE_NOT_ALLOWED: 'ليست لديك صلاحية لهذه العملية', FORBIDDEN: 'ليست لديك صلاحية لهذه العملية', REGISTRATION_CLOSED: 'التسجيل مغلق حاليًا', TOO_MANY_REGISTRATIONS: 'محاولات تسجيل كثيرة، حاول لاحقًا',
   OTP_DISABLED_PASSWORD_MODE: 'الدخول برمز الرسائل غير مفعّل', OTP_INVALID: 'الرمز غير صحيح أو منتهٍ', OTP_RATE_LIMITED: 'محاولات كثيرة، انتظر قليلًا', MFA_REQUIRED: 'مطلوب تحقق إضافي',
+  ACCOUNT_HAS_ACTIVE_REQUESTS: 'للحساب طلب قائم أو زيارة جارية. عالج الطلب قبل حذف الحساب',
+  SCHEDULE_VISIT_IN_PROGRESS: 'الطلب قيد التوزيع أو التنفيذ. أنهِه قبل الأرشفة',
   // nurses, documents, licences
   NURSE_ON_ACTIVE_VISIT: 'الممرض في زيارة جارية؛ أنهِها قبل الحذف', DOCUMENT_BACKS_APPROVED_LICENSE: 'المستند أساس رخصة معتمدة ولا يُحذف', LICENSE_FIELDS_TOGETHER: 'رقم الرخصة وتاريخ انتهائها مطلوبان معًا',
   CREDENTIAL_ALREADY_DECIDED: 'سبق اتخاذ قرار في هذه الرخصة (حدّث الصفحة)', LICENSE_EXPIRED: 'الرخصة منتهية الصلاحية فلا يمكن اعتمادها', LICENSE_NOT_VERIFIED: 'رخصة الممرض غير معتمدة بعد',

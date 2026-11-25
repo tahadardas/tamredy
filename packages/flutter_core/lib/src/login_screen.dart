@@ -50,6 +50,52 @@ class _LoginScreenState extends State<LoginScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
+  Future<void> _submitPassword() async {
+    FocusScope.of(context).unfocus();
+    await _run(
+      () async {
+        final phoneErr = SyrianPhoneNormalizer.validateSyrianMobile(_phone.text.trim());
+        if (phoneErr != null) {
+          throw Exception(phoneErr);
+        }
+        final normalizedPhone = SyrianPhoneNormalizer.normalizeSyrianMobile(_phone.text.trim())!;
+        final role = await widget.api.login(
+          normalizedPhone,
+          _password.text,
+        );
+        if (role != widget.expectedRole) {
+          await widget.api.logout();
+          throw Exception('role');
+        }
+        Analytics.log('login', {
+          'method': kAuthMode,
+          'role': role.toLowerCase(),
+        });
+        if (widget.api.mustChangePassword) {
+          if (!mounted) return;
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ChangePasswordScreen(
+                api: widget.api,
+                onDone: () {
+                  Navigator.of(context).popUntil((r) => r.isFirst);
+                  widget.onLoggedIn();
+                },
+                onLogout: () async {
+                  await widget.api.logout();
+                  if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+                },
+              ),
+            ),
+          );
+          return;
+        }
+        widget.onLoggedIn();
+      },
+      'بيانات الدخول غير صحيحة، أو الحساب مقفل/غير مناسب لهذا التطبيق',
+    );
+  }
+
   @override
   void dispose() {
     _phone.dispose();
@@ -110,8 +156,14 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: _password,
             obscureText: !_showPassword,
             autofillHints: const [AutofillHints.password],
+            textInputAction: TextInputAction.done,
+            onSubmitted: _busy ? null : (_) => _submitPassword(),
             textDirection: TextDirection.ltr,
-            style: tamText(size: 18, weight: FontWeight.w700),
+            style: tamText(
+              size: 18,
+              weight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
             decoration: InputDecoration(
               labelText: 'كلمة المرور',
               suffixIcon: IconButton(
@@ -161,50 +213,7 @@ class _LoginScreenState extends State<LoginScreen> {
           'تسجيل الدخول',
           width: double.infinity,
           isLoading: _busy,
-          onPressed: _busy
-              ? null
-              : () => _run(
-                  () async {
-                    final phoneErr = SyrianPhoneNormalizer.validateSyrianMobile(_phone.text.trim());
-                    if (phoneErr != null) {
-                      throw Exception(phoneErr);
-                    }
-                    final normalizedPhone = SyrianPhoneNormalizer.normalizeSyrianMobile(_phone.text.trim())!;
-                    final role = await widget.api.login(
-                      normalizedPhone,
-                      _password.text,
-                    );
-                    if (role != widget.expectedRole) {
-                      await widget.api.logout();
-                      throw Exception('role');
-                    }
-                    Analytics.log('login', {
-                      'method': kAuthMode,
-                      'role': role.toLowerCase(),
-                    });
-                    if (widget.api.mustChangePassword) {
-                      if (!mounted) return;
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => ChangePasswordScreen(
-                            api: widget.api,
-                            onDone: () {
-                              Navigator.of(context).popUntil((r) => r.isFirst);
-                              widget.onLoggedIn();
-                            },
-                            onLogout: () async {
-                              await widget.api.logout();
-                              if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
-                            },
-                          ),
-                        ),
-                      );
-                      return;
-                    }
-                    widget.onLoggedIn();
-                  },
-                  'بيانات الدخول غير صحيحة، أو الحساب مقفل/غير مناسب لهذا التطبيق',
-                ),
+          onPressed: _busy ? null : _submitPassword,
         )
       else
         PrimaryButton(
@@ -432,44 +441,42 @@ class _AuthGateState extends State<AuthGate> {
         return widget.child(context);
 
       case AuthGateStatus.offlineWithSavedSession:
-        return Stack(
+        return Column(
           children: [
-            widget.child(context),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
+            Material(
+              color: const Color(0xFF0F172A),
               child: SafeArea(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF163B52).withValues(alpha: 0.94),
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 8, offset: const Offset(0, 3)),
-                    ],
-                  ),
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
-                      const Icon(Icons.wifi_off_rounded, size: 16, color: Color(0xFFDFF4F2)),
+                      const Icon(Icons.wifi_off_rounded, size: 16, color: Color(0xFFCCFBF1)),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'أنت في وضع عدم الاتصال — جلستك محفوظة وسيتم المزامنة تلقائياً',
+                          'أنت في وضع عدم الاتصال — جلستك محفوظة',
                           style: tamText(size: 12, weight: FontWeight.w600, color: Colors.white),
                         ),
                       ),
                       InkWell(
+                        borderRadius: BorderRadius.circular(8),
                         onTap: _verifySession,
                         child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          child: Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          child: Icon(Icons.refresh_rounded, size: 18, color: Colors.white),
                         ),
                       ),
                     ],
                   ),
                 ),
+              ),
+            ),
+            Expanded(
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: widget.child(context),
               ),
             ),
           ],

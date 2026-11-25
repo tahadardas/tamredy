@@ -764,15 +764,17 @@ class NurseController extends ChangeNotifier {
   List<dynamic> marketplaceRequests = [];
   List<dynamic> myProposals = [];
   bool isLoadingMarketplace = false;
+  String? marketplaceError;
 
   Future<void> loadMarketplaceRequests({double? maxDistanceKm}) async {
     if (kDemoMode) return;
     isLoadingMarketplace = true;
+    marketplaceError = null;
     notifyListeners();
     try {
       marketplaceRequests = await api.getMarketplaceRequests(maxDistanceKm: maxDistanceKm);
-    } catch (_) {
-      // Keep existing list on error
+    } catch (e) {
+      marketplaceError = explainError(e, fallback: 'تعذر تحميل طلبات السوق المفتوح');
     } finally {
       isLoadingMarketplace = false;
       notifyListeners();

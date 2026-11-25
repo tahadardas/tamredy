@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
@@ -21,62 +22,74 @@ class PatientChatScreen extends StatefulWidget {
 class _PatientChatScreenState extends State<PatientChatScreen> {
   final List<AeroChatMessage> _messages = [];
   bool _isLoading = false;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
+    _loadMessages(showSpinner: true);
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 4),
+      (_) => _loadMessages(showSpinner: false),
+    );
   }
 
-  Future<void> _loadMessages() async {
-    setState(() => _isLoading = true);
-    try {
-      final res = await widget.c.api.getMap('/v1/chat/requests/${widget.requestId}/messages');
-      if (res['messages'] is List) {
-        final list = (res['messages'] as List).map((m) {
-          final isMe = m['sender_role'] == 'PATIENT' || m['is_me'] == true;
-          return AeroChatMessage(
-            id: m['id']?.toString() ?? '',
-            senderId: m['sender_user_id']?.toString() ?? '',
-            senderName: isMe ? 'أنا' : widget.nurseName,
-            text: m['message_text']?.toString() ?? '',
-            attachmentUrl: m['attachment_url']?.toString(),
-            createdAt: m['created_at'] != null ? DateTime.parse(m['created_at']) : DateTime.now(),
-            isMe: isMe,
-            isRead: m['delivery_status'] == 'READ',
-          );
-        }).toList();
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
 
+  Future<void> _loadMessages({bool showSpinner = false}) async {
+    if (showSpinner) setState(() => _isLoading = true);
+    try {
+      final raw = await widget.c.api.getList(
+        '/v1/chat/requests/${widget.requestId}/messages',
+      );
+      final list = raw.map((item) {
+        final m = Map<String, dynamic>.from(item as Map);
+        final isMe = m['sender_role'] == 'PATIENT' || m['is_me'] == true;
+        return AeroChatMessage(
+          id: m['id']?.toString() ?? '',
+          senderId: m['sender_user_id']?.toString() ?? '',
+          senderName: isMe ? 'أنا' : widget.nurseName,
+          text: m['content']?.toString() ?? m['message_text']?.toString() ?? '',
+          attachmentUrl: m['attachment_url']?.toString(),
+          createdAt: m['created_at'] != null
+              ? DateTime.parse(m['created_at'].toString())
+              : DateTime.now(),
+          isMe: isMe,
+          isRead: m['status'] == 'READ' || m['delivery_status'] == 'READ',
+        );
+      }).toList();
+
+      if (mounted) {
         setState(() {
-          _messages.clear();
-          _messages.addAll(list);
+          _messages
+            ..clear()
+            ..addAll(list.reversed);
         });
       }
-    } catch (_) {
-      // Mock fallback initial greeting if offline or testing
-      if (_messages.isEmpty) {
-        _messages.add(
-          AeroChatMessage(
-            id: 'init-1',
-            senderId: 'nurse',
-            senderName: widget.nurseName,
-            text: 'مرحباً، تم تأكيد الزيارة وأنا في طريقي إليكم.',
-            createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
-            isMe: false,
-          ),
+    } catch (e) {
+      if (showSpinner && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(explainError(e, fallback: 'تعذر تحميل رسائل المحادثة'))),
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (showSpinner && mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _handleSendMessage(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final clientMsgId = 'p_${DateTime.now().microsecondsSinceEpoch}';
     final tempMsg = AeroChatMessage(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: clientMsgId,
       senderId: 'me',
       senderName: 'أنا',
-      text: text,
+      text: trimmed,
       createdAt: DateTime.now(),
       isMe: true,
     );
@@ -84,57 +97,72 @@ class _PatientChatScreenState extends State<PatientChatScreen> {
     setState(() => _messages.insert(0, tempMsg));
 
     try {
-      await widget.c.api.post('/v1/chat/messages', {
+      final res = await widget.c.api.post('/v1/chat/messages', {
         'requestId': widget.requestId,
-        'messageText': text,
+        'content': trimmed,
+        'clientMessageId': clientMsgId,
       });
-    } catch (_) {
-      // Offline fallback
+      final advisory = (res['advisoryMessage'] ?? res['advisory'])?.toString();
+      if (advisory != null && advisory.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(advisory)),
+        );
+      }
+      await _loadMessages();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _messages.removeWhere((m) => m.id == clientMsgId));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(explainError(e, fallback: 'تعذر إرسال الرسالة'))),
+        );
+      }
     }
   }
 
-  void _handleVoiceCall() async {
-    try {
-      await widget.c.api.post('/v1/calls/initiate', {
-        'requestId': widget.requestId,
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('جارٍ بدء الاتصال الصوتي الآمن...')),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('المكالمة الصوتية متاحة فقط أثناء الزيارة النشطة')),
-        );
-      }
-    }
+  void _handleVoiceCall() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TamInAppCallScreen(
+          api: widget.c.api,
+          requestId: widget.requestId,
+          peerName: widget.nurseName,
+          peerRole: 'ممرض مرخص معتمد',
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'محادثة الزيارة — ${widget.nurseName}',
-          style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+    final tc = context.tamColors;
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: tc.background,
+        appBar: AppBar(
+          title: Text(
+            'محادثة الزيارة — ${widget.nurseName}',
+            style: aeroText(size: 16, weight: FontWeight.w700, color: tc.textPrimary),
+          ),
+          backgroundColor: tc.surface,
+          elevation: 0,
+          centerTitle: true,
+          leading: IconButton(
+            tooltip: 'رجوع',
+            icon: Icon(Icons.arrow_back_rounded, color: tc.textPrimary),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
         ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: AeroColors.primaryNavy),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator(color: AeroColors.accentTeal))
+            : AeroChatView(
+                recipientName: widget.nurseName,
+                recipientRole: 'ممرض مرخص معتمد • محادثة آمنة داخل التطبيق',
+                messages: _messages,
+                onSendMessage: _handleSendMessage,
+                onVoiceCallPressed: _handleVoiceCall,
+              ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AeroColors.accentTeal))
-          : AeroChatView(
-              recipientName: widget.nurseName,
-              recipientRole: 'ممرض مرخص معتمد',
-              messages: _messages,
-              showContactAdvisory: true,
-              onVoiceCallPressed: _handleVoiceCall,
-              onSendMessage: _handleSendMessage,
-            ),
     );
   }
 }

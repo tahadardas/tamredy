@@ -1,3 +1,5 @@
+import 'design/tokens/tam_status.dart';
+
 /// Arabic display helpers. Digits stay Latin to match the approved designs.
 String formatMoney(num value, {String currency = 'ل.س'}) {
   final negative = value < 0;
@@ -19,30 +21,9 @@ String formatCountdown(Duration d) {
 
 /// Maps a backend request status to Arabic copy.
 String requestStatusAr(String status) {
-  switch (status) {
-    case 'SCHEDULED':
-      return 'مجدولة';
-    case 'DRAFT':
-    case 'REQUESTED':
-    case 'OFFERING':
-      return 'قيد البحث';
-    case 'ASSIGNED':
-      return 'تم الإسناد';
-    case 'EN_ROUTE':
-      return 'في الطريق';
-    case 'ARRIVED':
-      return 'وصل الممرض';
-    case 'IN_SERVICE':
-      return 'قيد التنفيذ';
-    case 'COMPLETED':
-      return 'مكتملة';
-    case 'CANCELLED':
-      return 'ملغاة';
-    case 'UNFULFILLED':
-      return 'غير مستجاب';
-    case 'ESCALATED':
-      return 'توقفت الزيارة';
-    default:
-      return status;
+  final parsed = TamRequestStatus.parse(status);
+  if (parsed == TamRequestStatus.unknown) {
+    return status.isEmpty ? parsed.labelAr : status;
   }
+  return parsed.labelAr;
 }

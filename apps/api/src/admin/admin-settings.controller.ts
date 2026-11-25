@@ -1,3 +1,4 @@
+import { lockAccountAdministration, removeAccount } from './account-removal.js';
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Put, Query, Request, UseGuards } from '@nestjs/common';
 import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
@@ -84,6 +85,7 @@ export class AdminSettingsController {
   @Patch('staff/:id') async updateStaff(@Request() r: AuthRequest, @Param('id') id: string, @Body() d: UpdateAdminDto) {
     requireRole(r.user!, 'ADMIN');
     return this.db.transaction(async c => {
+      await lockAccountAdministration(c,r.user!.id);
       const u = (await c.query(`SELECT id,role FROM users WHERE id=$1 AND role IN ('ADMIN','CLINICAL_REVIEWER') AND status<>'DELETED' FOR UPDATE`, [id])).rows[0];
       if (!u) missing();
       if (d.role && d.role !== u.role && id === r.user!.id) conflict('CANNOT_CHANGE_OWN_ROLE');
@@ -97,15 +99,6 @@ export class AdminSettingsController {
 
   @Delete('staff/:id') async deleteStaff(@Request() r: AuthRequest, @Param('id') id: string) {
     requireRole(r.user!, 'ADMIN');
-    if (id === r.user!.id) conflict('CANNOT_DELETE_SELF');
-    return this.db.transaction(async c => {
-      const u = (await c.query(`SELECT id,role FROM users WHERE id=$1 AND role IN ('ADMIN','CLINICAL_REVIEWER') AND status<>'DELETED' FOR UPDATE`, [id])).rows[0];
-      if (!u) missing();
-      if (u.role === 'ADMIN' && Number((await c.query(`SELECT count(*)::int AS n FROM users WHERE role='ADMIN' AND status='ACTIVE'`)).rows[0].n) <= 1) conflict('LAST_ADMIN');
-      await c.query(`UPDATE users SET status='DELETED',phone_e164='deleted-'||id::text WHERE id=$1`, [id]);
-      await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [id]);
-      await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,'staff.deleted','user',$2,'{}'::jsonb)`, [r.user!.id, id]);
-      return { id, deleted: true };
-    });
+    return this.db.transaction(c => removeAccount(c,r.user!.id,id,['ADMIN','CLINICAL_REVIEWER']));
   }
 }

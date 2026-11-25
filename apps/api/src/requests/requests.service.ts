@@ -21,6 +21,7 @@ export class RequestsService {
     if (!dto.nonEmergencyConfirmed) invalid('Emergency triage declaration is mandatory');
     const digest = createHash('sha256').update(JSON.stringify(dto)).digest('hex');
     return this.db.transaction(async client => {
+      if (!(await client.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' FOR SHARE", [userId])).rowCount) forbidden();
       await client.query(`INSERT INTO request_create_keys(user_id,key,request_hash) VALUES($1,$2,$3)
         ON CONFLICT (user_id,key) DO NOTHING`, [userId,key,digest]);
       const k = await client.query('SELECT * FROM request_create_keys WHERE user_id=$1 AND key=$2 FOR UPDATE',[userId,key]);
@@ -229,7 +230,16 @@ export class RequestsService {
       FROM care_requests r LEFT JOIN request_assignments a ON a.request_id=r.id AND a.status='ACTIVE'
       WHERE r.id=$1 AND r.requester_user_id=$2`,[requestId,userId])).rows[0];
     if (!row) missing();
-    const canCancel = ['SCHEDULED','OFFERING','ASSIGNED','EN_ROUTE','UNFULFILLED'].includes(row.status);
+    const canCancel = [
+      'REQUESTED',
+      'SCHEDULED',
+      'OFFERING',
+      'AWAITING_RECOVERY_CHOICE',
+      'OPEN_FOR_PROPOSALS',
+      'ASSIGNED',
+      'EN_ROUTE',
+      'UNFULFILLED',
+    ].includes(row.status);
     const classification = canCancel ? cancellationClassification({
       status: row.status, departed: row.departed,
       etaAvailable: row.eta_available === true, thresholdMet: row.threshold_met === true,

@@ -27,6 +27,8 @@ export function pushCopy(type: string, payload: Record<string, any> = {}): { tit
     case 'marketplace.recovery.alert': return { title: 'فرص تمريضية متاحة', body: 'توجد طلبات تمريضية مفتوحة تتوافق مع اختصاصك ومناطق عملك.' };
     case 'marketplace.request.published': return { title: 'طلب رعاية مفتوح', body: 'تم نشر طلب رعاية جديد في نطاقك، يمكنك إرسال عرض استعداد.' };
     case 'request.instant.search.expired': return { title: 'لم نجد ممرضاً متاحاً حالياً', body: 'يمكنك إبقاء طلبك مفتوحاً ليستعرضه الممرضون المؤهلون.' };
+    case 'call.incoming': return { title: 'مكالمة صوتية واردة', body: 'يرجى الرد على المكالمة الصوتية عبر تطبيق تمريضي.' };
+    case 'chat.message': return { title: 'رسالة جديدة في المحادثة', body: (typeof payload.snippet === 'string' && payload.snippet.trim()) ? payload.snippet.trim() : 'لديك رسالة جديدة بخصوص الزيارة.' };
     default: return null;
   }
 }
@@ -142,11 +144,24 @@ export interface OutboxEvent {
     recipientUserIds?: string[];
     requestId?: string;
     offerId?: string;
+    proposalId?: string;
+    callId?: string;
+    conversationId?: string;
+    snippet?: string;
     expiresAt?: string;
     percent?: number;
   };
 }
 export interface Db { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number | null }>; }
+
+const ALARM_EVENT_TYPES = new Set([
+  'offer.created',
+  'marketplace.proposal.created',
+  'marketplace.proposal.accepted',
+  'request.assigned',
+  'visit.departure_delayed',
+  'call.incoming',
+]);
 
 async function openOfferIds(db: Db, offerIds: string[]): Promise<Set<string>> {
   const ids = [...new Set(offerIds.filter(id => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)))];
@@ -166,14 +181,17 @@ export async function pushDeliverBatch(
 ): Promise<{ sent: number; failed: number; pruned: number }> {
   const offers = events.filter(e => e.event_type === 'offer.created');
   const open = await openOfferIds(db, offers.map(e => e.payload.offerId ?? ''));
-  const alarmOn = open.size > 0 && await alarmEnabled(db);
+  const hasAlarmCandidate = events.some(e =>
+    e.event_type === 'offer.created' ? open.has(e.payload.offerId ?? '') : ALARM_EVENT_TYPES.has(e.event_type),
+  );
+  const alarmOn = hasAlarmCandidate && await alarmEnabled(db);
 
   const planned = events.flatMap(e => {
     if (e.event_type === 'offer.created' && !open.has(e.payload.offerId ?? '')) return [];
     const copy = pushCopy(e.event_type, e.payload);
     if (!copy) return [];
     const users = [...new Set([...(e.payload.recipientUserIds ?? []), ...(e.payload.recipientUserId ? [e.payload.recipientUserId] : [])])];
-    const alarm = alarmOn && e.event_type === 'offer.created';
+    const alarm = alarmOn && ALARM_EVENT_TYPES.has(e.event_type);
     const expiresAt = e.payload.expiresAt ? new Date(e.payload.expiresAt) : null;
 
     return users.map(u => ({
@@ -186,6 +204,9 @@ export async function pushDeliverBatch(
         type: e.event_type,
         requestId: e.payload.requestId ?? '',
         offerId: e.payload.offerId ?? '',
+        proposalId: e.payload.proposalId ?? '',
+        callId: e.payload.callId ?? '',
+        conversationId: e.payload.conversationId ?? '',
         expiresAt: e.payload.expiresAt ?? '',
       },
     }));
@@ -249,7 +270,7 @@ export async function pushDeliverBatch(
         continue;
       }
 
-      const ttl = item.expiresAt ? (item.expiresAt.getTime() - Date.now()) / 1000 : 20;
+      const ttl = item.expiresAt ? (item.expiresAt.getTime() - Date.now()) / 1000 : 45;
       const res = ['offer.closed','offer.expired'].includes(item.data.type)
         ? await fcm.sendClosureDetailed(dev.token,item.data)
         : item.alarm
@@ -321,7 +342,11 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
   const open = await openOfferIds(db, pending.rows
     .filter(row => row.payload?.type === 'offer.created')
     .map(row => row.payload.offerId ?? ''));
-  const alarmOn = open.size > 0 && await alarmEnabled(db);
+  const hasRetryAlarm = pending.rows.some(row => {
+    const t = row.payload?.type;
+    return t === 'offer.created' ? open.has(row.payload?.offerId ?? '') : ALARM_EVENT_TYPES.has(t);
+  });
+  const alarmOn = hasRetryAlarm && await alarmEnabled(db);
   let retriedCount = 0;
   for (const row of pending.rows) {
     const finish = (changes: string, values: unknown[] = []) => db.query(`
@@ -344,9 +369,9 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
       continue;
     }
 
-    const isAlarm = isOffer && alarmOn;
+    const isAlarm = ALARM_EVENT_TYPES.has(payload.type) && alarmOn;
     const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
-    const ttl = expiresAt ? (expiresAt.getTime() - Date.now()) / 1000 : 20;
+    const ttl = expiresAt ? (expiresAt.getTime() - Date.now()) / 1000 : 45;
     if (ttl <= 0) {
       await finish("status='ABANDONED'");
       continue;

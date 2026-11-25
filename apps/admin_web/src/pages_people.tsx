@@ -42,21 +42,36 @@ function EditStaff({u, onClose, onDone}: {u: any; onClose: () => void; onDone: (
 }
 
 export function Accounts({live}: {live: Live}) {
-  const [tab, setTab] = useState<'PATIENT' | 'STAFF'>('PATIENT'); const [items, setItems] = useState<any[] | null>(null);
+  const [tab, setTab] = useState<'PATIENT' | 'NURSE' | 'STAFF'>('PATIENT'); const [items, setItems] = useState<any[] | null>(null);
   const [adding, setAdding] = useState(false); const [secret, setSecret] = useState<string | null>(null); const [edit, setEdit] = useState<any>(null); const [err, setErr] = useState('');
-  const load = useCallback(async () => {
-    try {
-      if (tab === 'PATIENT') setItems((await getJson('/v1/admin/users?role=PATIENT')).items);
-      else setItems((await getJson('/v1/admin/staff')).items);
-      setErr('');
-    } catch (e) { setErr((e as Error).message); }
-  }, [tab]);
-  useEffect(() => { setItems(null); void load(); }, [load, live.token]);
-  const act = (f: () => Promise<any>, after?: (r: any) => void) => f().then(r => { after?.(r); return load(); }).catch(() => undefined);
+  const [page, setPage] = useState(1);
+  const [more, setMore] = useState(false);
+  const [revision, refresh] = useState(0);
+  const [working, setWorking] = useState(false);
+  const [deleting, setDeleting] = useState<any>(null);
+  useEffect(() => {
+    let current = true;
+    setItems(null);
+    setErr('');
+    setMore(false);
+    const path = tab === 'STAFF' ? '/v1/admin/staff' : `/v1/admin/users?role=${tab}&page=${page}`;
+    getJson(path).then(result => {
+      if (current) {setItems(result.items);setMore(Boolean(result.hasMore));}
+    }).catch(e => {if (current) setErr((e as Error).message);});
+    return () => {current = false;};
+  }, [tab,page,revision,live.token]);
+  const load = () => refresh(n => n + 1);
+  const act = async (f: () => Promise<any>, after?: (r: any) => void) => {
+    setWorking(true); setErr('');
+    try { const result = await f(); after?.(result); load(); }
+    catch (e) {setErr((e as Error).message);}
+    finally {setWorking(false);}
+  };
   return <Panel title="الحسابات">
     <div className="toolbar">
-      <button className={'pill ' + (tab === 'PATIENT' ? 'on' : '')} onClick={() => setTab('PATIENT')}>المرضى</button>
-      <button className={'pill ' + (tab === 'STAFF' ? 'on' : '')} onClick={() => setTab('STAFF')}>المشرفون والمراجعون</button>
+      <button className={'pill ' + (tab === 'PATIENT' ? 'on' : '')} onClick={() => {setTab('PATIENT');setPage(1);}}>المرضى</button>
+      <button className={'pill ' + (tab === 'NURSE' ? 'on' : '')} onClick={() => {setTab('NURSE');setPage(1);}}>الممرضون</button>
+      <button className={'pill ' + (tab === 'STAFF' ? 'on' : '')} onClick={() => {setTab('STAFF');setPage(1);}}>المشرفون والمراجعون</button>
       <button className="pill on" onClick={() => setAdding(true)}>+ إضافة حساب</button>
     </div>
     {err && <p className="hint err">{err}</p>}
@@ -64,9 +79,21 @@ export function Accounts({live}: {live: Live}) {
       u.status === 'ACTIVE' ? (u.locked_until && new Date(u.locked_until) > new Date() ? 'مقفل مؤقتًا' : 'نشط') : 'موقوف', fmtDate(u.created_at),
       <span className="acts" key="a">
         {tab === 'STAFF' && <button className="pill" onClick={() => setEdit(u)}>تعديل</button>}
-        <button className="pill" onClick={() => { if (confirm('هل تحققت من هوية صاحب الحساب؟ تصدر كلمة مؤقتة صالحة 30 دقيقة وتنتهي الجلسات الحالية.')) void act(() => sendJson('POST', `/v1/admin/users/${u.id}/reset-password`), r => setSecret(r.temporaryPassword)); }}>كلمة مرور جديدة</button>
-        <button className="pill" onClick={() => void act(() => sendJson('POST', `/v1/admin/users/${u.id}/status`, {status: u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'}))}>{u.status === 'ACTIVE' ? 'إيقاف' : 'تفعيل'}</button>
-        {tab === 'STAFF' && <button className="pill danger" onClick={() => { if (confirm('حذف الحساب؟')) void act(() => sendJson('DELETE', `/v1/admin/staff/${u.id}`)); }}>حذف</button>}</span>])}/>}
+        <button className="pill" disabled={working} onClick={() => { if (confirm('هل تحققت من هوية صاحب الحساب؟ تصدر كلمة مؤقتة صالحة 30 دقيقة وتنتهي الجلسات الحالية.')) void act(() => sendJson('POST', `/v1/admin/users/${u.id}/reset-password`), r => setSecret(r.temporaryPassword)); }}>كلمة مرور جديدة</button>
+        <button className="pill" disabled={working} onClick={() => void act(() => sendJson('POST', `/v1/admin/users/${u.id}/status`, {status: u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'}))}>{u.status === 'ACTIVE' ? 'إيقاف' : 'تفعيل'}</button>
+        <button className="pill danger" disabled={working} onClick={() => {setErr('');setDeleting(u);}}>حذف</button></span>])}/>}
+    {items?.length === 0 && <p>لا توجد حسابات في هذه الصفحة.</p>}
+    {tab !== 'STAFF' && <div className="actions">
+      <button className="pill" disabled={page === 1 || working} onClick={() => setPage(n => n - 1)}>السابق</button>
+      <button className="pill" disabled={!more || working} onClick={() => setPage(n => n + 1)}>التالي</button>
+    </div>}
+    {deleting && <Modal title={`حذف حساب ${deleting.display_name ?? deleting.phone_e164}`} onClose={() => {if (!working) setDeleting(null);}}>
+      <p>سيُغلق الحساب وتنتهي جلساته ويُحرّر رقم الهاتف. يبقى سجل الطلبات والتدقيق محفوظًا.</p>
+      {err && <p className="err" role="alert">{err}</p>}
+      <button className="pill danger" disabled={working} onClick={() => void act(
+        () => sendJson('DELETE', `/v1/admin/users/${deleting.id}`), () => setDeleting(null),
+      )}>تأكيد الحذف</button>
+    </Modal>}
     {adding && <NewAccount onClose={() => setAdding(false)} onDone={pw => { setAdding(false); setSecret(pw); void load(); }}/>}
     {edit && <EditStaff u={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); void load(); }}/>}
     {secret && <Secret label="كلمة المرور" value={secret} onClose={() => setSecret(null)}/>}

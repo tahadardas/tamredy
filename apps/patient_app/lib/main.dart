@@ -1,18 +1,29 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'controller.dart';
+import 'patient_alarm.dart';
 import 'screens/home.dart';
 import 'screens/history.dart';
 import 'screens/wallet.dart';
 import 'screens/track.dart';
 import 'screens/referral.dart';
 
-void main() {
+final ValueNotifier<ThemeMode> patientThemeMode = ValueNotifier(ThemeMode.light);
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Analytics.init(
     appRole: 'patient',
   ); // no-op unless ANALYTICS_ENABLED + Firebase configured
+  if (kFcmEnabled && !kIsWeb && await FirebaseBoot.ensure()) {
+    FirebaseMessaging.onBackgroundMessage(patientBackgroundHandler);
+    FirebaseMessaging.onMessage.listen((m) {
+      PatientAlarm.handlePush(m.data);
+    });
+  }
   runApp(TamreedyPatientApp());
 }
 
@@ -22,24 +33,37 @@ class TamreedyPatientApp extends StatelessWidget {
     : controller = controller ?? PatientController();
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: tamreedyTheme(),
-    locale: const Locale('ar'),
-    supportedLocales: const [Locale('ar')],
-    localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    builder: (context, child) =>
-        Directionality(textDirection: TextDirection.rtl, child: child!),
-    home: AuthGate(
-      api: controller.api,
-      role: 'PATIENT',
-      child: (_) => OnSessionStart(
-        onStart: controller.loadAll,
-        child: RealtimeHost(
-          api: controller.api,
-          onResync: controller.resync,
-          onEvent: controller.onLive,
-          child: PatientShell(c: controller),
+  Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
+    valueListenable: patientThemeMode,
+    builder: (context, mode, _) => MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: tamreedyLightTheme(),
+      darkTheme: tamreedyDarkTheme(),
+      themeMode: mode,
+      locale: const Locale('ar'),
+      supportedLocales: const [Locale('ar')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      builder: (context, child) =>
+          Directionality(textDirection: TextDirection.rtl, child: child!),
+      home: AuthGate(
+        api: controller.api,
+        role: 'PATIENT',
+        child: (_) => OnSessionStart(
+          onStart: () async {
+            PatientAlarm.onTap = () {
+              controller.setTab(1);
+              controller.resync();
+            };
+            await PatientAlarm.init();
+            await PatientAlarm.requestPermissions();
+            await controller.loadAll();
+          },
+          child: RealtimeHost(
+            api: controller.api,
+            onResync: controller.resync,
+            onEvent: controller.onLive,
+            child: PatientShell(c: controller),
+          ),
         ),
       ),
     ),
@@ -88,74 +112,152 @@ class PatientShell extends StatelessWidget {
         case 2:
           return WalletScreen(c: c, nav: nav);
         case 3:
-          return TamScaffold(
-            title: 'حسابي',
-            subtitle: 'بياناتك والمستفيدون',
-            nav: nav,
-            children: [
-              TamCard(
-                child: Column(
-                  children: [
-                    ListRow(
-                      icon: Icons.person_outline,
-                      title: c.beneficiary,
-                      subtitle: 'المستفيد الافتراضي',
-                    ),
-                    ListRow(
-                      icon: Icons.logout,
-                      title: 'تسجيل الخروج',
-                      subtitle: 'الخروج والتبديل لحساب آخر',
-                      divider: false,
-                      onTap: () async {
-                        await c.api.logout();
-                        runApp(TamreedyPatientApp());
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              if (!kDemoMode)
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => TrustedContactsScreen(api: c.api),
-                  )),
-                  icon: const Icon(Icons.contact_phone_outlined),
-                  label: const Text('جهات الاتصال الموثوقة'),
-                ),
-              if (!kDemoMode)
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => EmergencyDirectoryScreen(api: c.api),
-                  )),
-                  icon: const Icon(Icons.phone_outlined),
-                  label: const Text('دليل الطوارئ'),
-                ),
-              ReferralCard(c: c),
-              TamCard(
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: ListRow(
-                        icon: Icons.campaign_outlined,
-                        title: 'العروض والإشعارات التسويقية',
-                        subtitle:
-                            'أخبرني بالخصومات والعروض (يمكنك الإيقاف في أي وقت)',
-                        divider: false,
-                      ),
-                    ),
-                    Switch(
-                      value: c.marketingOptIn,
-                      onChanged: c.setConsent,
-                      activeThumbColor: TamreedyColors.teal,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
+          return _PatientProfileScreen(c: c, nav: nav);
         default:
           return HomeScreen(c: c, nav: nav);
       }
     },
   );
+}
+
+class _PatientProfileScreen extends StatelessWidget {
+  final PatientController c;
+  final TamBottomNav nav;
+  const _PatientProfileScreen({required this.c, required this.nav});
+
+  @override
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    return TamScaffold(
+      title: 'حسابي',
+      subtitle: 'بياناتك والمستفيدون والإعدادات',
+      nav: nav,
+      children: [
+        TamCard(
+          child: Column(
+            children: [
+              ListRow(
+                icon: Icons.person_outline_rounded,
+                title: c.beneficiary.isEmpty ? 'حساب المريض' : c.beneficiary,
+                subtitle: 'المستفيد الافتراضي',
+              ),
+              ListRow(
+                icon: Icons.logout_rounded,
+                title: 'تسجيل الخروج',
+                subtitle: 'الخروج والتبديل لحساب آخر',
+                tone: Tone.danger,
+                divider: false,
+                onTap: () async {
+                  final ok = await TamDialog.confirm(
+                    context,
+                    title: 'تسجيل الخروج',
+                    message: 'هل تريد تسجيل الخروج من حسابك الحالي؟',
+                    confirmLabel: 'خروج',
+                    destructive: true,
+                  );
+                  if (ok == true) {
+                    await c.api.logout();
+                    runApp(TamreedyPatientApp());
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+        const SectionTitle('المظهر'),
+        TamCard(
+          child: ValueListenableBuilder<ThemeMode>(
+            valueListenable: patientThemeMode,
+            builder: (context, mode, _) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'سمة العرض',
+                  style: aeroText(
+                    size: 14,
+                    weight: FontWeight.w700,
+                    color: tc.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: TamSpacing.sm),
+                SegmentedButton<ThemeMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: ThemeMode.light,
+                      label: Text('فاتح'),
+                      icon: Icon(Icons.light_mode_outlined),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.dark,
+                      label: Text('داكن'),
+                      icon: Icon(Icons.dark_mode_outlined),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.system,
+                      label: Text('النظام'),
+                      icon: Icon(Icons.brightness_auto_outlined),
+                    ),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (s) => patientThemeMode.value = s.first,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (!kDemoMode) ...[
+          const SectionTitle('السلامة والطوارئ'),
+          TamCard(
+            child: Column(
+              children: [
+                ListRow(
+                  icon: Icons.contact_phone_outlined,
+                  title: 'جهات الاتصال الموثوقة',
+                  subtitle: 'إدارة جهات الاتصال في حالات الطوارئ',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => TrustedContactsScreen(api: c.api),
+                    ),
+                  ),
+                ),
+                ListRow(
+                  icon: Icons.emergency_outlined,
+                  title: 'دليل الطوارئ',
+                  subtitle: 'أرقام الإسعاف والطوارئ المحلية',
+                  tone: Tone.danger,
+                  divider: false,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => EmergencyDirectoryScreen(api: c.api),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        ReferralCard(c: c),
+        TamCard(
+          child: Row(
+            children: [
+              const Expanded(
+                child: ListRow(
+                  icon: Icons.campaign_outlined,
+                  title: 'العروض والإشعارات التسويقية',
+                  subtitle:
+                      'أخبرني بالخصومات والعروض (يمكنك الإيقاف في أي وقت)',
+                  divider: false,
+                ),
+              ),
+              Switch(
+                value: c.marketingOptIn,
+                onChanged: c.setConsent,
+                activeThumbColor: tc.primary,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }

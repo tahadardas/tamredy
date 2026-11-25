@@ -18,10 +18,20 @@ Future<void> showCancellationSheet(BuildContext context, PatientController c) as
   if (c.busy) return;
   final policy = await c.loadCancellationPolicy();
   if (!context.mounted) return;
-  if (policy == null || policy['canCancel'] != true) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(c.error ?? 'تغيّرت حالة الزيارة. راجع التتبع وحاول مجددًا.')),
+  if (policy == null) {
+    TamToast.show(
+      context,
+      c.error ?? 'تعذر الاتصال بالخادم للتحقق من إمكانية الإلغاء.',
+      tone: TamToastTone.error,
     );
+    return;
+  }
+  if (policy['canCancel'] != true) {
+    final status = '${policy['status'] ?? ''}';
+    final msg = (status == 'OPEN_FOR_PROPOSALS' || status == 'AWAITING_RECOVERY_CHOICE')
+        ? 'سياسة الإلغاء في الخادم لم تفعّل الإلغاء لحالة (${requestStatusAr(status)}) بعد.'
+        : 'لا يمكن إلغاء الطلب في حالته الحالية (${requestStatusAr(status)}).';
+    TamToast.show(context, msg, tone: TamToastTone.warning);
     return;
   }
   await showAeroModalBottomSheet<void>(

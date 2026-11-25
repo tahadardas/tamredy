@@ -26,63 +26,124 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const _initialSheetSize = 0.65;
-  final _sheet = DraggableScrollableController();
+  final _search = TextEditingController();
+  String _query = '';
   PatientController get c => widget.c;
 
   @override
   void dispose() {
-    _sheet.dispose();
+    _search.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     final last = c.history.isEmpty ? null : c.history.first;
+    final filteredServices = _query.trim().isEmpty
+        ? c.services
+        : c.services.where((s) {
+            final q = _query.trim();
+            return s.title.contains(q) || s.note.contains(q);
+          }).toList();
+
     return Scaffold(
+      backgroundColor: tc.background,
       bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom == 0
           ? widget.nav
           : null,
       drawer: Drawer(
+        backgroundColor: tc.surface,
         child: SafeArea(
           child: ListView(
+            padding: const EdgeInsets.symmetric(vertical: TamSpacing.sm),
             children: [
+              Padding(
+                padding: const EdgeInsets.all(TamSpacing.lg),
+                child: Row(
+                  children: [
+                    Image.asset(
+                      'assets/images/logo_mark.png',
+                      package: kFontPackage,
+                      width: 36,
+                      height: 36,
+                      excludeFromSemantics: true,
+                    ),
+                    const SizedBox(width: TamSpacing.md),
+                    Text(
+                      'تمريضي',
+                      style: aeroText(
+                        size: 20,
+                        weight: FontWeight.w800,
+                        color: tc.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(color: tc.border),
               for (final item in [
                 (Icons.calendar_today_outlined, 'طلباتي', 1),
                 (Icons.account_balance_wallet_outlined, 'محفظتي', 2),
                 (Icons.person_outline, 'حسابي', 3),
               ])
                 ListTile(
-                  leading: Icon(item.$1),
-                  title: Text(item.$2),
+                  leading: Icon(item.$1, color: tc.textSecondary),
+                  title: Text(
+                    item.$2,
+                    style: aeroText(
+                      size: 14,
+                      weight: FontWeight.w600,
+                      color: tc.textPrimary,
+                    ),
+                  ),
                   onTap: () {
                     Navigator.of(context).pop();
                     c.setTab(item.$3);
                   },
                 ),
-              const Divider(),
+              Divider(color: tc.border),
               ListTile(
-                leading: const Icon(Icons.calendar_month, color: AeroColors.accentTeal),
-                title: const Text('خطط الرعاية المستمرة'),
+                leading: Icon(Icons.calendar_month, color: tc.primary),
+                title: Text(
+                  'خطط الرعاية المستمرة',
+                  style: aeroText(size: 14, color: tc.textPrimary),
+                ),
                 onTap: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => CarePlansScreen(c: c)));
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => CarePlansScreen(c: c)),
+                  );
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.favorite, color: Color(0xFFEF4444)),
-                title: const Text('الممرضون المفضلون'),
+                leading: Icon(Icons.favorite, color: tc.danger),
+                title: Text(
+                  'الممرضون المفضلون',
+                  style: aeroText(size: 14, color: tc.textPrimary),
+                ),
                 onTap: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => FavoriteNursesScreen(c: c)));
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => FavoriteNursesScreen(c: c),
+                    ),
+                  );
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.folder_shared_outlined, color: AeroColors.primaryNavy),
-                title: const Text('السجل الصحي والتقارير'),
+                leading: Icon(Icons.folder_shared_outlined, color: tc.secondary),
+                title: Text(
+                  'السجل الصحي والتقارير',
+                  style: aeroText(size: 14, color: tc.textPrimary),
+                ),
                 onTap: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => HealthRecordScreen(c: c)));
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => HealthRecordScreen(c: c),
+                    ),
+                  );
                 },
               ),
             ],
@@ -90,152 +151,383 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) => Stack(
-            children: [
-              Positioned.fill(
-                child: AnimatedBuilder(
-                  animation: _sheet,
-                  builder: (context, _) {
-                    final extent = _sheet.isAttached ? _sheet.size : _initialSheetSize;
-                    return Align(
-                      alignment: Alignment.topCenter,
-                      child: TamMap(
-                        patient: c.position,
-                        homeOverlay: true,
-                        height: constraints.maxHeight * (1 - extent),
+        bottom: false,
+        child: Column(
+          children: [
+            // Clean Medical Top Bar
+            Container(
+              decoration: BoxDecoration(
+                color: tc.surface,
+                border: Border(bottom: BorderSide(color: tc.border)),
+              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: TamSpacing.lg,
+                vertical: TamSpacing.md,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: TamBreakpoints.maxContentWidth,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Builder(
+                            builder: (ctx) => TamIconButton(
+                              icon: Icons.menu_rounded,
+                              tooltip: 'فتح القائمة',
+                              onPressed: () => Scaffold.of(ctx).openDrawer(),
+                            ),
+                          ),
+                          const SizedBox(width: TamSpacing.md),
+                          Image.asset(
+                            'assets/images/logo_mark.png',
+                            package: kFontPackage,
+                            width: 34,
+                            height: 34,
+                            excludeFromSemantics: true,
+                          ),
+                          const SizedBox(width: TamSpacing.sm),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'تمريضي',
+                                  style: aeroText(
+                                    size: 18,
+                                    weight: FontWeight.w800,
+                                    color: tc.textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  'الرعاية التمريضية المنزلية',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: aeroText(
+                                    size: 11.5,
+                                    color: tc.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TamIconButton(
+                            icon: Icons.folder_shared_outlined,
+                            tooltip: 'السجل الصحي',
+                            color: tc.primary,
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => HealthRecordScreen(c: c),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    );
-                  },
+                      const SizedBox(height: TamSpacing.md),
+                      // Current Visit Address Selector
+                      InkWell(
+                        onTap: c.stage != VisitStage.none || c.busy
+                            ? null
+                            : () => Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        LocationScreen(c: c, addressOnly: true),
+                                  ),
+                                ),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: TamSpacing.md,
+                            vertical: TamSpacing.sm,
+                          ),
+                          decoration: BoxDecoration(
+                            color: tc.surfaceElevated,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: tc.border),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.location_on_rounded,
+                                size: 18,
+                                color: tc.primary,
+                              ),
+                              const SizedBox(width: TamSpacing.sm),
+                              Expanded(
+                                child: Text(
+                                  c.position == null
+                                      ? 'تحديد عنوان الزيارة'
+                                      : c.visitAddress,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: aeroText(
+                                    size: 13,
+                                    weight: FontWeight.w600,
+                                    color: tc.textPrimary,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                'تغيير',
+                                style: aeroText(
+                                  size: 12,
+                                  weight: FontWeight.w700,
+                                  color: tc.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              PositionedDirectional(
-                top: 12,
-                start: 12,
-                end: 12,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            ),
+            // Scrollable Hub Content
+            Expanded(
+              child: RefreshIndicator(
+                color: tc.primary,
+                onRefresh: c.loadServices,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                   children: [
-                    Builder(
-                      builder: (context) => IconButton.filledTonal(
-                        tooltip: 'فتح القائمة',
-                        onPressed: () => Scaffold.of(context).openDrawer(),
-                        icon: const Icon(Icons.menu),
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: TamBreakpoints.maxContentWidth,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (c.stage != VisitStage.none)
+                              ActiveOrderBanner(c: c),
+                            // Quick Nursing Request Hero
+                            HeroCard(
+                              caption: 'رعاية طبية موثوقة',
+                              title: 'طلب تمريض منزلي',
+                              body:
+                                  'اختر الخدمة المناسبة أو طريقة الحجز وسيصلك ممرض معتمد في الوقت المحدد.',
+                              trailing: c.services.isNotEmpty
+                                  ? AeroButton.teal(
+                                      'ابدأ طلب تمريض الآن',
+                                      height: 46,
+                                      fontSize: 14,
+                                      trailingIcon: const Icon(
+                                        Icons.arrow_forward_rounded,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                      onPressed: () {
+                                        c.pick(c.services.first);
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                ServiceScreen(c: c),
+                                          ),
+                                        );
+                                      },
+                                    )
+                                  : null,
+                            ),
+                            // Search Bar
+                            TamSearchField(
+                              controller: _search,
+                              hint: 'ابحث عن خدمة تمريضية...',
+                              onChanged: (v) => setState(() => _query = v),
+                            ),
+                            const SectionTitle('طرق الحجز'),
+                            _BookingModeStrip(
+                              selectedMode: c.bookingMode,
+                              onSelect: (mode) =>
+                                  setState(() => c.bookingMode = mode),
+                            ),
+                            const SectionTitle('ما الخدمة التي تحتاجها؟'),
+                            if (c.serviceState == ServiceLoadState.loading)
+                              const ServiceSkeletonGrid()
+                            else if (c.serviceState ==
+                                    ServiceLoadState.networkError ||
+                                c.serviceState == ServiceLoadState.serverError)
+                              ServiceErrorCard(
+                                message: c.serviceError ??
+                                    'تعذر الاتصال بالخادم لجلب الخدمات المتاحة.',
+                                onRetry: c.loadServices,
+                              )
+                            else if (c.serviceState == ServiceLoadState.empty)
+                              const TamEmptyState(
+                                icon: Icons.medical_services_outlined,
+                                title: 'لا توجد خدمات منشورة حاليًا',
+                                message:
+                                    'لا توجد خدمات منشورة في منطقتك حاليًا. تواصل مع الدعم للمساعدة.',
+                              )
+                            else if (filteredServices.isEmpty)
+                              TamEmptyState(
+                                icon: Icons.search_off_rounded,
+                                title: 'لا توجد نتائج مطابقة',
+                                message: 'جرّب البحث بكلمة أخرى.',
+                                actionLabel: 'عرض كل الخدمات',
+                                onAction: () {
+                                  _search.clear();
+                                  setState(() => _query = '');
+                                },
+                              )
+                            else
+                              LayoutBuilder(
+                                builder: (context, constraints) {
+                                  const gap = 12.0;
+                                  final width = constraints.maxWidth >= 420
+                                      ? (constraints.maxWidth - gap) / 2
+                                      : constraints.maxWidth;
+                                  return Wrap(
+                                    spacing: gap,
+                                    runSpacing: gap,
+                                    children: [
+                                      for (final service in filteredServices)
+                                        SizedBox(
+                                          width: width,
+                                          child: _ServiceOption(
+                                            service: service,
+                                            onTap: () {
+                                              c.pick(service);
+                                              Navigator.of(context).push(
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      ServiceScreen(c: c),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            const SizedBox(height: TamSpacing.md),
+                            ClaimCodeCard(c: c),
+                            const SectionTitle('حجوزاتي الأخيرة'),
+                            if (last == null)
+                              const TamEmptyState(
+                                icon: Icons.history_rounded,
+                                title: 'لا توجد حجوزات سابقة بعد',
+                                message: 'اختر خدمة تمريضية لتبدأ طلبك الأول.',
+                              )
+                            else
+                              TamAppointmentCard(
+                                title: last.title,
+                                dateTimeLabel: last.date,
+                                status: last.status,
+                                priceLabel: formatMoney(last.price),
+                                onTap: () => c.setTab(1),
+                              ),
+                            EmergencyNoticeBanner(api: c.api),
+                          ],
+                        ),
                       ),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed: () => c.setTab(2),
-                      icon: const Icon(Icons.account_balance_wallet_outlined),
-                      label: const Text('محفظتي'),
                     ),
                   ],
                 ),
               ),
-              DraggableScrollableSheet(
-                controller: _sheet,
-                initialChildSize: _initialSheetSize,
-                minChildSize: 0.32,
-                maxChildSize: 0.78,
-                snap: true,
-                builder: (context, controller) => Material(
-                  color: AeroColors.lightCanvas,
-                  elevation: 8,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(24),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: RefreshIndicator(
-                    onRefresh: c.loadServices,
-                    child: ListView(
-                      controller: controller,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
-                      children: [
-                        const Center(child: Icon(Icons.drag_handle)),
-                        const SectionTitle('طلب تمريض منزلي'),
-                        if (c.stage != VisitStage.none) ActiveOrderBanner(c: c),
-                        OutlinedButton.icon(
-                          onPressed: c.stage != VisitStage.none || c.busy ? null : () {
-                            Navigator.of(context).push(MaterialPageRoute<void>(
-                              builder: (_) => LocationScreen(c: c, addressOnly: true),
-                            ));
-                          },
-                          icon: const Icon(Icons.location_on_outlined),
-                          label: Text(c.position == null ? 'تحديد عنوان الزيارة' : c.visitAddress),
-                        ),
-                        const SectionTitle('ما الخدمة التي تحتاجها؟'),
-                        if (c.serviceState == ServiceLoadState.loading)
-                          const ServiceSkeletonGrid()
-                        else if (c.serviceState ==
-                                ServiceLoadState.networkError ||
-                            c.serviceState == ServiceLoadState.serverError)
-                          ServiceErrorCard(
-                            message:
-                                c.serviceError ??
-                                'تعذر الاتصال بالخادم لجلب الخدمات المتاحة.',
-                            onRetry: c.loadServices,
-                          )
-                        else if (c.serviceState == ServiceLoadState.empty)
-                          const NoticeBox(
-                            'لا توجد خدمات منشورة حاليًا في منطقتك. تواصل مع الدعم للمساعدة.',
-                          )
-                        else
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              const gap = 12.0;
-                              final width = constraints.maxWidth >= 400
-                                  ? (constraints.maxWidth - gap) / 2
-                                  : constraints.maxWidth;
-                              return Wrap(
-                                spacing: gap,
-                                children: [
-                                  for (final service in c.services)
-                                    SizedBox(
-                                      width: width,
-                                      child: _ServiceOption(
-                                        service: service,
-                                        onTap: () {
-                                          c.pick(service);
-                                          Navigator.of(context).push(
-                                            MaterialPageRoute(
-                                              builder: (_) =>
-                                                  ServiceScreen(c: c),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                ],
-                              );
-                            },
-                          ),
-                        ClaimCodeCard(c: c),
-                        const SectionTitle('حجوزاتي الأخيرة'),
-                        if (last == null)
-                          const NoticeBox(
-                            'لا توجد حجوزات سابقة بعد. اختر خدمة لتبدأ طلبك الأول.',
-                          )
-                        else
-                          TamCard(
-                            child: ListRow(
-                              icon: Icons.check,
-                              title: last.title,
-                              subtitle:
-                                  '${last.date} • ${formatMoney(last.price)}',
-                              trailing: StatusChip(last.status),
-                              divider: false,
-                            ),
-                          ),
-                        EmergencyNoticeBanner(api: c.api),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _BookingModeStrip extends StatelessWidget {
+  final String selectedMode;
+  final ValueChanged<String> onSelect;
+
+  const _BookingModeStrip({
+    required this.selectedMode,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    final modes = [
+      (
+        id: 'INSTANT',
+        title: 'طلب فوري',
+        sub: 'أقرب ممرض متاح',
+        icon: Icons.bolt_rounded,
+      ),
+      (
+        id: 'OPEN',
+        title: 'سوق العروض',
+        sub: 'قارن العروض',
+        icon: Icons.storefront_rounded,
+      ),
+      (
+        id: 'SCHEDULED',
+        title: 'حجز مسبق',
+        sub: 'حدد التاريخ والوقت',
+        icon: Icons.event_available_rounded,
+      ),
+    ];
+
+    return Row(
+      children: modes.map((m) {
+        final active = selectedMode == m.id;
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsetsDirectional.only(
+              end: m.id != 'SCHEDULED' ? TamSpacing.sm : 0,
+            ),
+            child: InkWell(
+              onTap: () => onSelect(m.id),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.all(TamSpacing.md),
+                decoration: BoxDecoration(
+                  color: active
+                      ? tc.primaryTint.withValues(alpha: tc.isDark ? 0.35 : 0.65)
+                      : tc.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active ? tc.primary : tc.border,
+                    width: active ? 1.5 : 1.0,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      m.icon,
+                      size: 20,
+                      color: active ? tc.primary : tc.textSecondary,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      m.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: aeroText(
+                        size: 12.5,
+                        weight: FontWeight.w700,
+                        color: active ? tc.primaryDark : tc.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      m.sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: aeroText(size: 10.5, color: tc.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }
@@ -246,40 +538,54 @@ class _ServiceOption extends StatelessWidget {
   const _ServiceOption({required this.service, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => TamCard(
-    onTap: onTap,
-    padding: const EdgeInsets.all(14),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        IconBox(
-          _serviceIcons[service.iconCode],
-          tone: _serviceTones[service.iconCode],
-          size: 36,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(service.title, style: tamText(size: 14, weight: FontWeight.w800)),
-              const SizedBox(height: 4),
-              Text(
-                'من ${formatMoney(service.price)}',
-                style: tamText(size: 12, weight: FontWeight.w700, color: TamreedyColors.teal),
-              ),
-              if (service.requiresPrescription)
-                Text(
-                  'تتطلب وصفة',
-                  style: tamText(size: 11, color: TamreedyColors.subtext),
-                ),
-            ],
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    return TamCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          IconBox(
+            _serviceIcons[service.iconCode],
+            tone: _serviceTones[service.iconCode],
+            size: 38,
           ),
-        ),
-        const Icon(Icons.chevron_left_rounded, size: 20, color: TamreedyColors.teal),
-      ],
-    ),
-  );
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  service.title,
+                  style: tamText(
+                    size: 14,
+                    weight: FontWeight.w800,
+                    color: tc.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'من ${formatMoney(service.price)}',
+                  style: tamText(
+                    size: 12,
+                    weight: FontWeight.w700,
+                    color: tc.primary,
+                  ),
+                ),
+                if (service.requiresPrescription)
+                  Text(
+                    'تتطلب وصفة طبية',
+                    style: tamText(size: 11, color: tc.warning),
+                  ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_left_rounded, size: 20, color: tc.primary),
+        ],
+      ),
+    );
+  }
 }
 
 class ActiveOrderBanner extends StatelessWidget {
@@ -685,6 +991,11 @@ class _ServiceScreenState extends State<ServiceScreen> {
       showBack: true,
       nav: patientNavBar(context, c, 0),
       children: [
+        const TamStepper(
+          steps: ['الخدمة والمتطلبات', 'تحديد الموقع', 'مراجعة وتأكيد'],
+          currentStep: 0,
+        ),
+        const SizedBox(height: TamSpacing.lg),
         TamCard(
           child: SizedBox(
             width: double.infinity,
@@ -957,6 +1268,11 @@ class _EstimateCardState extends State<EstimateCard> {
                       controller: _code,
                       textCapitalization: TextCapitalization.characters,
                       textDirection: TextDirection.ltr,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) {
+                        FocusScope.of(context).unfocus();
+                        c.applyPromo(_code.text.trim());
+                      },
                       style: tamText(size: 14, weight: FontWeight.w700),
                       decoration: InputDecoration(
                         hintText: 'كود الخصم',
@@ -1053,6 +1369,12 @@ class _ClaimCodeCardState extends State<ClaimCodeCard> {
                   controller: _code,
                   textCapitalization: TextCapitalization.characters,
                   textDirection: TextDirection.ltr,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) async {
+                    FocusScope.of(context).unfocus();
+                    final m = await widget.c.claimCode(_code.text.trim());
+                    if (mounted) setState(() => _msg = m);
+                  },
                   style: tamText(size: 14, weight: FontWeight.w700),
                   decoration: InputDecoration(
                     hintText: 'أدخل الكود',

@@ -24,32 +24,17 @@ class _FavoriteNursesScreenState extends State<FavoriteNursesScreen> {
   Future<void> _loadFavorites() async {
     setState(() => _isLoading = true);
     try {
-      final res = await widget.c.api.getMap('/v1/favorites/nurses');
-      if (res['favorites'] is List) {
-        setState(() {
-          _favorites.clear();
-          _favorites.addAll(List<Map<String, dynamic>>.from(res['favorites']));
-        });
-      }
-    } catch (_) {
-      // Offline fallback mock data
-      if (_favorites.isEmpty) {
-        _favorites.addAll([
-          {
-            'nurse_id': 'nurse-101',
-            'nurse_name': 'م. سارة المحمود',
-            'average_rating': 4.95,
-            'completed_visits_count': 34,
-            'skills': ['حقن وريدي', 'عناية بالجروح', 'قياس سكر وضغط'],
-          },
-          {
-            'nurse_id': 'nurse-102',
-            'nurse_name': 'م. خالد العلي',
-            'average_rating': 4.88,
-            'completed_visits_count': 19,
-            'skills': ['تركيب قسطرة', 'رعاية تنفسية', 'إعطاء محاليل'],
-          },
-        ]);
+      final raw = await widget.c.api.getList('/v1/favorites/nurses');
+      setState(() {
+        _favorites
+          ..clear()
+          ..addAll(raw.map((e) => Map<String, dynamic>.from(e as Map)));
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(explainError(e, fallback: 'تعذر تحميل الممرضين المفضلين'))),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -119,13 +104,19 @@ class _FavoriteNursesScreenState extends State<FavoriteNursesScreen> {
                     separatorBuilder: (_, _) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final f = _favorites[index];
+                      final offered = (f['offered_services'] as List?) ?? const [];
+                      final skills = offered.isNotEmpty
+                          ? offered
+                                .map((e) => (e is Map ? (e['titleAr'] ?? e['code']) : e).toString())
+                                .toList()
+                          : (f['skills'] as List?)?.map((e) => e.toString()).toList() ?? [];
                       return AeroFavoriteNurseCard(
-                        name: f['nurse_name'] ?? 'ممرض معتمد',
-                        rating: (f['average_rating'] as num?)?.toDouble() ?? 5.0,
-                        totalVisits: (f['completed_visits_count'] as num?)?.toInt() ?? 0,
-                        skills: (f['skills'] as List?)?.map((e) => e.toString()).toList() ?? [],
+                        name: f['nurse_name']?.toString() ?? 'ممرض معتمد',
+                        rating: double.tryParse('${f['rating'] ?? f['average_rating'] ?? 5.0}') ?? 5.0,
+                        totalVisits: int.tryParse('${f['review_count'] ?? f['completed_visits_count'] ?? 0}') ?? 0,
+                        skills: skills,
                         onRequestDirect: () => _requestDirectNurse(f),
-                        onRemoveFavorite: () => _removeFavorite(f['nurse_id']),
+                        onRemoveFavorite: () => _removeFavorite(f['nurse_id'].toString()),
                       );
                     },
                   ),

@@ -38,7 +38,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    return ListenableBuilder(
     listenable: c,
     builder: (context, _) {
       final bill = c.bill;
@@ -61,7 +63,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             c.payMethod == id
                 ? Icons.radio_button_checked
                 : Icons.radio_button_off,
-            color: TamreedyColors.navy,
+            color: c.payMethod == id ? tc.primary : tc.textSecondary,
           ),
         ),
       );
@@ -113,18 +115,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ChoiceChip(
                     label: Text(
                       t == 0 ? 'بدون' : formatMoney(t),
-                      style: tamText(size: 12.5, weight: FontWeight.w700),
+                      style: tamText(
+                        size: 12.5,
+                        weight: FontWeight.w700,
+                        color: bill.tip == t ? tc.primaryDark : tc.textPrimary,
+                      ),
                     ),
                     selected: bill.tip == t,
                     onSelected: (_) => c.setTip(t),
-                    selectedColor: TamreedyColors.tealTint,
+                    selectedColor: tc.primaryTint,
                   ),
               ],
             ),
             const SizedBox(height: 6),
             Text(
               'تُضاف إلى المبلغ المسلَّم للممرض وتعود إليه كاملة.',
-              style: tamText(size: 11.5, color: TamreedyColors.subtext),
+              style: tamText(size: 11.5, color: tc.textSecondary),
             ),
           ],
           if (bill != null && !paid)
@@ -156,6 +162,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       );
     },
   );
+  }
 }
 
 /// P08 — rate the visit.

@@ -97,8 +97,8 @@ class TamreedyApi {
     final client = Dio(
       BaseOptions(
         baseUrl: baseUrl,
-        connectTimeout: const Duration(seconds: 12),
-        receiveTimeout: const Duration(seconds: 20),
+        connectTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 30),
         headers: {
           'Accept': 'application/json',
           'X-Client-Platform': defaultTargetPlatform.name,
@@ -423,10 +423,20 @@ class TamreedyApi {
   // Smart Booking & Open Marketplace Endpoints
   // =========================================================================
 
-  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm}) =>
-      getList(maxDistanceKm != null
+  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm}) async {
+    final res = await dio.get(
+      maxDistanceKm != null
           ? '/v1/marketplace/requests?maxDistanceKm=$maxDistanceKm'
-          : '/v1/marketplace/requests');
+          : '/v1/marketplace/requests',
+    );
+    final data = res.data;
+    if (data is List) return List<dynamic>.from(data);
+    if (data is Map) {
+      final list = data['requests'] ?? data['items'];
+      if (list is List) return List<dynamic>.from(list);
+    }
+    return const [];
+  }
 
   Future<Map<String, dynamic>> getMarketplaceRequest(String requestId) =>
       getMap('/v1/marketplace/requests/$requestId');
@@ -438,9 +448,9 @@ class TamreedyApi {
     String? note,
   }) =>
       post('/v1/marketplace/requests/$requestId/proposals', {
-        if (estimatedMinutes != null) 'estimatedArrivalMinutes': estimatedMinutes,
-        if (specificTime != null) 'specificArrivalTime': specificTime,
-        if (note != null && note.isNotEmpty) 'nurseNote': note,
+        if (estimatedMinutes != null) 'arrivalMinutes': estimatedMinutes,
+        if (specificTime != null) 'proposedArrivalAt': specificTime,
+        if (note != null && note.isNotEmpty) 'note': note,
       });
 
   Future<Map<String, dynamic>> withdrawProposal(String proposalId, {String? reason}) =>
@@ -466,8 +476,8 @@ class TamreedyApi {
     int durationMinutes = 60,
   }) =>
       post('/v1/requests/$requestId/booking-mode', {
-        'targetBookingMode': 'OPEN',
-        'durationMinutes': durationMinutes,
+        'bookingMode': 'OPEN',
+        'openDurationMinutes': durationMinutes,
       });
 
   Future<Map<String, dynamic>> retryInstantDispatch(String requestId) =>
@@ -479,9 +489,9 @@ class TamreedyApi {
     DateTime? scheduledEndAt,
   }) =>
       post('/v1/requests/$requestId/booking-mode', {
-        'targetBookingMode': 'SCHEDULED',
-        'scheduledStartAt': scheduledStartAt.toIso8601String(),
-        if (scheduledEndAt != null) 'scheduledEndAt': scheduledEndAt.toIso8601String(),
+        'bookingMode': 'SCHEDULED',
+        'scheduledAt': scheduledStartAt.toIso8601String(),
+        if (scheduledEndAt != null) 'latestAcceptableArrivalAt': scheduledEndAt.toIso8601String(),
       });
 
   Future<Map<String, dynamic>> extendWaitWindow(

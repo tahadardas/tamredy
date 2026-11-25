@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'aero_colors.dart';
 
-/// Aero Typography system — NotoSansArabic font pairing
+/// Tamreedy Typography system — NotoSansArabic font pairing
 TextStyle aeroText({
   double size = 14,
   FontWeight weight = FontWeight.w400,
@@ -10,6 +10,7 @@ TextStyle aeroText({
   double? letterSpacing,
 }) => TextStyle(
   fontFamily: 'NotoSansArabic',
+  package: 'tamreedy_core',
   fontSize: size,
   fontWeight: weight,
   color: color,

@@ -58,7 +58,7 @@ export class FavoritesService {
   /** Lists favorite nurses with Bayesian average rating, excluding any blocked */
   async listFavorites(patientUserId: string) {
     const res = await this.db.query(`
-      SELECT n.id AS nurse_id, n.verified, n.availability_intent,
+      SELECT n.id AS nurse_id, u.display_name AS nurse_name, n.verified, n.availability_intent,
              pfn.created_at AS favorited_at,
              (
                SELECT coalesce(round(avg(vr.stars)::numeric, 1), 5.0)

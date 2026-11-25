@@ -104,6 +104,8 @@ export class CarePlansService {
     }
 
     return this.db.transaction(async client => {
+      const owner = await client.query("SELECT id FROM users WHERE id=$1 AND status='ACTIVE' FOR SHARE", [patientUserId]);
+      if (!owner.rowCount) throw new ForbiddenException({ code: 'ACCOUNT_INACTIVE' });
       const planRes = await client.query(
         `INSERT INTO care_plans(
            patient_user_id, beneficiary_id, primary_service_id, frequency_type,

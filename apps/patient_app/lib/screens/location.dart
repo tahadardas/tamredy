@@ -424,15 +424,41 @@ class _LocationScreenState extends State<LocationScreen> {
       ),
       const SizedBox(height: 10),
       TamCard(
-        child: TextFormField(
-          initialValue: _details,
-          onChanged: (v) => _details = v,
-          style: tamText(size: 16),
-          decoration: InputDecoration(
-            labelText: 'رقم البناء أو الطابق أو أقرب معلم (اختياري)',
-            labelStyle: tamText(size: 13),
-            border: InputBorder.none,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextFormField(
+              key: ValueKey(_details),
+              initialValue: _details,
+              textInputAction: TextInputAction.done,
+              onChanged: (v) => _details = v,
+              style: tamText(
+                size: 16,
+                color: context.tamColors.textPrimary,
+              ),
+              decoration: InputDecoration(
+                labelText: 'رقم البناء أو الطابق أو أقرب معلم (اختياري)',
+                labelStyle: tamText(size: 13, color: context.tamColors.textSecondary),
+                border: InputBorder.none,
+              ),
+            ),
+            const SizedBox(height: TamSpacing.sm),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final tag in const ['طابق أرضي', 'طابق 1', 'طابق 2', 'يوجد مصعد', 'قرب صيدلية'])
+                  ActionChip(
+                    label: Text(tag, style: aeroText(size: 11.5, color: context.tamColors.textPrimary)),
+                    onPressed: () {
+                      setState(() {
+                        _details = _details.trim().isEmpty ? tag : '${_details.trim()} • $tag';
+                      });
+                    },
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
       if (c.error != null)
@@ -459,7 +485,16 @@ class _LocationScreenState extends State<LocationScreen> {
       subtitle: _onMap ? 'تأكد من موضع دبوس الزيارة' : 'اختر موقعك الحالي أو منطقتك',
       showBack: true,
       nav: widget.addressOnly ? null : patientNavBar(context, c, 0),
-      children: [_onMap ? _mapStep() : _chooseStep()],
+      children: [
+        if (!widget.addressOnly) ...[
+          const TamStepper(
+            steps: ['الخدمة والمتطلبات', 'تحديد الموقع', 'مراجعة وتأكيد'],
+            currentStep: 1,
+          ),
+          const SizedBox(height: TamSpacing.lg),
+        ],
+        _onMap ? _mapStep() : _chooseStep(),
+      ],
     ),
   );
 }

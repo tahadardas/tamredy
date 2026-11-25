@@ -15,7 +15,11 @@ class NurseMarketplaceScreen extends StatefulWidget {
 class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  final _searchCtrl = TextEditingController();
   double? _maxDistanceFilter;
+  String _sortBy = 'nearest'; // 'nearest' | 'pay'
+  bool _onlySaved = false;
+  final Set<String> _savedIds = <String>{};
 
   @override
   void initState() {
@@ -27,6 +31,7 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
 
   @override
   void dispose() {
+    _searchCtrl.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -36,7 +41,7 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
     final serviceTitle = req['service_title']?.toString() ?? 'خدمة تمريضية';
     final approximateArea = req['approximate_area']?.toString() ?? 'دمشق';
     final distanceKm = (num.tryParse('${req['distance_km']}') ?? 0.0).toDouble();
-    final netEarnings = (num.tryParse('${req['net_earnings']}') ?? 0).toInt();
+    final netEarnings = (num.tryParse('${req['estimated_nurse_earning'] ?? req['net_earnings']}') ?? 0).round();
 
     showAeroModalBottomSheet(
       context: context,
@@ -63,6 +68,13 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
               ),
             );
             _tabController.animateTo(1); // Switch to My Proposals tab
+          } else {
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text(widget.c.error ?? 'تعذر إرسال عرض الجاهزية'),
+                backgroundColor: AeroColors.danger,
+              ),
+            );
           }
         },
       ),
@@ -71,21 +83,22 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
 
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     return Scaffold(
-      backgroundColor: AeroColors.lightCanvas,
+      backgroundColor: tc.background,
       appBar: AppBar(
         title: Text(
           'سوق الطلبات والزيارات',
-          style: aeroText(size: 17, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+          style: aeroText(size: 17, weight: FontWeight.w700, color: tc.textPrimary),
         ),
-        backgroundColor: Colors.white,
+        backgroundColor: tc.surface,
         elevation: 0,
         centerTitle: true,
         bottom: TabBar(
           controller: _tabController,
-          labelColor: AeroColors.accentTeal,
-          unselectedLabelColor: AeroColors.textSecondary,
-          indicatorColor: AeroColors.accentTeal,
+          labelColor: tc.primary,
+          unselectedLabelColor: tc.textSecondary,
+          indicatorColor: tc.primary,
           indicatorWeight: 3,
           labelStyle: aeroText(size: 13, weight: FontWeight.w700),
           unselectedLabelStyle: aeroText(size: 13, weight: FontWeight.w500),
@@ -96,7 +109,9 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
           ],
         ),
       ),
-      bottomNavigationBar: widget.nav,
+      bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom == 0
+          ? widget.nav
+          : null,
       body: TabBarView(
         controller: _tabController,
         children: [
@@ -109,35 +124,72 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
   }
 
   Widget _buildAvailableRequestsTab() {
+    final tc = context.tamColors;
     return ListenableBuilder(
       listenable: widget.c,
       builder: (context, _) {
         final c = widget.c;
         if (c.isLoadingMarketplace && c.marketplaceRequests.isEmpty) {
-          return const Center(child: CircularProgressIndicator(color: AeroColors.accentTeal));
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              children: [
+                TamSkeleton.card(height: 110),
+                SizedBox(height: 12),
+                TamSkeleton.card(height: 110),
+              ],
+            ),
+          );
         }
+
+        final q = _searchCtrl.text.trim();
+        final filtered = c.marketplaceRequests
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .where((req) {
+              if (_onlySaved && !_savedIds.contains('${req['id'] ?? ''}')) {
+                return false;
+              }
+              if (q.isNotEmpty) {
+                final title = '${req['service_title'] ?? ''}';
+                final area = '${req['approximate_area'] ?? ''}';
+                if (!title.contains(q) && !area.contains(q)) return false;
+              }
+              return true;
+            })
+            .toList()
+          ..sort((a, b) {
+            if (_sortBy == 'pay') {
+              final payA = num.tryParse('${a['estimated_nurse_earning'] ?? a['net_earnings']}') ?? 0;
+              final payB = num.tryParse('${b['estimated_nurse_earning'] ?? b['net_earnings']}') ?? 0;
+              return payB.compareTo(payA);
+            }
+            final distA = num.tryParse('${a['distance_km']}') ?? 999;
+            final distB = num.tryParse('${b['distance_km']}') ?? 999;
+            return distA.compareTo(distB);
+          });
 
         return RefreshIndicator(
           onRefresh: () => c.loadMarketplaceRequests(maxDistanceKm: _maxDistanceFilter),
-          color: AeroColors.accentTeal,
+          color: tc.primary,
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              // Distance filter chips
+              TamSearchField(
+                controller: _searchCtrl,
+                hint: 'ابحث بالخدمة أو المنطقة...',
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: TamSpacing.md),
+              // Distance & Sort filter chips
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
                 child: Row(
                   children: [
-                    Text(
-                      'نطاق المسافة:',
-                      style: aeroText(size: 12, weight: FontWeight.w600, color: AeroColors.textSecondary),
-                    ),
-                    const SizedBox(width: 8),
                     ChoiceChip(
-                      label: Text('الكل', style: aeroText(size: 12, color: _maxDistanceFilter == null ? Colors.white : AeroColors.textPrimary)),
+                      label: Text('الكل', style: aeroText(size: 12, color: _maxDistanceFilter == null ? Colors.white : tc.textPrimary)),
                       selected: _maxDistanceFilter == null,
-                      selectedColor: AeroColors.accentTeal,
+                      selectedColor: tc.primary,
                       onSelected: (val) {
                         if (val) {
                           setState(() => _maxDistanceFilter = null);
@@ -147,9 +199,9 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
                     ),
                     const SizedBox(width: 6),
                     ChoiceChip(
-                      label: Text('حتى 5 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 5 ? Colors.white : AeroColors.textPrimary)),
+                      label: Text('حتى 5 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 5 ? Colors.white : tc.textPrimary)),
                       selected: _maxDistanceFilter == 5,
-                      selectedColor: AeroColors.accentTeal,
+                      selectedColor: tc.primary,
                       onSelected: (val) {
                         if (val) {
                           setState(() => _maxDistanceFilter = 5);
@@ -159,9 +211,9 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
                     ),
                     const SizedBox(width: 6),
                     ChoiceChip(
-                      label: Text('حتى 10 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 10 ? Colors.white : AeroColors.textPrimary)),
+                      label: Text('حتى 10 كم', style: aeroText(size: 12, color: _maxDistanceFilter == 10 ? Colors.white : tc.textPrimary)),
                       selected: _maxDistanceFilter == 10,
-                      selectedColor: AeroColors.accentTeal,
+                      selectedColor: tc.primary,
                       onSelected: (val) {
                         if (val) {
                           setState(() => _maxDistanceFilter = 10);
@@ -169,44 +221,48 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
                         }
                       },
                     ),
+                    const SizedBox(width: 10),
+                    ChoiceChip(
+                      label: Text('الأقرب', style: aeroText(size: 12, color: _sortBy == 'nearest' ? Colors.white : tc.textPrimary)),
+                      selected: _sortBy == 'nearest',
+                      selectedColor: tc.secondary,
+                      onSelected: (_) => setState(() => _sortBy = 'nearest'),
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: Text('الأعلى أجراً', style: aeroText(size: 12, color: _sortBy == 'pay' ? Colors.white : tc.textPrimary)),
+                      selected: _sortBy == 'pay',
+                      selectedColor: tc.secondary,
+                      onSelected: (_) => setState(() => _sortBy = 'pay'),
+                    ),
+                    const SizedBox(width: 6),
+                    FilterChip(
+                      label: Text('المحفوظة', style: aeroText(size: 12, color: _onlySaved ? Colors.white : tc.textPrimary)),
+                      selected: _onlySaved,
+                      selectedColor: tc.primaryDark,
+                      onSelected: (v) => setState(() => _onlySaved = v),
+                    ),
                   ],
                 ),
               ),
               const SizedBox(height: 12),
 
-              if (c.marketplaceRequests.isEmpty)
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            color: AeroColors.aeroTintLight,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.storefront_outlined, size: 36, color: AeroColors.accentTeal),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'لا توجد طلبات مفتوحة حالياً',
-                          style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'عند نشر أي طلب رعاية جديد في منطقتك، سيظهر هنا فوراً لتقديم عرض الجاهزية والوقت.',
-                          textAlign: TextAlign.center,
-                          style: aeroText(size: 13, color: AeroColors.textSecondary, height: 1.4),
-                        ),
-                      ],
-                    ),
-                  ),
+              if (c.marketplaceError != null)
+                TamErrorState(
+                  title: 'تعذر تحميل السوق المفتوح',
+                  message: c.marketplaceError!,
+                  onRetry: () => c.loadMarketplaceRequests(maxDistanceKm: _maxDistanceFilter),
+                )
+              else if (filtered.isEmpty)
+                const TamEmptyState(
+                  icon: Icons.storefront_outlined,
+                  title: 'لا توجد طلبات مطابقة حالياً',
+                  message:
+                      'عند نشر أي طلب رعاية جديد في منطقتك، سيظهر هنا فوراً لتقديم عرض الجاهزية والوقت.',
                 )
               else
-                for (final req in c.marketplaceRequests)
-                  _buildMarketplaceRequestCard(Map<String, dynamic>.from(req as Map)),
+                for (final req in filtered)
+                  _buildMarketplaceRequestCard(req),
             ],
           ),
         );
@@ -218,9 +274,9 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
     final title = req['service_title']?.toString() ?? 'خدمة تمريضية';
     final area = req['approximate_area']?.toString() ?? 'دمشق';
     final dist = (num.tryParse('${req['distance_km']}') ?? 0.0).toDouble();
-    final net = (num.tryParse('${req['net_earnings']}') ?? 0).toInt();
-    final expMins = (num.tryParse('${req['expected_minutes']}') ?? 30).toInt();
-    final proposalsCount = (num.tryParse('${req['proposals_count']}') ?? 0).toInt();
+    final net = (num.tryParse('${req['estimated_nurse_earning'] ?? req['net_earnings']}') ?? 0).round();
+    final expMins = (num.tryParse('${req['primary_expected_minutes'] ?? req['expected_minutes']}') ?? 30).toInt();
+    final proposalsCount = (num.tryParse('${req['active_proposals_count'] ?? req['proposals_count']}') ?? 0).toInt();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -361,8 +417,8 @@ class _NurseMarketplaceScreenState extends State<NurseMarketplaceScreen>
                     final title = item['service_title']?.toString() ?? 'خدمة تمريضية';
                     final area = item['approximate_area']?.toString() ?? 'دمشق';
                     final status = item['status']?.toString() ?? 'PENDING';
-                    final arrivalMins = item['estimated_arrival_minutes'];
-                    final net = (num.tryParse('${item['net_earnings']}') ?? 0).toInt();
+                    final arrivalMins = item['estimated_arrival_minutes'] ?? item['estimated_service_minutes'];
+                    final net = (num.tryParse('${item['estimated_nurse_earning'] ?? item['net_earnings']}') ?? 0).round();
 
                     final (statusLabel, statusColor) = switch (status) {
                       'ACCEPTED' => ('تم قبول عرضك!', AeroColors.success),

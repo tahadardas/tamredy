@@ -13,6 +13,8 @@ import 'screens/visit.dart';
 import 'screens/earnings.dart';
 import 'screens/marketplace.dart';
 
+final ValueNotifier<ThemeMode> nurseThemeMode = ValueNotifier(ThemeMode.light);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Analytics.init(
@@ -34,15 +36,19 @@ class TamreedyNurseApp extends StatelessWidget {
     : controller = controller ?? NurseController();
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: tamreedyTheme(),
-    locale: const Locale('ar'),
-    supportedLocales: const [Locale('ar')],
-    localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    builder: (context, child) =>
-        Directionality(textDirection: TextDirection.rtl, child: child!),
-    home: AuthGate(
+  Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
+    valueListenable: nurseThemeMode,
+    builder: (context, mode, _) => MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: tamreedyLightTheme(),
+      darkTheme: tamreedyDarkTheme(),
+      themeMode: mode,
+      locale: const Locale('ar'),
+      supportedLocales: const [Locale('ar')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      builder: (context, child) =>
+          Directionality(textDirection: TextDirection.rtl, child: child!),
+      home: AuthGate(
       api: controller.api,
       role: 'NURSE',
       child: (_) => NurseApprovalGate(
@@ -73,6 +79,7 @@ class TamreedyNurseApp extends StatelessWidget {
           ),
         ),
       ),
+    ),
     ),
   );
 }
@@ -115,22 +122,46 @@ class _NurseShellState extends State<NurseShell> {
   Widget build(BuildContext context) {
     final content = _buildTabs();
     if (!guardianEnabled) return content;
+    final tc = context.tamColors;
     return ColoredBox(
-      color: AeroColors.lightCanvas,
+      color: tc.surface,
       child: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: ListenableBuilder(
-                listenable: c.guardian.location,
-                builder: (context, _) => TextButton.icon(
-                  onPressed: () => openGuardian(context, c),
-                  icon: const Icon(Icons.health_and_safety_outlined, color: Colors.red),
-                  label: Text(c.guardian.location.capturing
-                      ? 'السلامة والاستغاثة • تسجيل الموقع جارٍ'
-                      : 'السلامة والاستغاثة'),
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: tc.dangerTint.withValues(alpha: tc.isDark ? 0.35 : 0.75),
+                border: Border(
+                  bottom: BorderSide(color: tc.danger.withValues(alpha: 0.3)),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: TamSpacing.md,
+                vertical: 2,
+              ),
+              child: Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: ListenableBuilder(
+                  listenable: c.guardian.location,
+                  builder: (context, _) => TextButton.icon(
+                    onPressed: () => openGuardian(context, c),
+                    icon: Icon(
+                      Icons.health_and_safety_rounded,
+                      color: tc.danger,
+                    ),
+                    label: Text(
+                      c.guardian.location.capturing
+                          ? 'السلامة والاستغاثة • تسجيل الموقع جارٍ'
+                          : 'مركز الأمان والاستغاثة',
+                      style: aeroText(
+                        size: 13,
+                        weight: FontWeight.w700,
+                        color: tc.danger,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../alarm.dart';
@@ -40,6 +41,11 @@ class VisitFlowScreen extends StatelessWidget {
       subtitle: assigned ? 'أكّد الانطلاق عندما تبدأ التوجه' : 'موقع الزيارة المؤكد',
       nav: nav,
       children: [
+        TamStepper(
+          steps: const ['تم الإسناد', 'في الطريق', 'وصلت للموقع', 'بدء الخدمة'],
+          currentStep: assigned ? 0 : arrived ? 2 : 1,
+        ),
+        const SizedBox(height: TamSpacing.md),
         if (destination != null) TamMap(
           height: 300,
           patient: destination,
@@ -82,7 +88,7 @@ class VisitFlowScreen extends StatelessWidget {
           children: [
             Expanded(
               child: SoftButton(
-                'محادثة (Connect)',
+                'محادثة',
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => NurseChatScreen(
@@ -97,23 +103,17 @@ class VisitFlowScreen extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: SoftButton(
-                'اتصال صوتي (Voice)',
-                onPressed: () async {
-                  try {
-                    await c.api.post('/v1/calls/initiate', {'requestId': c.requestId});
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('جارٍ بدء الاتصال الصوتي المشفر...')),
-                      );
-                    }
-                  } catch (_) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('الاتصال الصوتي متاح فقط أثناء الزيارة المعتمدة')),
-                      );
-                    }
-                  }
-                },
+                'اتصال عبر التطبيق',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => TamInAppCallScreen(
+                      api: c.api,
+                      requestId: c.requestId ?? '',
+                      peerName: 'المريض',
+                      peerRole: 'المريض / المستفيد',
+                    ),
+                  ),
+                ),
               ),
             ),
           ],
@@ -268,7 +268,7 @@ class VisitFlowScreen extends StatelessWidget {
                   KeyValueRow('إكرامية (لك كاملة)', formatMoney(bill.tip)),
                 KeyValueRow('تم تحصيله', formatMoney(bill.collected)),
                 KeyValueRow('المتبقي', formatMoney(bill.remaining)),
-                const Divider(color: TamreedyColors.border),
+                Divider(color: context.tamColors.border),
                 KeyValueRow(
                   'نصيبك من هذه الزيارة',
                   formatMoney(bill.nurseEarning + (kDemoMode ? bill.tip : 0)),
@@ -284,8 +284,8 @@ class VisitFlowScreen extends StatelessWidget {
             width: double.infinity,
             decoration: BoxDecoration(
               color: c.collectShort
-                  ? TamreedyColors.dangerTint
-                  : const Color(0xFFDDF3EE),
+                  ? context.tamColors.dangerTint
+                  : context.tamColors.successTint,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Text(
@@ -294,8 +294,8 @@ class VisitFlowScreen extends StatelessWidget {
                 size: 13,
                 weight: FontWeight.w700,
                 color: c.collectShort
-                    ? TamreedyColors.danger
-                    : TamreedyColors.success,
+                    ? context.tamColors.danger
+                    : context.tamColors.success,
               ),
             ),
           ),
@@ -325,15 +325,31 @@ class CollectionCard extends StatefulWidget {
 
 class _CollectionCardState extends State<CollectionCard> {
   final _amount = TextEditingController();
+  String? _error;
+
   @override
   void dispose() {
     _amount.dispose();
     super.dispose();
   }
 
+  void _submit() {
+    FocusScope.of(context).unfocus();
+    final v = int.tryParse(_amount.text.trim());
+    if (v == null || v <= 0) {
+      setState(() => _error = 'أدخل مبلغاً نقدياً صحيحاً أكبر من 0');
+      return;
+    }
+    setState(() => _error = null);
+    widget.c.collect(v);
+    _amount.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
+    final tc = context.tamColors;
+    final remaining = c.bill?.remaining ?? 0;
     return TamCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -343,38 +359,52 @@ class _CollectionCardState extends State<CollectionCard> {
             style: tamText(
               size: 15,
               weight: FontWeight.w800,
-              color: TamreedyColors.navy,
+              color: tc.textPrimary,
             ),
           ),
+          if (remaining > 0) ...[
+            const SizedBox(height: TamSpacing.sm),
+            Wrap(
+              spacing: 8,
+              children: [
+                ActionChip(
+                  avatar: Icon(Icons.bolt_rounded, size: 16, color: tc.primary),
+                  label: Text(
+                    'تعبئة كامل المتبقي (${formatMoney(remaining)})',
+                    style: aeroText(size: 12, weight: FontWeight.w700, color: tc.primaryDark),
+                  ),
+                  backgroundColor: tc.primaryTint,
+                  onPressed: () {
+                    setState(() {
+                      _amount.text = '$remaining';
+                      _error = null;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              border: Border.all(color: TamreedyColors.border),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: TextField(
-              controller: _amount,
-              keyboardType: TextInputType.number,
-              textDirection: TextDirection.ltr,
-              style: tamText(size: 20, weight: FontWeight.w800),
-              decoration: InputDecoration(
-                hintText: 'أدخل المبلغ',
-                hintStyle: tamText(size: 14, color: TamreedyColors.subtext),
-              ),
-            ),
+          TamTextField(
+            controller: _amount,
+            hint: 'أدخل المبلغ بالليرة السورية',
+            errorText: _error,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            textDirection: TextDirection.ltr,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+            onSubmitted: (_) {
+              if (!c.busy) _submit();
+            },
           ),
           const SizedBox(height: 12),
-          PrimaryButton(
+          AeroButton.teal(
             'تسجيل المبلغ المستلم',
-            onPressed: c.busy
-                ? null
-                : () {
-                    final v = int.tryParse(_amount.text.trim());
-                    if (v == null || v <= 0) return;
-                    c.collect(v);
-                    _amount.clear();
-                  },
+            isLoading: c.busy,
+            onPressed: c.busy ? null : _submit,
           ),
         ],
       ),

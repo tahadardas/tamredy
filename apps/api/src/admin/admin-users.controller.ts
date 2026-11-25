@@ -1,4 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { lockAccountAdministration, removeAccount } from './account-removal.js';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { IsDateString, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { defaultPasswordFor, generatePassword, hashPassword } from '../auth/auth.service.js';
@@ -47,23 +48,36 @@ export class AdminUsersController {
     });
   }
 
-  @Get() async list(@Request() r: AuthRequest, @Query('role') role?: string) {
+  @Get() async list(@Request() r: AuthRequest, @Query('role') role?: string, @Query('page') pageValue = '1') {
     requireRole(r.user!, 'ADMIN');
     if (role && !['PATIENT', 'NURSE', 'ADMIN', 'CLINICAL_REVIEWER'].includes(role)) throw new BadRequestException({ code: 'INVALID_ROLE' });
+    const page = Number(pageValue);
+    if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new BadRequestException({ code: 'INVALID_PAGINATION' });
     const q = await this.db.query(`SELECT id,phone_e164,role,status,display_name,created_at,locked_until FROM users
-      WHERE ($1::text IS NULL OR role=$1) ORDER BY created_at DESC LIMIT 100`, [role ?? null]);
-    return { items: q.rows };
+      WHERE status<>'DELETED' AND ($1::text IS NULL OR role=$1)
+      ORDER BY created_at DESC,id DESC LIMIT 51 OFFSET $2`, [role ?? null,(page - 1)*50]);
+    return { items: q.rows.slice(0,50), hasMore: q.rows.length > 50 };
+  }
+
+  @Delete(':id') async remove(@Request() r: AuthRequest, @Param('id', ParseUUIDPipe) id: string) {
+    requireRole(r.user!, 'ADMIN');
+    return this.db.transaction(c => removeAccount(c,r.user!.id,id));
   }
 
   @Post(':id/status') async status(@Request() r: AuthRequest, @Param('id') id: string, @Body() dto: StatusDto) {
     requireRole(r.user!, 'ADMIN');
     if (id === r.user!.id) conflict('CANNOT_CHANGE_OWN_STATUS');
     return this.db.transaction(async c => {
-      const u = await c.query('UPDATE users SET status=$2 WHERE id=$1 RETURNING id,status', [id, dto.status]);
+      await lockAccountAdministration(c,r.user!.id);
+      await c.query('SELECT id FROM nurses WHERE user_id=$1 FOR UPDATE', [id]);
+      const u = await c.query(`UPDATE users SET status=$2 WHERE id=$1 AND status<>'DELETED' RETURNING id,status`, [id, dto.status]);
       if (!u.rowCount) missing();
       if (dto.status === 'SUSPENDED') {
         await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [id]);
         await c.query(`UPDATE nurses SET work_status='SUSPENDED',availability_intent='OFFLINE' WHERE user_id=$1`, [id]);
+      } else {
+        await c.query(`UPDATE nurses SET work_status='OFFLINE',updated_at=now()
+          WHERE user_id=$1 AND work_status='SUSPENDED'`, [id]);
       }
       await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id) VALUES($1,$2,'user',$3)`, [r.user!.id, `user.${dto.status.toLowerCase()}`, id]);
       return u.rows[0];

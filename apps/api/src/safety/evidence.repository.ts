@@ -42,7 +42,11 @@ export class EvidenceRepository {
       al.kind AS alert_kind,s.id AS session_id,s.started_at,s.checked_out_at,
       a.id AS assignment_id,a.accepted_at,a.departed_at,a.released_at,
       r.id AS request_id,ST_X(r.location::geometry) AS visit_longitude,ST_Y(r.location::geometry) AS visit_latitude,
-      v.arrived_at,v.started_at AS visit_started_at,v.completed_at
+      v.arrived_at,v.started_at AS visit_started_at,v.completed_at,
+      r.created_at AS request_created_at,r.address_text AS confirmed_visit_address,
+      r.location_source,r.currency_code,r.payment_status,
+      (SELECT sum(cc.amount) FROM cash_collections cc WHERE cc.visit_id=v.id) AS collected_amount,
+      CASE WHEN v.completed_at>=v.arrived_at THEN floor(extract(epoch FROM(v.completed_at-v.arrived_at)))::int END AS visit_seconds
       FROM safety_cases c LEFT JOIN emergency_events e ON e.id=c.emergency_event_id
       LEFT JOIN safety_alerts al ON al.id=c.alert_id LEFT JOIN safety_aborts ab ON ab.emergency_event_id=e.id
       LEFT JOIN safety_sessions s ON s.id=coalesce(e.session_id,al.session_id)

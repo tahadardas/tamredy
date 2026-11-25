@@ -1,26 +1,24 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'analytics.dart';
-import 'design/tokens/aero_colors.dart';
 import 'design/tokens/aero_radii.dart';
-import 'design/tokens/aero_shadows.dart';
 import 'design/tokens/aero_typography.dart';
+import 'design/tokens/tam_tokens.dart';
 import 'design/widgets/aero_button.dart';
 import 'theme.dart';
 
 enum Tone { teal, blue, orange, danger }
 
-Color _toneBg(Tone t) => switch (t) {
-  Tone.teal => TamreedyColors.tealTint,
-  Tone.blue => TamreedyColors.blueTint,
-  Tone.orange => TamreedyColors.orangeTint,
-  Tone.danger => TamreedyColors.dangerTint,
+Color _toneBg(Tone t, TamThemeColors c) => switch (t) {
+  Tone.teal => c.primaryTint,
+  Tone.blue => c.secondaryTint,
+  Tone.orange => c.warningTint,
+  Tone.danger => c.dangerTint,
 };
-Color _toneFg(Tone t) => switch (t) {
-  Tone.teal => TamreedyColors.teal,
-  Tone.blue => TamreedyColors.navy,
-  Tone.orange => const Color(0xFFD9822B),
-  Tone.danger => TamreedyColors.danger,
+Color _toneFg(Tone t, TamThemeColors c) => switch (t) {
+  Tone.teal => c.primary,
+  Tone.blue => c.secondary,
+  Tone.orange => c.warning,
+  Tone.danger => c.danger,
 };
 
 /// Shared layout for Arabic screens, including optional persistent actions.
@@ -46,15 +44,16 @@ class TamScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.tamColors;
     final refresh = onRefresh;
     final visibleNav = MediaQuery.viewInsetsOf(context).bottom == 0 ? nav : null;
     final content = ListView(
       physics: refresh == null ? null : const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(16, 12, 16, visibleNav != null ? 86 : 24),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
         Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
+            constraints: const BoxConstraints(maxWidth: TamBreakpoints.maxContentWidth),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: children,
@@ -67,70 +66,78 @@ class TamScaffold extends StatelessWidget {
     return ScreenLogger(
       name: title,
       child: Scaffold(
-        backgroundColor: AeroColors.lightCanvas,
-        extendBody: true,
+        backgroundColor: c.background,
+        extendBody: false,
         bottomNavigationBar: visibleNav,
         body: SafeArea(
           bottom: visibleNav == null,
           child: Column(
             children: [
-              ClipRect(
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.88),
-                      border: Border(
-                        bottom: BorderSide(
-                          color: AeroColors.borderLight,
-                          width: 1.0,
-                        ),
-                      ),
-                    ),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 712),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          child: Row(
-                            children: [
-                              if (showBack)
-                                IconButton(
-                                  tooltip: 'رجوع',
-                                  onPressed: () => Navigator.of(context).maybePop(),
-                                  icon: const Icon(Icons.arrow_back_rounded, color: AeroColors.primaryNavy),
-                                )
-                              else
-                                Image.asset(
-                                  'assets/images/logo_mark.png',
-                                  package: kFontPackage,
-                                  width: 46,
-                                  height: 46,
-                                  excludeFromSemantics: true,
-                                ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Semantics(
-                                      header: true,
-                                      child: Text(
-                                        title,
-                                        style: aeroText(size: 20, weight: FontWeight.w800, color: AeroColors.textPrimary),
-                                      ),
-                                    ),
-                                    if (subtitle.isNotEmpty)
-                                      Text(
-                                        subtitle,
-                                        style: aeroText(size: 12, weight: FontWeight.w500, color: AeroColors.textSecondary),
-                                      ),
-                                  ],
+              Container(
+                decoration: BoxDecoration(
+                  color: c.surface,
+                  border: Border(
+                    bottom: BorderSide(color: c.border, width: 1.0),
+                  ),
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: TamBreakpoints.maxContentWidth + 32),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          if (showBack)
+                            Material(
+                              color: c.surfaceElevated,
+                              borderRadius: BorderRadius.circular(12),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () => Navigator.of(context).maybePop(),
+                                child: SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: Icon(
+                                    Icons.arrow_back_rounded,
+                                    color: c.textPrimary,
+                                    size: 22,
+                                  ),
                                 ),
                               ),
-                            ],
+                            )
+                          else
+                            Image.asset(
+                              'assets/images/logo_mark.png',
+                              package: kFontPackage,
+                              width: 42,
+                              height: 42,
+                              excludeFromSemantics: true,
+                            ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Semantics(
+                                  header: true,
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: aeroText(size: 19, weight: FontWeight.w800, color: c.textPrimary),
+                                  ),
+                                ),
+                                if (subtitle.isNotEmpty)
+                                  Text(
+                                    subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: aeroText(size: 12, weight: FontWeight.w500, color: c.textSecondary),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ),
@@ -140,19 +147,22 @@ class TamScaffold extends StatelessWidget {
                 child: refresh == null
                     ? content
                     : RefreshIndicator(
-                        color: AeroColors.accentTeal,
+                        color: c.primary,
                         onRefresh: refresh,
                         child: content,
                       ),
               ),
               if (actions != null)
                 Container(
-                  color: Colors.white.withValues(alpha: 0.9),
+                  decoration: BoxDecoration(
+                    color: c.surface,
+                    border: Border(top: BorderSide(color: c.border)),
+                  ),
                   child: Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 680),
+                      constraints: const BoxConstraints(maxWidth: TamBreakpoints.maxContentWidth),
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
                         child: actions!,
                       ),
                     ),
@@ -170,17 +180,20 @@ class SectionTitle extends StatelessWidget {
   final String text;
   const SectionTitle(this.text, {super.key});
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 18, bottom: 12),
-    child: Text(
-      text,
-      style: tamText(
-        size: 17,
-        weight: FontWeight.w800,
-        color: TamreedyColors.navy,
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Padding(
+      padding: const EdgeInsets.only(top: 18, bottom: 12),
+      child: Text(
+        text,
+        style: tamText(
+          size: 17,
+          weight: FontWeight.w800,
+          color: c.textPrimary,
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class TamCard extends StatelessWidget {
@@ -194,23 +207,26 @@ class TamCard extends StatelessWidget {
     this.onTap,
   });
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: 0.92),
-      borderRadius: BorderRadius.circular(AeroRadii.mainCard),
-      border: Border.all(color: AeroColors.borderLight, width: 1.1),
-      boxShadow: AeroShadows.card,
-    ),
-    child: Material(
-      color: Colors.transparent,
-      child: InkWell(
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: c.surface,
         borderRadius: BorderRadius.circular(AeroRadii.mainCard),
-        onTap: onTap,
-        child: Padding(padding: padding, child: child),
+        border: Border.all(color: c.border, width: 1.0),
+        boxShadow: c.cardShadow,
       ),
-    ),
-  );
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AeroRadii.mainCard),
+          onTap: onTap,
+          child: Padding(padding: padding, child: child),
+        ),
+      ),
+    );
+  }
 }
 
 class HeroCard extends StatelessWidget {
@@ -228,62 +244,65 @@ class HeroCard extends StatelessWidget {
     this.titleSize = 22,
   });
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 14),
-    padding: const EdgeInsets.all(22),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(AeroRadii.heroCard),
-      gradient: const LinearGradient(
-        begin: AlignmentDirectional.centerStart,
-        end: AlignmentDirectional.centerEnd,
-        colors: [AeroColors.primaryNavy, Color(0xFF0C5D8B), AeroColors.accentTeal],
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AeroRadii.heroCard),
+        gradient: LinearGradient(
+          begin: AlignmentDirectional.centerStart,
+          end: AlignmentDirectional.centerEnd,
+          colors: [c.heroStart, c.heroEnd],
+        ),
+        boxShadow: c.elevatedShadow,
       ),
-      boxShadow: AeroShadows.hero,
-    ),
-    child: Stack(
-      children: [
-        if (caption != null)
-          PositionedDirectional(
-            top: 0,
-            start: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(AeroRadii.dock),
-              ),
-              child: Text(
-                caption!,
-                style: aeroText(size: 11, weight: FontWeight.w700, color: Colors.white),
+      child: Stack(
+        children: [
+          if (caption != null)
+            PositionedDirectional(
+              top: 0,
+              start: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(AeroRadii.dock),
+                ),
+                child: Text(
+                  caption!,
+                  style: aeroText(size: 11, weight: FontWeight.w700, color: Colors.white),
+                ),
               ),
             ),
-          ),
-        Padding(
-          padding: EdgeInsets.only(top: caption != null ? 28 : 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: aeroText(size: titleSize, weight: FontWeight.w800, color: Colors.white),
-              ),
-              if (body != null) ...[
-                const SizedBox(height: 6),
+          Padding(
+            padding: EdgeInsets.only(top: caption != null ? 28 : 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  body!,
-                  style: aeroText(size: 13, weight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.9)),
+                  title,
+                  style: aeroText(size: titleSize, weight: FontWeight.w800, color: Colors.white),
                 ),
+                if (body != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    body!,
+                    style: aeroText(size: 13, weight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.9)),
+                  ),
+                ],
+                if (trailing != null) ...[
+                  const SizedBox(height: 14),
+                  trailing!,
+                ],
               ],
-              if (trailing != null) ...[
-                const SizedBox(height: 14),
-                trailing!,
-              ],
-            ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 class StatusChip extends StatelessWidget {
@@ -291,21 +310,24 @@ class StatusChip extends StatelessWidget {
   final bool warning;
   const StatusChip(this.text, {super.key, this.warning = false});
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-    decoration: BoxDecoration(
-      color: warning ? const Color(0xFFFCEBD8) : const Color(0xFFDDF3EE),
-      borderRadius: BorderRadius.circular(99),
-    ),
-    child: Text(
-      text,
-      style: tamText(
-        size: 11.5,
-        weight: FontWeight.w700,
-        color: warning ? TamreedyColors.warning : TamreedyColors.success,
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: warning ? c.warningTint : c.successTint,
+        borderRadius: BorderRadius.circular(99),
       ),
-    ),
-  );
+      child: Text(
+        text,
+        style: tamText(
+          size: 11.5,
+          weight: FontWeight.w700,
+          color: warning ? c.warning : c.success,
+        ),
+      ),
+    );
+  }
 }
 
 class IconBox extends StatelessWidget {
@@ -314,15 +336,18 @@ class IconBox extends StatelessWidget {
   final double size;
   const IconBox(this.icon, {super.key, this.tone = Tone.teal, this.size = 46});
   @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(
-      color: _toneBg(tone),
-      borderRadius: BorderRadius.circular(13),
-    ),
-    child: Icon(icon, color: _toneFg(tone), size: size * .5),
-  );
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: _toneBg(tone, c),
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Icon(icon, color: _toneFg(tone, c), size: size * .5),
+    );
+  }
 }
 
 /// A row: icon box, title/subtitle, and a trailing chip/arrow.
@@ -345,44 +370,47 @@ class ListRow extends StatelessWidget {
     this.divider = true,
   });
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: BoxDecoration(
-        border: divider
-            ? const Border(bottom: BorderSide(color: TamreedyColors.border))
-            : null,
-      ),
-      child: Row(
-        children: [
-          IconBox(icon, tone: tone),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: tamText(
-                    size: 14,
-                    weight: FontWeight.w700,
-                    color: TamreedyColors.navy,
-                  ),
-                ),
-                if (subtitle != null)
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          border: divider
+              ? Border(bottom: BorderSide(color: c.border))
+              : null,
+        ),
+        child: Row(
+          children: [
+            IconBox(icon, tone: tone),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    subtitle!,
-                    style: tamText(size: 11.5, color: TamreedyColors.subtext),
+                    title,
+                    style: tamText(
+                      size: 14,
+                      weight: FontWeight.w700,
+                      color: c.textPrimary,
+                    ),
                   ),
-              ],
+                  if (subtitle != null)
+                    Text(
+                      subtitle!,
+                      style: tamText(size: 11.5, color: c.textSecondary),
+                    ),
+                ],
+              ),
             ),
-          ),
-          if (trailing != null) trailing!,
-        ],
+            if (trailing != null) trailing!,
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// Label on the start side, bold value on the end side.
@@ -391,26 +419,29 @@ class KeyValueRow extends StatelessWidget {
   final String value;
   const KeyValueRow(this.label, this.value, {super.key});
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 9),
-    child: Row(
-      children: [
-        Text(label, style: tamText(size: 13, color: TamreedyColors.subtext)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            value,
-            textAlign: TextAlign.end,
-            style: tamText(
-              size: 13,
-              weight: FontWeight.w700,
-              color: TamreedyColors.navy,
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        children: [
+          Text(label, style: tamText(size: 13, color: c.textSecondary)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: tamText(
+                size: 13,
+                weight: FontWeight.w700,
+                color: c.textPrimary,
+              ),
             ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 class StatCard extends StatelessWidget {
@@ -496,19 +527,23 @@ class NoticeBox extends StatelessWidget {
   final String text;
   const NoticeBox(this.text, {super.key});
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(top: 6, bottom: 12),
-    padding: const EdgeInsets.all(16),
-    width: double.infinity,
-    decoration: BoxDecoration(
-      color: TamreedyColors.warningTint,
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Text(
-      text,
-      style: tamText(size: 12.5, color: TamreedyColors.warning, height: 1.7),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Container(
+      margin: const EdgeInsets.only(top: 6, bottom: 12),
+      padding: const EdgeInsets.all(16),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: c.warningTint.withValues(alpha: c.isDark ? 0.35 : 0.85),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: c.warning.withValues(alpha: 0.25)),
+      ),
+      child: Text(
+        text,
+        style: tamText(size: 12.5, color: c.isDark ? c.textPrimary : c.warning, height: 1.7),
+      ),
+    );
+  }
 }
 
 class NavItem {
@@ -529,35 +564,73 @@ class TamBottomNav extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final c = context.tamColors;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final narrow = TamBreakpoints.isNarrowPhone(context);
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        bottom: bottomInset > 0 ? bottomInset + 4 : 12,
+        left: 12,
+        right: 12,
+        bottom: bottomInset > 0 ? bottomInset + 6 : 10,
       ),
       child: Container(
-        height: 64,
         decoration: BoxDecoration(
+          color: c.navBackground,
           borderRadius: BorderRadius.circular(AeroRadii.dock),
-          boxShadow: AeroShadows.floatingDock,
+          border: Border.all(color: c.border),
+          boxShadow: c.cardShadow,
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AeroRadii.dock),
-          child: NavigationBar(
-            backgroundColor: Colors.white.withValues(alpha: 0.94),
-            indicatorColor: AeroColors.accentTeal.withValues(alpha: 0.16),
-            height: 64,
-            selectedIndex: index,
-            onDestinationSelected: onTap,
-            destinations: [
-              for (final item in items)
-                NavigationDestination(
-                  icon: Icon(item.icon, size: 22, color: AeroColors.textSecondary),
-                  selectedIcon: Icon(item.icon, size: 22, color: AeroColors.accentTeal),
-                  label: item.label,
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            removeBottom: true,
+            child: NavigationBarTheme(
+              data: NavigationBarThemeData(
+                height: 68,
+                backgroundColor: c.navBackground,
+                surfaceTintColor: Colors.transparent,
+                indicatorColor: c.primaryTint.withValues(
+                  alpha: c.isDark ? 0.45 : 0.85,
                 ),
-            ],
+                indicatorShape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                labelTextStyle: WidgetStateProperty.resolveWith((states) {
+                  final selected = states.contains(WidgetState.selected);
+                  return aeroText(
+                    size: narrow ? 10.5 : 11.5,
+                    weight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? c.primary : c.textSecondary,
+                  );
+                }),
+                iconTheme: WidgetStateProperty.resolveWith((states) {
+                  final selected = states.contains(WidgetState.selected);
+                  return IconThemeData(
+                    size: narrow ? 20 : 22,
+                    color: selected ? c.primary : c.textSecondary,
+                  );
+                }),
+              ),
+              child: NavigationBar(
+                height: 68,
+                elevation: 0,
+                backgroundColor: c.navBackground,
+                surfaceTintColor: Colors.transparent,
+                selectedIndex: index.clamp(0, items.length - 1),
+                onDestinationSelected: onTap,
+                destinations: [
+                  for (final item in items)
+                    NavigationDestination(
+                      icon: Icon(item.icon),
+                      selectedIcon: Icon(item.icon),
+                      label: item.label,
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -571,21 +644,24 @@ class StepBar extends StatelessWidget {
   final int filled;
   const StepBar({super.key, this.total = 4, required this.filled});
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      for (var i = 0; i < total; i++)
-        Expanded(
-          child: Container(
-            height: 4,
-            margin: const EdgeInsets.symmetric(horizontal: 3),
-            decoration: BoxDecoration(
-              color: i < filled ? TamreedyColors.teal : TamreedyColors.border,
-              borderRadius: BorderRadius.circular(4),
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Row(
+      children: [
+        for (var i = 0; i < total; i++)
+          Expanded(
+            child: Container(
+              height: 4,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              decoration: BoxDecoration(
+                color: i < filled ? c.primary : c.border,
+                borderRadius: BorderRadius.circular(4),
+              ),
             ),
           ),
-        ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 /// Runs [onStart] once when the signed-in part of the app first appears (data loaded before login got 401).

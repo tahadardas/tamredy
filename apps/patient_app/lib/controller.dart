@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:uuid/uuid.dart';
+import 'patient_alarm.dart';
 
 enum ServiceLoadState { initial, loading, loaded, empty, networkError, serverError }
 
@@ -83,6 +84,7 @@ class WalletTx {
 }
 
 enum VisitStage { none, scheduled, interrupted, searching, openMarketplace, assigned, enRoute, arrived, inService, completed, unfulfilled }
+enum RecoveryAction { openMarketplace, retryInstant }
 
 const List<ServiceItem> kSampleServices = [
   ServiceItem(
@@ -208,6 +210,7 @@ class PatientController extends ChangeNotifier {
   String? _idemKey;
   Timer? _timer;
   bool busy = false;
+  RecoveryAction? recoveryAction;
   String? error;
 
   // Smart Booking & Open Marketplace
@@ -287,6 +290,8 @@ class PatientController extends ChangeNotifier {
   void onLive(String type) {
     if (type == 'catalog.changed') {
       loadServices();
+    } else if (type.contains('proposal')) {
+      loadProposals();
     } else {
       resync();
     }
@@ -919,7 +924,9 @@ class PatientController extends ChangeNotifier {
     } catch (_) {
       // ETA is optional; the map can still show recent positions.
     }
-    if (requestId != id || stage != VisitStage.enRoute || nursePos == null) return;
+    if (requestId != id || stage != VisitStage.enRoute || nursePos == null) {
+      return;
+    }
     route = next;
     notifyListeners();
   }
@@ -1021,12 +1028,14 @@ class PatientController extends ChangeNotifier {
     final id = requestId;
     if (id == null) return false;
     busy = true;
+    recoveryAction = RecoveryAction.openMarketplace;
+    error = null;
     notifyListeners();
     try {
       final res = await api.switchRequestToOpenMarketplace(id, durationMinutes: durationMinutes);
       bookingMode = 'OPEN';
       marketplaceStatus = 'OPEN_FOR_PROPOSALS';
-      openExpiresAt = DateTime.tryParse('${res['open_expires_at']}')?.toLocal();
+      openExpiresAt = DateTime.tryParse('${res['openExpiresAt'] ?? res['open_expires_at']}')?.toLocal();
       stage = VisitStage.openMarketplace;
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
@@ -1036,6 +1045,7 @@ class PatientController extends ChangeNotifier {
       return false;
     } finally {
       busy = false;
+      recoveryAction = null;
       notifyListeners();
     }
   }
@@ -1044,6 +1054,8 @@ class PatientController extends ChangeNotifier {
     final id = requestId;
     if (id == null) return false;
     busy = true;
+    recoveryAction = RecoveryAction.retryInstant;
+    error = null;
     notifyListeners();
     try {
       await api.retryInstantDispatch(id);
@@ -1058,6 +1070,7 @@ class PatientController extends ChangeNotifier {
       return false;
     } finally {
       busy = false;
+      recoveryAction = null;
       notifyListeners();
     }
   }
@@ -1076,12 +1089,23 @@ class PatientController extends ChangeNotifier {
     }
   }
 
+  int _lastNotifiedProposalsCount = 0;
+
   Future<List<dynamic>> loadProposals() async {
     final id = requestId;
     if (id == null) return [];
     try {
       final res = await api.getRequestProposals(id);
-      activeProposalsCount = res.where((p) => p['status'] == 'PENDING').length;
+      final count = res.where((p) => p['status'] == 'PENDING').length;
+      if (count > _lastNotifiedProposalsCount) {
+        await PatientAlarm.showAlert(
+          id: '$id-$count',
+          title: 'وصلك عرض تمريض جديد!',
+          body: 'لديك $count عرض جاهزية من ممرض مؤهل. افتح التطبيق للمقارنة والقبول.',
+        );
+      }
+      _lastNotifiedProposalsCount = count;
+      activeProposalsCount = count;
       notifyListeners();
       return res;
     } catch (_) {

@@ -41,25 +41,60 @@ class _WalletScreenState extends State<WalletScreen> {
     future: _status,
     builder: (context, snapshot) {
       if (snapshot.connectionState != ConnectionState.done) {
-        return const LinearProgressIndicator(
-          semanticsLabel: 'جارٍ التحقق من حالة المحفظة',
-        );
-      }
-      if (snapshot.hasError || snapshot.data?['mode'] != 'DISABLED') {
-        return Column(
+        return const Column(
           children: [
-            const NoticeBox('تعذر عرض حالة المحفظة من الخادم.'),
-            OutlinedButton(
-              onPressed: _refreshStatus,
-              child: const Text('إعادة المحاولة'),
-            ),
+            TamSkeleton.card(height: 120),
+            SizedBox(height: TamSpacing.md),
+            TamSkeleton.card(height: 80),
           ],
         );
       }
-      return NoticeBox(
-        snapshot.data?['reason'] == 'LICENSED_PAYMENT_PROVIDER_REQUIRED'
-            ? 'شحن المحفظة والدفع عبرها غير متاحين حاليًا. يمكنك الدفع نقدًا للممرض.'
-            : 'المحفظة غير متاحة حاليًا. يمكنك الدفع نقدًا للممرض.',
+      if (snapshot.hasError || snapshot.data?['mode'] != 'DISABLED') {
+        return TamErrorState(
+          title: 'تعذر عرض حالة المحفظة',
+          message: 'تعذر التحقق من حالة المحفظة الإلكترونية من الخادم.',
+          onRetry: _refreshStatus,
+        );
+      }
+      final reason = snapshot.data?['reason'];
+      final msg = reason == 'LICENSED_PAYMENT_PROVIDER_REQUIRED'
+          ? 'شحن المحفظة والدفع عبرها غير متاحين حاليًا. يمكنك الدفع نقدًا للممرض.'
+          : 'المحفظة غير متاحة حاليًا. يمكنك الدفع نقدًا للممرض.';
+      return Column(
+        children: [
+          TamCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const TamStatusBadge(
+                  labelOverride: 'الدفع النقدي مفعّل',
+                  iconOverride: Icons.payments_outlined,
+                ),
+                const SizedBox(height: TamSpacing.md),
+                Text(
+                  'حالة المحفظة الإلكترونية',
+                  style: aeroText(
+                    size: 16,
+                    weight: FontWeight.w800,
+                    color: context.tamColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: TamSpacing.xs),
+                Text(
+                  msg,
+                  style: aeroText(
+                    size: 13,
+                    color: context.tamColors.textSecondary,
+                    height: 1.55,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const NoticeBox(
+            'لا تتوفر عمليات شحن رصيد حالياً؛ يتم تسديد الفواتير نقداً للممرض.',
+          ),
+        ],
       );
     },
   );
@@ -72,16 +107,13 @@ class _WalletScreenState extends State<WalletScreen> {
     onRefresh: kDemoMode ? null : _refreshStatus,
     children: kDemoMode
         ? [
-            HeroCard(
-              caption: 'الرصيد المتاح',
-              title: formatMoney(c.balance),
-              titleSize: 34,
-            ),
-            Row(
-              children: const [
-                Expanded(child: StatCard('شحن رصيد', 'من مزود معتمد')),
-                SizedBox(width: 12),
-                Expanded(child: StatCard('كشف الحركات', 'قابل للتتبع')),
+            TamFinancialSummary(
+              title: 'الرصيد المتاح (وضع تجريبي)',
+              primaryValue: formatMoney(c.balance),
+              subtitle: 'التعبئة الفعلية مرتبطة بمزود دفع مرخّص',
+              metrics: const [
+                (label: 'الشحن', value: 'من مزود معتمد', color: null),
+                (label: 'الكشف', value: 'قابل للتتبع', color: null),
               ],
             ),
             const SectionTitle('آخر الحركات'),
@@ -90,10 +122,9 @@ class _WalletScreenState extends State<WalletScreen> {
                 children: [
                   for (var i = 0; i < c.txs.length; i++)
                     ListRow(
-                      icon:
-                          c.txs[i].amount > 0 &&
+                      icon: c.txs[i].amount > 0 &&
                               c.txs[i].title.startsWith('شحن')
-                          ? Icons.add
+                          ? Icons.add_rounded
                           : (c.txs[i].amount > 0
                                 ? Icons.account_balance_wallet_outlined
                                 : Icons.payments_outlined),

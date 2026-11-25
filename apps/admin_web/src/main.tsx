@@ -1,7 +1,7 @@
 import {ToastHost, toast} from './toast';
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Bell, KeyRound, LogOut, RefreshCw, ChevronLeft, ShieldCheck, CheckCircle2} from 'lucide-react';
+import {Bell, KeyRound, LogOut, RefreshCw, ChevronLeft, ShieldCheck, CheckCircle2, Sun, Moon, Search, Globe} from 'lucide-react';
 import './style.css';
 import {Icon} from './ui';
 import {Modal} from './widgets';
@@ -11,15 +11,17 @@ import {Dues, FeesSettings} from './pages_fees';
 import {Marketing} from './pages_marketing';
 import {Accounts, Credentials, Nurses} from './pages_people';
 import {Applications} from './pages_applications';
-import {AuditLog, SettingsPage} from './pages_settings';
+import {AuditLog, Regions, SettingsPage} from './pages_settings';
 import {Dashboard, Finance, Live, LiveMap, Metrics, Page, Reports, RequestRow, Requests, Reviews, WalletRec} from './pages';
 import {VisitRisk} from './pages_visit_risk';
 import {NightPolicy} from './pages_night_policy';
+import {SafetyEvidence} from './pages_safety_evidence';
 import {SafetyOperations} from './pages_safety_operations';
 import {SafetyDirectory} from './pages_safety_directory';
 import {DispatchMonitor} from './pages_dispatch';
 import {CancellationAppeals} from './pages_appeals';
-import {AppointmentsSchedule, SupportReports, LedgerAudit, BITelemetry, BookingMarketplaceAdmin} from './pages_expansion';
+import {AppointmentsSchedule} from './pages_schedule';
+import {SupportReports, LedgerAudit, BITelemetry, BookingMarketplaceAdmin} from './pages_expansion';
 
 export type NavItem = {
   id: string;
@@ -41,6 +43,7 @@ export const navCategories: NavCategory[] = [
     items: [
       {id: 'dashboard', label: 'لوحة التحكم', icon: 'home', title: 'لوحة التحكم الرئيسية', desc: 'نظرة تشغيلية شاملة ومؤشرات حية'},
       {id: 'dispatch', label: 'مراقبة التوزيع', icon: 'bell', title: 'مراقبة الطلبات والإشعارات — Dispatch Monitor', desc: 'تتبع لحظي لمحرك المطابقة الجغرافية وأسباب الاستبعاد وصحة الإشعارات'},
+      {id: 'safety-evidence', label: 'الأدلة والحفظ', icon: 'doc', title: 'الأدلة والحفظ القانوني', desc: 'موافقات التصدير وحماية بيانات البلاغات'},
       {id: 'safety-operations', label: 'مركز السلامة', icon: 'bell', title: 'مركز عمليات السلامة', desc: 'استلام البلاغات ومتابعتها وتصعيدها'},
       {id: 'visit-risk', label: 'مراجعة السلامة', icon: 'bell', title: 'مراجعة مخاطر الزيارات', desc: 'مراجعة الزيارات وترشيح المرافقين المهنيين'},
       {id: 'night-policy', label: 'سياسة العمل الليلي', icon: 'bell', title: 'سياسة العمل الليلي', desc: 'ضوابط الأهلية والتغطية بحسب الفترة والمنطقة والخدمة'},
@@ -84,6 +87,7 @@ export const navCategories: NavCategory[] = [
     title: 'النمو والتسويق والجودة',
     items: [
       {id: 'marketing', label: 'أدوات التسويق', icon: 'heart', title: 'الحملات والأدوات الترويجية', desc: 'عروض الأوقات الهادئة، برامج الولاء، واستعادة المرضى'},
+      {id: 'packs', label: 'الباقات العلاجية', icon: 'cart', title: 'إدارة الباقات والاشتراكات', desc: 'تصميم وتفعيل الباقات الصحية المنزلية'},
       {id: 'promos', label: 'أكواد الخصم', icon: 'star', title: 'إدارة أكواد وكوبونات الخصم', desc: 'إنشاء ومتابعة فاعلية الأكواد الترويجية'},
       {
         id: 'reviews',
@@ -101,6 +105,7 @@ export const navCategories: NavCategory[] = [
     title: 'التقارير والنظام',
     items: [
       {id: 'reports', label: 'التقارير والتصدير', icon: 'chart', title: 'التقارير التحليلية وتصدير البيانات', desc: 'استخراج تقارير Excel/CSV ومؤشرات الأداء'},
+      {id: 'regions', label: 'المناطق الجغرافية', icon: 'pin', title: 'المناطق ونطاقات الخدمة', desc: 'إدارة المحافظات ومناطق التغطية الجغرافية'},
       {id: 'audit', label: 'سجل التدقيق', icon: 'lock', title: 'سجل تدقيق العمليات الحساسة', desc: 'التتبع الأمني: من أجرى التعديل، التفاصيل، والوقت'},
       {id: 'settings', label: 'إعدادات المنظومة', icon: 'settings', title: 'إعدادات النظام العامة', desc: 'المناطق الجغرافية، موجات التوزيع، وبيانات الشركة'},
     ],
@@ -228,7 +233,36 @@ function ChangePassword({onClose, forced = false}: {onClose: () => void; forced?
 
 function App() {
   const [active, setActive] = useState<string>('dashboard');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('tam_theme') === 'dark' ? 'dark' : 'light'));
+  const [dir, setDir] = useState<'rtl' | 'ltr'>(() => (localStorage.getItem('tam_dir') === 'ltr' ? 'ltr' : 'rtl'));
+  const [cmdQuery, setCmdQuery] = useState('');
+  const cmdInputRef = useRef<HTMLInputElement>(null);
   const [me, setMe] = useState<any>(null);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        cmdInputRef.current?.focus();
+      } else if (e.key === 'Escape' && cmdQuery) {
+        setCmdQuery('');
+        cmdInputRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [cmdQuery]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('tam_theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('dir', dir);
+    document.documentElement.setAttribute('lang', dir === 'rtl' ? 'ar' : 'en');
+    localStorage.setItem('tam_dir', dir);
+  }, [dir]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [requests, setRequests] = useState<RequestRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -346,6 +380,7 @@ function App() {
     dispatch: <DispatchMonitor live={live} />,
     'visit-risk': <VisitRisk />,
     'night-policy': <NightPolicy />,
+    'safety-evidence': <SafetyEvidence />,
     'safety-operations': <SafetyOperations />,
     'safety-directory': <SafetyDirectory />,
     map: <LiveMap live={live} />,
@@ -362,6 +397,7 @@ function App() {
     accounts: <Accounts live={live} />,
     prices: <ServicesPrices live={live} />,
     marketing: <Marketing live={live} />,
+    packs: <Marketing live={live} />,
     'support-reports': <SupportReports live={live} />,
     'bi-telemetry': <BITelemetry live={live} />,
     fees: <FeesSettings live={live} />,
@@ -371,6 +407,7 @@ function App() {
     reviews: <Reviews live={live} />,
     reports: <Reports live={live} />,
     audit: <AuditLog live={live} />,
+    regions: <Regions />,
     settings: <SettingsPage live={live} />,
   };
 
@@ -433,6 +470,37 @@ function App() {
           </div>
 
           <div className="header-actions">
+            <div className="cmd-search-wrap">
+              <input
+                ref={cmdInputRef}
+                className="cmd-search-input"
+                type="search"
+                placeholder="بحث سريع في الوحدات... (Ctrl+K)"
+                value={cmdQuery}
+                onChange={e => setCmdQuery(e.target.value)}
+              />
+              {cmdQuery.trim() && (
+                <div className="cmd-search-dropdown">
+                  {allItems
+                    .filter(it => it.label.includes(cmdQuery.trim()) || it.title.includes(cmdQuery.trim()))
+                    .slice(0, 8)
+                    .map(it => (
+                      <button
+                        key={it.id}
+                        className="cmd-search-item"
+                        onClick={() => {
+                          setActive(it.id);
+                          setCmdQuery('');
+                        }}
+                      >
+                        <span>{it.label}</span>
+                        <small className="hint">{findNavCategory(it.id)}</small>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+
             <button
               className={`action-btn ${refreshing ? 'rotating' : ''}`}
               title="تحديث البيانات فوراً"
@@ -453,6 +521,20 @@ function App() {
             </div>
 
             <div className="header-icons">
+              <button
+                className="ghost"
+                title={theme === 'dark' ? 'الوضع الفاتح' : 'الوضع الداكن'}
+                onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+              >
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <button
+                className="ghost"
+                title={dir === 'rtl' ? 'تبديل إلى LTR' : 'تبديل إلى RTL'}
+                onClick={() => setDir(d => (d === 'rtl' ? 'ltr' : 'rtl'))}
+              >
+                <Globe size={18} />
+              </button>
               <button className="ghost" title="تغيير كلمة المرور" onClick={() => setPw(true)}>
                 <KeyRound size={18} />
               </button>

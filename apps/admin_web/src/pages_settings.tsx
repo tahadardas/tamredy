@@ -4,7 +4,7 @@ import type {Live} from './pages';
 import {Chip, Notice, Panel, Table} from './ui';
 import {useBusy} from './widgets';
 
-function Regions() {
+export function Regions() {
   const [data, setData] = useState<any[]>([]);
   const [gname, setGname] = useState('');
   const [aname, setAname] = useState<Record<string, string>>({});

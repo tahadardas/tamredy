@@ -92,23 +92,26 @@ class _ProposalsViewScreenState extends State<ProposalsViewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     return Scaffold(
-      backgroundColor: AeroColors.lightCanvas,
+      backgroundColor: tc.background,
       appBar: AppBar(
         title: Text(
           'عروض الممرضين الجاهزين',
-          style: aeroText(size: 17, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+          style: aeroText(size: 17, weight: FontWeight.w700, color: tc.textPrimary),
         ),
-        backgroundColor: Colors.white,
+        backgroundColor: tc.surface,
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AeroColors.primaryNavy, size: 20),
-          onPressed: () => Navigator.of(context).pop(),
+          tooltip: 'رجوع',
+          icon: Icon(Icons.arrow_back_rounded, color: tc.textPrimary, size: 22),
+          onPressed: () => Navigator.of(context).maybePop(),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: AeroColors.accentTeal),
+            tooltip: 'تحديث',
+            icon: Icon(Icons.refresh_rounded, color: tc.primary),
             onPressed: _fetchProposals,
           ),
         ],

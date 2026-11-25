@@ -36,6 +36,20 @@ const _codes = <String, String>{
   'APPLICATION_ALREADY_OPEN': 'لديك طلب انضمام قيد المراجعة بهذا الرقم، سنتواصل معك',
   'LICENSE_EXPIRED': 'الوثيقة منتهية الصلاحية؛ ارفع وثيقة سارية',
   'ROLE_NOT_ALLOWED': 'هذا الحساب غير مخصص لهذا التطبيق',
+  'REQUEST_NOT_OPEN': 'الطلب لم يعد متاحاً لاستقبال عروض الجاهزية',
+  'REQUEST_EXPIRED': 'انتهت مهلة استقبال العروض لهذا الطلب',
+  'ARRIVAL_TIME_IN_PAST': 'وقت الوصول المقترح يجب أن يكون في المستقبل',
+  'ARRIVAL_TIME_NOT_ACCEPTABLE': 'وقت الوصول المقترح يتجاوز الحد المقبول للمريض',
+  'MAX_CONCURRENT_PROPOSALS_EXCEEDED': 'بلغت الحد الأقصى للعروض النشطة في الوقت نفسه',
+  'NURSE_SCHEDULE_CONFLICT': 'لديك موعد أو زيارة أخرى تتعارض مع هذا التوقيت',
+  'MISSING_REQUIRED_SKILLS': 'هذا الطلب يتطلب مهارات أو اعتماداً غير مفعّل في حسابك',
+  'NURSE_NO_ACTIVE_REGION': 'لم يتم تحديد منطقة عمل نشطة لحسابك',
+  'NURSE_REGION_MISMATCH': 'الطلب خارج نطاق مناطق عملك المعتمدة',
+  'OFF_HOURS_UNAVAILABLE': 'حسابك غير متاح حالياً لاستقبال الطلبات',
+  'PROPOSAL_NOT_FOUND_OR_NOT_PENDING': 'العرض غير موجود أو لم يعد قيد الانتظار',
+  'PROPOSAL_EXPIRED': 'انتهت مدة صلاحية هذا العرض',
+  'PROPOSAL_NOT_PENDING': 'هذا العرض لم يعد متاحاً',
+  'PROPOSAL_VERSION_CONFLICT': 'تم تحديث العرض، يرجى إعادة المحاولة',
 };
 
 String? nightPolicyMessage(Object? code) =>

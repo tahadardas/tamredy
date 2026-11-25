@@ -183,13 +183,13 @@ export class AssignmentService {
         [requestId],
       );
 
-      // 10. Create Active Assignment
+      // 10. Create Active Assignment (departure_due_at / expected_arrival_at are populated upon nurse departure per chk_assignment_departure_eta)
       await client.query(
         `INSERT INTO request_assignments(
-           request_id, nurse_id, status, expected_arrival_at, eta_status
+           request_id, nurse_id, status
          )
-         VALUES($1, $2, 'ACTIVE', $3, 'AVAILABLE')`,
-        [requestId, nurse.id, proposal.proposed_arrival_at],
+         VALUES($1, $2, 'ACTIVE')`,
+        [requestId, nurse.id],
       );
 
       // 11. Record Request Event

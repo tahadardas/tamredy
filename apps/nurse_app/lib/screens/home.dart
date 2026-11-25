@@ -750,28 +750,59 @@ class ProfileScreen extends StatelessWidget {
                   border: Border.all(color: AeroColors.accentTeal.withValues(alpha: 0.3)),
                   boxShadow: AeroShadows.card,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 20,
-                      height: 20,
-                      decoration: const BoxDecoration(
-                        color: AeroColors.accentTeal,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.check, size: 13, color: Colors.white),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            color: context.tamColors.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.check, size: 13, color: Colors.white),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          s,
+                          style: tamText(
+                            size: 12.5,
+                            weight: FontWeight.w700,
+                            color: context.tamColors.textPrimary,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      s,
-                      style: tamText(size: 12.5, weight: FontWeight.w700, color: AeroColors.primaryNavy),
-                    ),
-                  ],
-                ),
-              ),
+                  ),
           ],
         ),
+      const SectionTitle('المظهر'),
+      TamCard(
+        child: ValueListenableBuilder<ThemeMode>(
+          valueListenable: nurseThemeMode,
+          builder: (context, mode, _) => SegmentedButton<ThemeMode>(
+            segments: const [
+              ButtonSegment(
+                value: ThemeMode.light,
+                label: Text('فاتح'),
+                icon: Icon(Icons.light_mode_outlined),
+              ),
+              ButtonSegment(
+                value: ThemeMode.dark,
+                label: Text('داكن'),
+                icon: Icon(Icons.dark_mode_outlined),
+              ),
+              ButtonSegment(
+                value: ThemeMode.system,
+                label: Text('النظام'),
+                icon: Icon(Icons.brightness_auto_outlined),
+              ),
+            ],
+            selected: {mode},
+            onSelectionChanged: (s) => nurseThemeMode.value = s.first,
+          ),
+        ),
+      ),
     ],
   );
 }

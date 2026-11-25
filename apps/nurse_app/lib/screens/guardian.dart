@@ -41,13 +41,25 @@ class _GuardianSheet extends StatelessWidget {
           NurseStage.arrived,
           NurseStage.inService,
         ].contains(nurse.stage);
-        return SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SectionTitle('سلامة الممرض'),
+        return Container(
+          color: context.tamColors.surface,
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SectionTitle('مركز الأمان والاستغاثة'),
+                  if (safety.event == null || safety.eventClosed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: TamSpacing.md),
+                      child: TamEmergencyCard(
+                        title: 'استغاثة فورية صامتة (SOS)',
+                        subtitle: 'إرسال تنبيه عاجل لغرفة العمليات وجهات الاتصال الموثوقة فوراً',
+                        actionLabel: safety.sendingSos ? 'جارٍ الإرسال...' : 'إرسال SOS',
+                        onAction: safety.sendingSos ? () {} : safety.sendSos,
+                      ),
+                    ),
                 OutlinedButton.icon(
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
                     builder: (_) => TrustedContactsScreen(api: nurse.api),
@@ -177,6 +189,7 @@ class _GuardianSheet extends StatelessWidget {
               ],
             ),
           ),
+        ),
         );
       },
     );

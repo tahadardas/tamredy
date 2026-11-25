@@ -87,12 +87,11 @@ class _NurseClinicalNotesScreenState extends State<NurseClinicalNotesScreen> {
         );
         Navigator.of(context).pop();
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم الحفظ المحلي للعلامات الحيوية (وضع عدم الاتصال)')),
+          SnackBar(content: Text(explainError(e, fallback: 'تعذر حفظ العلامات الحيوية، حاول مرة أخرى'))),
         );
-        Navigator.of(context).pop();
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);

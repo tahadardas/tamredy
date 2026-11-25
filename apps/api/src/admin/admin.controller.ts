@@ -48,7 +48,7 @@ export class AdminController {
   }
   @Get('requests') async requests(@Request() r:AuthRequest,@Query('limit') limit?:string,@Query('cursor') cursor?:string,@Query('status') status?:string) {
     requireRole(r.user!,'ADMIN');
-    if (status && !['OFFERING','ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE','COMPLETED','CANCELLED','UNFULFILLED','ESCALATED'].includes(status))
+    if (status && !['SCHEDULED','OFFERING','ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE','COMPLETED','CANCELLED','UNFULFILLED','ESCALATED'].includes(status))
       throw new BadRequestException({code:'INVALID_STATUS'});
     const scope=`admin:requests:${status??'all'}`;
     const page=validatedPage(limit,cursor,scope);
