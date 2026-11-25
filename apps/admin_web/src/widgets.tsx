@@ -1,4 +1,4 @@
-import {useState, type ReactNode} from 'react';
+import {useEffect, useId, useRef, useState, type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
 import {api} from './session';
 
@@ -13,15 +13,64 @@ export const Modal = ({
   children: ReactNode;
   maxWidth?: string | number;
 }) => {
+  const titleId = useId();
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prevFocused = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusables = () =>
+      Array.from(
+        boxRef.current?.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter(el => !el.hasAttribute('disabled'));
+
+    const initial = focusables()[0] ?? boxRef.current;
+    initial?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const list = focusables();
+        if (list.length === 0) return;
+        const first = list[0];
+        const last = list[list.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+      prevFocused?.focus?.();
+    };
+  }, [onClose]);
+
   return createPortal(
-    <div className="modal" onClick={onClose} role="dialog" aria-modal="true">
+    <div className="modal" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div
+        ref={boxRef}
+        tabIndex={-1}
         className="modal-box wide"
         style={maxWidth ? {maxWidth} : undefined}
         onClick={e => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <button className="ghost" onClick={onClose} aria-label="إغلاق" type="button">✕</button>
         </div>
         <div className="modal-content">

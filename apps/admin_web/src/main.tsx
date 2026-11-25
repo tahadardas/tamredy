@@ -275,59 +275,80 @@ function App() {
   const [mustChange, setMustChange] = useState(false);
   const [tick, setTick] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [staleWarning, setStaleWarning] = useState('');
+  const inFlightRef = useRef<Promise<void> | null>(null);
   const idle = useRef<(() => void) | undefined>(undefined);
 
   const reload = useCallback(async () => {
-    try {
-      setRefreshing(true);
-      const who = await getJson('/v1/auth/me');
-      setMe(who);
-      if (who.mustChangePassword) {
-        setMustChange(true);
-        return;
-      }
-      setMustChange(false);
-      if (who.role === 'CLINICAL_REVIEWER') {
-        setActive(current => ['applications','credentials','clinical-reviews'].includes(current) ? current : 'clinical-reviews');
-        const pending = await getJson('/v1/admin/credentials/pending').catch(() => undefined);
-        setExtra({pending});
+    if (inFlightRef.current) return inFlightRef.current;
+    const task = (async () => {
+      try {
+        setRefreshing(true);
+        setStaleWarning('');
+        const who = await getJson('/v1/auth/me');
+        setMe(who);
+        if (who.mustChangePassword) {
+          setMustChange(true);
+          return;
+        }
+        setMustChange(false);
+        if (who.role === 'CLINICAL_REVIEWER') {
+          setActive(current => ['applications', 'credentials', 'clinical-reviews'].includes(current) ? current : 'clinical-reviews');
+          const pending = await getJson('/v1/admin/credentials/pending').catch(() => undefined);
+          setExtra({pending});
+          setError('');
+          setTick(t => t + 1);
+          return;
+        }
+
+        // Route-based selective loading + shared sidebar badge counts
+        const routeNeedsFinance = ['dashboard', 'finance', 'dues', 'wallet', 'ledger-audit', 'reports'].includes(active);
+        const routeNeedsLive = ['dashboard', 'map', 'dispatch', 'requests'].includes(active);
+        const routeNeedsReviews = ['dashboard', 'reviews', 'support-reports'].includes(active);
+        const routeNeedsSettings = ['dashboard', 'settings', 'fees', 'regions'].includes(active);
+
+        const [m, r] = await Promise.all([
+          getJson('/v1/admin/dashboard'),
+          getJson('/v1/admin/requests'),
+        ]);
+        const paths: Record<string, string> = {
+          pending: 'credentials/pending',
+          ...(routeNeedsLive ? {live: 'live', extras: 'dashboard/extras'} : {}),
+          ...(routeNeedsFinance ? {finance: 'finance/summary', settlements: 'finance/settlements'} : {}),
+          ...(routeNeedsReviews ? {reviews: 'reviews/summary'} : {}),
+          ...(routeNeedsSettings ? {settings: 'system-settings'} : {}),
+        };
+        const got: Record<string, any> = {};
+        const failedModules: string[] = [];
+        await Promise.all(
+          Object.entries(paths).map(async ([k, p]) => {
+            try {
+              got[k] = await getJson(`/v1/admin/${p}`);
+            } catch {
+              failedModules.push(k);
+            }
+          }),
+        );
+        const page = r as Page<RequestRow>;
+        setExtra(prev => ({...prev, ...got}));
+        setMetrics(m);
+        setRequests(page.items);
+        setCursor(page.nextCursor);
         setError('');
+        if (failedModules.length > 0) {
+          setStaleWarning(`تعذر تحديث بعض الوحدات (${failedModules.join(', ')}) — قد تكون بعض البيانات غير محدثة.`);
+        }
         setTick(t => t + 1);
-        return;
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setRefreshing(false);
+        inFlightRef.current = null;
       }
-      const [m, r] = await Promise.all([getJson('/v1/admin/dashboard'), getJson('/v1/admin/requests')]);
-      const paths: Record<string, string> = {
-        live: 'live',
-        extras: 'dashboard/extras',
-        pending: 'credentials/pending',
-        finance: 'finance/summary',
-        settlements: 'finance/settlements',
-        reviews: 'reviews/summary',
-        settings: 'system-settings',
-      };
-      const got: Record<string, any> = {};
-      await Promise.all(
-        Object.entries(paths).map(async ([k, p]) => {
-          try {
-            got[k] = await getJson(`/v1/admin/${p}`);
-          } catch {
-            /* optional panel */
-          }
-        }),
-      );
-      const page = r as Page<RequestRow>;
-      setExtra(got);
-      setMetrics(m);
-      setRequests(page.items);
-      setCursor(page.nextCursor);
-      setError('');
-      setTick(t => t + 1);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+    })();
+    inFlightRef.current = task;
+    return task;
+  }, [active]);
 
   useEffect(() => {
     void reload();
@@ -423,7 +444,7 @@ function App() {
             <img src="/logo.png" alt="تمريضي" />
           </div>
           <div className="brand-tag">
-            <span>لوحة إدارة العمليات</span>
+            <span>مركز عمليات تمريضي</span>
             <div className="live-dot" title="متصل بالخادم" />
           </div>
         </div>
@@ -558,7 +579,8 @@ function App() {
         </header>
 
         {(pw || mustChange) && <ChangePassword forced={mustChange} onClose={() => setPw(false)} />}
-        {error && <div className="error">{error}</div>}
+        {error && <div className="error" role="alert">{error}</div>}
+        {staleWarning && !error && <div className="notice notice-warn" role="status">{staleWarning}</div>}
 
         <div className="content">
           {mustChange ? null : body[active]}
