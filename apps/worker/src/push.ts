@@ -204,10 +204,10 @@ export async function pushDeliverBatch(
         type: e.event_type,
         requestId: e.payload.requestId ?? '',
         offerId: e.payload.offerId ?? '',
-        proposalId: e.payload.proposalId ?? '',
-        callId: e.payload.callId ?? '',
-        conversationId: e.payload.conversationId ?? '',
         expiresAt: e.payload.expiresAt ?? '',
+        ...(e.payload.proposalId ? { proposalId: e.payload.proposalId } : {}),
+        ...(e.payload.callId ? { callId: e.payload.callId } : {}),
+        ...(e.payload.conversationId ? { conversationId: e.payload.conversationId } : {}),
       },
     }));
   });

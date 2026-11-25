@@ -211,13 +211,15 @@ test('promo protection: wrong-code guessing is rate limited; monthly order cap; 
 
 test('holidays: listed dates and weekly day off are surcharged; switching the feature off stops it', async () => {
   await adminFees.updateSettings(A, { holidayEnabled: true, holidayPercent: 40, weekendDays: [5], nightEnabled: false });
-  await adminFees.addHoliday(A, { day: '2026-11-25', name: 'عطلة تجريبية' });
+  const visitStartedAt = new Date(Date.now() - 20 * 60_000);
+  const holiday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Damascus', year: 'numeric', month: '2-digit', day: '2-digit' }).format(visitStartedAt);
+  await adminFees.addHoliday(A, { day: holiday, name: 'عطلة تجريبية' });
   const s = await fees.snapshot(db);
-  assert.ok(s.holidays.includes('2026-11-25'));
+  assert.ok(s.holidays.includes(holiday));
   const p = await mkPatient(30);
-  const r = await visit(p, { minutes: 20, arrivedAt: '2026-11-25T08:00:00Z' });
+  const r = await visit(p, { minutes: 20, arrivedAt: visitStartedAt.toISOString() });
   // complete() stamps completed_at = now(); arrival is on the holiday
   assert.equal((await bill(r)).surcharge, 480); // 40% of 1200
-  await adminFees.removeHoliday(A, '2026-11-25');
-  assert.equal((await fees.snapshot(db)).holidays.includes('2026-11-25'), false);
+  await adminFees.removeHoliday(A, holiday);
+  assert.equal((await fees.snapshot(db)).holidays.includes(holiday), false);
 });

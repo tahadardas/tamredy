@@ -57,7 +57,8 @@ export class GeoIndexService implements OnModuleDestroy {
   async current(nurseId: string): Promise<PreviousLocation | null> {
     if (!this.redis) return null;
     const value = await this.redis.hgetall(`live:location:${nurseId}`);
-    if (!value.capturedAtEpochMs) return null;
+    if (!value.capturedAtEpochMs || !value.latitude || !value.longitude ||
+        !value.sequenceNumber || !value.sessionId) return null;
     return {
       latitude: Number(value.latitude),
       longitude: Number(value.longitude),

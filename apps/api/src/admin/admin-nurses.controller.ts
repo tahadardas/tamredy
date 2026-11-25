@@ -58,6 +58,16 @@ export class AdminNursesController {
 
   @Get('nurses/manage') async list(@Request() r: AuthRequest, @Query('q') q?: string, @Query('status') status?: string, @Query('governorate') gov?: string, @Query('area') area?: string) {
     requireAnyRole(r.user!, [...ADMINS]);
+    const search = q?.trim().slice(0, 80) || null;
+    const exactSearch = search && (/^\d+$/.test(search) || search.startsWith('+'));
+    const searchPredicate = !search ? ' AND $2::text IS NULL' : exactSearch
+      ? ' AND (u.phone_e164=$2 OR n.nurse_no::text=$2)'
+      : ` AND (tamreedy_ar_normalize(u.display_name) % tamreedy_ar_normalize($2)
+          OR tamreedy_ar_normalize(u.display_name) LIKE tamreedy_ar_normalize($2)||'%'
+          OR u.phone_e164=$2)`;
+    const searchOrder = search && !exactSearch
+      ? 'similarity(tamreedy_ar_normalize(u.display_name),tamreedy_ar_normalize($2)) DESC,'
+      : '';
     const rows = (await this.db.query(`SELECT n.id,n.nurse_no,u.display_name,u.phone_e164,u.status AS account_status,n.verified,n.work_status,coalesce(a.name_ar,n.area) AS area,g.name_ar AS governorate,n.governorate_id,n.area_id,n.specialty,n.created_at,
         (SELECT count(*)::int FROM nurse_documents d WHERE d.nurse_id=n.id AND d.deleted_at IS NULL) AS documents,
         (SELECT review_status FROM nurse_credentials c WHERE c.nurse_id=n.id ORDER BY c.submitted_at DESC LIMIT 1) AS license_status,
@@ -65,11 +75,8 @@ export class AdminNursesController {
         (SELECT round(avg(vr.stars)::numeric,1) FROM visit_reviews vr JOIN visits v ON v.id=vr.visit_id JOIN request_assignments a ON a.id=v.assignment_id WHERE a.nurse_id=n.id AND vr.reviewer_role='PATIENT') AS rating
       FROM nurses n JOIN users u ON u.id=n.user_id LEFT JOIN governorates g ON g.id=n.governorate_id LEFT JOIN areas a ON a.id=n.area_id
       WHERE u.status<>'DELETED' AND ($1::text IS NULL OR u.status=$1) AND ($3::uuid IS NULL OR n.governorate_id=$3) AND ($4::uuid IS NULL OR n.area_id=$4)
-        AND ($2::text IS NULL OR tamreedy_ar_normalize(u.display_name) % tamreedy_ar_normalize($2)
-          OR tamreedy_ar_normalize(u.display_name) LIKE tamreedy_ar_normalize($2)||'%'
-          OR u.phone_e164=$2 OR n.nurse_no::text=$2)
-      ORDER BY CASE WHEN $2::text IS NULL THEN 0 ELSE similarity(tamreedy_ar_normalize(u.display_name),tamreedy_ar_normalize($2)) END DESC,
-        n.nurse_no DESC LIMIT 200`, [status && ['ACTIVE', 'SUSPENDED'].includes(status) ? status : null, q?.trim().slice(0,80) || null, UUID_RE.test(gov ?? '') ? gov : null, UUID_RE.test(area ?? '') ? area : null])).rows;
+        ${searchPredicate}
+      ORDER BY ${searchOrder} n.nurse_no DESC LIMIT 200`, [status && ['ACTIVE', 'SUSPENDED'].includes(status) ? status : null, search, UUID_RE.test(gov ?? '') ? gov : null, UUID_RE.test(area ?? '') ? area : null])).rows;
     return { items: rows };
   }
 

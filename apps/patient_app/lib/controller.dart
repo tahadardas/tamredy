@@ -309,7 +309,9 @@ class PatientController extends ChangeNotifier {
     final longitude = num.tryParse('${payload['longitude']}');
     final capturedAt = DateTime.tryParse('${payload['capturedAt']}');
     if (latitude == null || longitude == null || capturedAt == null ||
-        DateTime.now().difference(capturedAt.toLocal()) > const Duration(seconds: 120)) return;
+        DateTime.now().difference(capturedAt.toLocal()) > const Duration(seconds: 120)) {
+      return;
+    }
     _lastTrackingSequence = sequence;
     nursePos = LatLng(latitude.toDouble(), longitude.toDouble());
     notifyListeners();
