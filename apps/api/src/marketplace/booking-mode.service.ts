@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { DbService } from '../db/db.service.js';
 import { ExtendOpenRequestDto, SwitchBookingModeDto } from './marketplace.dto.js';
 import { saveSchedule, validateAppointment, verifyScheduledSafety } from '../scheduling/scheduling.js';
+import type { PoolClient } from 'pg';
+import { transitionRequest } from '../requests/request-lifecycle.js';
 
 @Injectable()
 export class BookingModeService {
@@ -42,6 +44,10 @@ export class BookingModeService {
       const fromStatus = request.status;
       let toStatus = fromStatus;
 
+      if (fromMode === toMode) {
+        throw new ConflictException({ code: 'BOOKING_MODE_ALREADY_ACTIVE' });
+      }
+
       // 2. Transition to OPEN MARKETPLACE
       if (toMode === 'OPEN') {
         toStatus = 'OPEN_FOR_PROPOSALS';
@@ -59,17 +65,26 @@ export class BookingModeService {
         );
         await client.query(`DELETE FROM dispatch_jobs WHERE request_id = $1`, [requestId]);
 
-        // Update care request to OPEN
+        await transitionRequest(client, {
+          requestId,
+          fromStatus,
+          toStatus,
+          currentVersion: request.version,
+          actor: 'PATIENT',
+          actorUserId: patientUserId,
+          reason: 'PATIENT_REQUESTED_OPEN_MARKETPLACE',
+          metadata: { fromMode, toMode, openDurationMinutes: durationMins },
+        });
+
+        // Update booking-channel state after the lifecycle transition.
         await client.query(
           `UPDATE care_requests
            SET booking_mode = 'OPEN',
-               status = 'OPEN_FOR_PROPOSALS',
                marketplace_status = 'OPEN_FOR_PROPOSALS',
                published_at = now(),
                open_expires_at = $2,
                latest_acceptable_arrival_at = $3,
                booking_mode_version = booking_mode_version + 1,
-               version = version + 1,
                last_mode_change_at = now(),
                updated_at = now()
            WHERE id = $1`,
@@ -117,6 +132,10 @@ export class BookingModeService {
         if (!appointment) {
           throw new BadRequestException({ code: 'VALID_SCHEDULED_TIME_REQUIRED' });
         }
+        const scheduledEnd = dto.scheduledEndAt ? new Date(dto.scheduledEndAt) : null;
+        if (scheduledEnd && (!Number.isFinite(scheduledEnd.getTime()) || scheduledEnd <= appointment)) {
+          throw new BadRequestException({ code: 'INVALID_SCHEDULED_WINDOW' });
+        }
 
         // Verify safety window
         const services = (await client.query(
@@ -134,17 +153,28 @@ export class BookingModeService {
         );
         await client.query(`DELETE FROM dispatch_jobs WHERE request_id = $1`, [requestId]);
 
+        await transitionRequest(client, {
+          requestId,
+          fromStatus,
+          toStatus,
+          currentVersion: request.version,
+          actor: 'PATIENT',
+          actorUserId: patientUserId,
+          reason: 'PATIENT_REQUESTED_SCHEDULED',
+          metadata: { fromMode, toMode, scheduledAt: appointment.toISOString() },
+        });
+
         await client.query(
           `UPDATE care_requests
            SET booking_mode = 'SCHEDULED',
-               status = 'SCHEDULED',
-               marketplace_status = 'SCHEDULED',
+               marketplace_status = 'INITIAL',
+               scheduled_start_at = $2,
+               scheduled_end_at = $3,
                booking_mode_version = booking_mode_version + 1,
-               version = version + 1,
                last_mode_change_at = now(),
                updated_at = now()
            WHERE id = $1`,
-          [requestId],
+          [requestId, appointment.toISOString(), scheduledEnd?.toISOString() ?? null],
         );
 
         await saveSchedule(client, requestId, appointment);
@@ -162,7 +192,7 @@ export class BookingModeService {
             fromStatus,
             toStatus,
             patientUserId,
-            JSON.stringify({ scheduledAt: appointment.toISOString() }),
+            JSON.stringify({ scheduledAt: appointment.toISOString(), scheduledEndAt: scheduledEnd?.toISOString() ?? null }),
           ],
         );
 
@@ -171,6 +201,7 @@ export class BookingModeService {
           bookingMode: 'SCHEDULED',
           status: 'SCHEDULED',
           scheduledAt: appointment.toISOString(),
+          scheduledEndAt: scheduledEnd?.toISOString() ?? null,
         };
       }
 
@@ -207,29 +238,43 @@ export class BookingModeService {
   }
 
   private async retryInstantDispatchInternal(
-    client: any,
+    client: PoolClient,
     patientUserId: string,
     requestId: string,
     request: any,
   ) {
+    if (!['UNFULFILLED', 'AWAITING_RECOVERY_CHOICE', 'OPEN_FOR_PROPOSALS', 'SCHEDULED'].includes(request.status)) {
+      throw new ConflictException({ code: 'REQUEST_NOT_RECOVERABLE' });
+    }
     const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
+
+    await transitionRequest(client, {
+      requestId,
+      fromStatus: request.status,
+      toStatus: 'OFFERING',
+      currentVersion: request.version,
+      actor: 'PATIENT',
+      actorUserId: patientUserId,
+      reason: 'PATIENT_RETRY_INSTANT',
+      metadata: { fromMode: request.booking_mode, toMode: 'INSTANT' },
+    });
 
     await client.query(
       `UPDATE care_requests
        SET booking_mode = 'INSTANT',
-           status = 'OFFERING',
            marketplace_status = 'SEARCHING',
            search_started_at = statement_timestamp(),
            search_expires_at = statement_timestamp() + $2::integer * interval '1 second',
            search_radius_meters = $3,
-           version = version + 1,
+           booking_mode_version = booking_mode_version + 1,
            last_mode_change_at = now(),
            updated_at = now()
        WHERE id = $1`,
       [requestId, policy?.offerDurationSeconds ?? 60, policy?.radiusMeters ?? 10000],
     );
 
-    await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1)`, [requestId]);
+    await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1)
+      ON CONFLICT(request_id) DO UPDATE SET next_wave=1,next_run_at=statement_timestamp(),updated_at=statement_timestamp()`, [requestId]);
 
     await client.query(
       `INSERT INTO request_booking_transitions(

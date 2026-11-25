@@ -1,13 +1,15 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { AcceptProposalDto } from './marketplace.dto.js';
 import { MarketplaceEligibilityService } from './marketplace-eligibility.service.js';
+import { AssignmentOrchestrator } from '../dispatch/assignment.orchestrator.js';
 
 @Injectable()
 export class AssignmentService {
   constructor(
     private readonly db: DbService,
     private readonly eligibility: MarketplaceEligibilityService,
+    private readonly assignments: AssignmentOrchestrator,
   ) {}
 
   /**
@@ -24,7 +26,7 @@ export class AssignmentService {
     proposalId: string,
     dto?: AcceptProposalDto,
   ) {
-    return this.db.transaction(async client => {
+    const outcome = await this.db.transaction(async client => {
       // 1. Lock Care Request
       const reqRes = await client.query(
         `SELECT id, requester_user_id, status, version, price_amount, commission_bps,
@@ -101,61 +103,33 @@ export class AssignmentService {
         throw new ConflictException({ code: 'NURSE_NOT_VERIFIED' });
       }
 
-      // 4. Re-verify Mutual Block Invariant
-      const blockRes = await client.query(
-        `SELECT 1 FROM user_blocks
-         WHERE ((blocker_user_id = $1 AND blocked_user_id = $2)
-            OR (blocker_user_id = $2 AND blocked_user_id = $1))
-           AND revoked_at IS NULL
-         LIMIT 1`,
-        [patientUserId, nurse.user_id],
-      );
-      if (blockRes.rowCount) {
-        throw new ConflictException({ code: 'USER_BLOCKED' });
-      }
-
-      // 5. Re-verify Schedule Conflict
+      // 4. Re-evaluate every mutable eligibility invariant after all
+      // contested rows have been locked.
       const proposedArrival = new Date(proposal.proposed_arrival_at);
       const estimatedMinutes = proposal.estimated_service_minutes || 30;
       const proposedEnd = new Date(proposedArrival.getTime() + estimatedMinutes * 60000);
 
-      const conflict = await this.eligibility.hasScheduleConflict(
+      const eligibility = await this.eligibility.checkAcceptanceEligibility(
         nurse.id,
+        requestId,
         proposedArrival,
-        proposedEnd,
+        estimatedMinutes,
         client,
       );
-      if (conflict) {
-        // Invalidate this proposal
+      if (!eligibility.eligible) {
+        const primaryReason = eligibility.reason ?? 'NURSE_NOT_ELIGIBLE';
+        // Persist the invalidation and report the conflict only after commit;
+        // throwing here would silently roll the invalidation back.
         await client.query(
           `UPDATE marketplace_proposals
-           SET status = 'INVALIDATED', invalidation_reason = 'NURSE_SCHEDULE_CONFLICT', updated_at = now()
+           SET status = 'INVALIDATED', invalidation_reason = $2, invalidated_at=now(), updated_at = now()
            WHERE id = $1`,
-          [proposal.id],
+          [proposal.id, primaryReason],
         );
-        throw new ConflictException({
-          code: 'NURSE_SCHEDULE_CONFLICT',
-          message: 'الممرض مرتبط بموعد آخر في هذا التوقيت',
-        });
+        return { assigned: false as const, rejection: primaryReason, reasons: eligibility.reasons };
       }
 
-      // 6. Update Proposal to ACCEPTED
-      await client.query(
-        `UPDATE marketplace_proposals
-         SET status = 'ACCEPTED', accepted_at = now(), updated_at = now()
-         WHERE id = $1`,
-        [proposal.id],
-      );
-
-      // 7. Supersede Sibling Proposals for this request
-      await client.query(
-        `UPDATE marketplace_proposals
-         SET status = 'SUPERSEDED', updated_at = now(), invalidation_reason = 'ANOTHER_PROPOSAL_ACCEPTED'
-         WHERE request_id = $1 AND id != $2 AND status = 'PENDING'`,
-        [requestId, proposal.id],
-      );
-
-      // 8. Invalidate overlapping proposals by this nurse for other open requests
+      // 6. Invalidate overlapping proposals by this nurse for other open requests
       const bufferMs = 30 * 60000;
       const windowStart = new Date(proposedArrival.getTime() - bufferMs).toISOString();
       const windowEnd = new Date(proposedEnd.getTime() + bufferMs).toISOString();
@@ -172,29 +146,23 @@ export class AssignmentService {
         [nurse.id, proposal.id, windowStart, windowEnd],
       );
 
-      // 9. Update Care Request to ASSIGNED
-      await client.query(
-        `UPDATE care_requests
-         SET status = 'ASSIGNED',
-             marketplace_status = 'ASSIGNED',
-             version = version + 1,
-             updated_at = now()
-         WHERE id = $1`,
-        [requestId],
-      );
-
-      // 10. Create Active Assignment
-      await client.query(
-        `INSERT INTO request_assignments(
-           request_id, nurse_id, status, expected_arrival_at, eta_status
-         )
-         VALUES($1, $2, 'ACTIVE', $3, 'AVAILABLE')`,
-        [requestId, nurse.id, proposal.proposed_arrival_at],
-      );
+      // 7. Final assignment, lifecycle transition, channel closure, and
+      // duplicate prevention are centralized in the orchestrator.
+      const assigned = await this.assignments.assignLocked(client, {
+        request,
+        nurseId: nurse.id,
+        actor: 'PATIENT',
+        actorUserId: patientUserId,
+        source: 'MARKETPLACE_PROPOSAL',
+        sourceId: proposal.id,
+        plannedStart: proposedArrival,
+        plannedEnd: proposedEnd,
+        reserveImmediately: false,
+      });
 
       // 11. Record Request Event
       await client.query(
-        `INSERT INTO request_events(request_id, actor_user_id, event_type, metadata)
+        `INSERT INTO request_events(request_id, actor_user_id, event_type, payload)
          VALUES($1, $2, 'marketplace.proposal.accepted', $3::jsonb)`,
         [
           requestId,
@@ -242,11 +210,16 @@ export class AssignmentService {
 
       return {
         assigned: true,
+        assignmentId: assigned.assignmentId,
         requestId,
         proposalId: proposal.id,
         nurseId: nurse.id,
         expectedArrivalAt: proposal.proposed_arrival_at,
       };
     });
+    if (!outcome.assigned) {
+      throw new ConflictException({ code: outcome.rejection, reasons: outcome.reasons });
+    }
+    return outcome;
   }
 }

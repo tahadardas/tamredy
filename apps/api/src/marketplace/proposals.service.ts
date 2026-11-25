@@ -30,6 +30,9 @@ export class ProposalsService {
     }
 
     return this.db.transaction(async client => {
+      // Serializes the per-nurse proposal-cap decision without locking an
+      // unrelated table or relying on a race-prone count followed by insert.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [nurseId]);
       // 1. Lock request to ensure it's still open
       const reqRes = await client.query(
         `SELECT id, status, requester_user_id, price_amount, commission_bps,
@@ -105,6 +108,7 @@ export class ProposalsService {
            estimated_nurse_earning = EXCLUDED.estimated_nurse_earning,
            note = EXCLUDED.note,
            expires_at = EXCLUDED.expires_at,
+            request_version = EXCLUDED.request_version,
            proposal_version = marketplace_proposals.proposal_version + 1,
            updated_at = now()
          RETURNING *`,

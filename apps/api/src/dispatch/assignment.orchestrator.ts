@@ -1,0 +1,103 @@
+import { Injectable } from '@nestjs/common';
+import type { PoolClient } from 'pg';
+import { conflict } from '../common/errors.js';
+import { transitionRequest, type RequestStatus, type RequestTransitionActor } from '../requests/request-lifecycle.js';
+import { closeOpenOffers } from './offer-outbox.js';
+import { NurseEligibilityEngine } from './nurse-eligibility.engine.js';
+
+interface AssignmentRequestSnapshot {
+  id: string;
+  status: RequestStatus;
+  version: number;
+}
+
+interface AssignInput {
+  request: AssignmentRequestSnapshot;
+  nurseId: string;
+  actor: RequestTransitionActor;
+  actorUserId: string;
+  source: 'INSTANT_OFFER' | 'MARKETPLACE_PROPOSAL' | 'SCHEDULED' | 'ADMIN';
+  sourceId?: string;
+  plannedStart?: Date;
+  plannedEnd?: Date;
+  reserveImmediately: boolean;
+}
+
+export interface AssignmentOutcome {
+  assignmentId: string;
+  requestId: string;
+  nurseId: string;
+  status: 'ASSIGNED';
+}
+
+@Injectable()
+export class AssignmentOrchestrator {
+  constructor(private readonly eligibility: NurseEligibilityEngine) {}
+
+  async assignLocked(client: PoolClient, input: AssignInput): Promise<AssignmentOutcome> {
+    const eligibility = await this.eligibility.evaluate(input.nurseId, input.request.id, {
+      context: 'ASSIGN',
+      proposedStart: input.plannedStart,
+      proposedEnd: input.plannedEnd,
+      excludeRequestId: input.request.id,
+    }, client);
+    if (!eligibility.eligible) conflict(eligibility.reasons[0]?.code ?? 'NURSE_NOT_ELIGIBLE');
+
+    let assignmentId: string;
+    try {
+      assignmentId = (await client.query<{ id: string }>(`
+        INSERT INTO request_assignments(request_id,nurse_id,accepted_at,departure_due_at)
+        SELECT $1,$2,statement_timestamp(),
+          CASE WHEN $3::boolean THEN statement_timestamp()+nullif(coalesce(
+            (SELECT (value->>'departureReminderSeconds')::integer FROM app_settings WHERE key='dispatch'),0),0)
+            * interval '1 second' END
+        RETURNING id
+      `, [input.request.id, input.nurseId, input.reserveImmediately])).rows[0].id;
+    } catch (error) {
+      if ((error as { code?: string }).code === '23505') conflict('ASSIGNMENT_CONFLICT');
+      throw error;
+    }
+
+    if (input.source === 'MARKETPLACE_PROPOSAL') {
+      await client.query(`UPDATE marketplace_proposals
+        SET status='ACCEPTED',accepted_at=statement_timestamp(),updated_at=statement_timestamp()
+        WHERE id=$1 AND request_id=$2 AND nurse_id=$3 AND status='PENDING'`,
+      [input.sourceId, input.request.id, input.nurseId]);
+      await client.query(`UPDATE marketplace_proposals
+        SET status='SUPERSEDED',updated_at=statement_timestamp(),invalidation_reason='ANOTHER_PROPOSAL_ACCEPTED'
+        WHERE request_id=$1 AND id<>$2 AND status='PENDING'`, [input.request.id, input.sourceId]);
+    }
+
+    await transitionRequest(client, {
+      requestId: input.request.id,
+      fromStatus: input.request.status,
+      toStatus: 'ASSIGNED',
+      currentVersion: input.request.version,
+      actor: input.actor,
+      actorUserId: input.actorUserId,
+      reason: `${input.source}_ASSIGNED`,
+      metadata: { sourceId: input.sourceId, assignmentId, nurseId: input.nurseId },
+    });
+
+    await client.query(`UPDATE care_requests SET marketplace_status='ASSIGNED',
+      scheduled_start_at=coalesce($2,scheduled_start_at),scheduled_end_at=coalesce($3,scheduled_end_at),
+      closed_at=coalesce(closed_at,statement_timestamp()),close_reason=coalesce(close_reason,'ASSIGNED')
+      WHERE id=$1`, [input.request.id, input.plannedStart?.toISOString() ?? null, input.plannedEnd?.toISOString() ?? null]);
+
+    if (input.reserveImmediately) {
+      const reserved = await client.query(`UPDATE nurses SET work_status='RESERVED',updated_at=statement_timestamp()
+        WHERE id=$1 AND work_status='AVAILABLE'`, [input.nurseId]);
+      if (reserved.rowCount !== 1) conflict('NURSE_NOT_AVAILABLE');
+    }
+
+    await closeOpenOffers(
+      client,
+      input.request.id,
+      'ASSIGNED',
+      input.source === 'INSTANT_OFFER' ? input.sourceId : undefined,
+    );
+    await client.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [input.request.id]);
+
+    return { assignmentId, requestId: input.request.id, nurseId: input.nurseId, status: 'ASSIGNED' };
+  }
+}

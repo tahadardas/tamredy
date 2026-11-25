@@ -31,7 +31,7 @@ export async function runSmartRecoveryJob(pool: pg.Pool): Promise<{
     // 2. Expire stale open requests
     const expReqRes = await client.query(
       `UPDATE care_requests
-       SET status = 'EXPIRED', marketplace_status = 'EXPIRED', updated_at = now()
+       SET status = 'EXPIRED', marketplace_status = 'EXPIRED', version = version + 1, updated_at = now()
        WHERE status = 'OPEN_FOR_PROPOSALS' AND open_expires_at <= now()`,
     );
     const expiredRequests = expReqRes.rowCount ?? 0;

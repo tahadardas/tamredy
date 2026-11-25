@@ -27,6 +27,13 @@ export class RequestsService {
       if (k.rows[0].request_hash !== digest) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
       if (k.rows[0].request_id) return this.findOne(userId, k.rows[0].request_id);
       const appointment = validateAppointment(dto.scheduledAt);
+      if (dto.bookingMode === 'SCHEDULED' && !appointment) invalid('SCHEDULED_TIME_REQUIRED');
+      if (dto.bookingMode !== undefined && dto.bookingMode !== 'SCHEDULED' && appointment) {
+        invalid('SCHEDULED_TIME_REQUIRES_SCHEDULED_MODE');
+      }
+      if (dto.bookingMode !== 'OPEN' && (dto.openDurationMinutes !== undefined || dto.latestAcceptableArrivalAt)) {
+        invalid('OPEN_MARKETPLACE_FIELDS_REQUIRE_OPEN_MODE');
+      }
       const orders = (await client.query(`SELECT value FROM app_settings WHERE key='orders'`)).rows[0]?.value;
       if (orders && orders.accepting === false) throw new ServiceUnavailableException({ code: 'ORDERS_PAUSED', message: orders.pausedMessage ?? '' });
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
@@ -111,17 +118,25 @@ export class RequestsService {
         ? (dto.latestAcceptableArrivalAt ? new Date(dto.latestAcceptableArrivalAt) : new Date(openExpiresAt!.getTime() + 60 * 60000))
         : null;
 
+      const areaId = (await client.query(`SELECT a.id FROM areas a
+        WHERE a.active AND a.lat IS NOT NULL AND a.lng IS NOT NULL
+        ORDER BY ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
+          <-> ST_SetSRID(ST_MakePoint(a.lng,a.lat),4326)::geography
+        LIMIT 1`, [dto.longitude, dto.latitude])).rows[0]?.id ?? null;
+
       const r = await client.query(`INSERT INTO care_requests(
         requester_user_id, beneficiary_id, service_id, location, location_source, address_text,
         status, price_amount, currency_code, commission_bps, pricing, promo_id, promo_snapshot,
-        booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at
+        booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at,
+        latest_acceptable_arrival_at, area_id
       )
-      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19)
+      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20)
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
         userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,maxCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
         bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'SCHEDULED' : 'SEARCHING'),
-        isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null, latestArrivalAt?.toISOString() ?? null
+        isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
+        latestArrivalAt?.toISOString() ?? null, areaId
       ]);
       const request = r.rows[0];
 
@@ -139,7 +154,7 @@ export class RequestsService {
           it.serviceId,
           it.quantity,
           s.price_amount,
-          s.expected_minutes || 30,
+          (Number(s.expected_minutes) || 30) * it.quantity,
           JSON.stringify({
             basePrice: s.price_amount,
             currency: s.currency_code,

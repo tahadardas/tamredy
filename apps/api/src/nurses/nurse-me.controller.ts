@@ -3,13 +3,18 @@ import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
 import { missing } from '../common/errors.js';
 import { DuesService } from '../pricing/fees.service.js';
+import { RequestRecoveryService } from '../requests/request-recovery.service.js';
 
 /** Read-only nurse views used by N01, N06, N07 and N09. Amounts are computed
  *  from completed requests; no real balance exists until a licensed provider
  *  and a balanced ledger are in place. */
 @Controller('v1/nurse/me') @UseGuards(AuthGuard)
 export class NurseMeController {
-  constructor(private readonly db: DbService, private readonly dues: DuesService = new DuesService()) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly recovery: RequestRecoveryService,
+    private readonly dues: DuesService,
+  ) {}
 
   @Get('summary') async summary(@Request() r: AuthRequest) {
     requireRole(r.user!, 'NURSE');
@@ -156,41 +161,6 @@ export class NurseMeController {
 
   @Get('active-assignment') async activeAssignment(@Request() r: AuthRequest) {
     requireRole(r.user!, 'NURSE');
-    const n = await this.db.query('SELECT id,verified,availability_intent,work_status FROM nurses WHERE user_id=$1', [r.user!.id]);
-    if (!n.rowCount) missing();
-    const nurse = n.rows[0];
-    const q = await this.db.query(`
-      SELECT a.id AS assignment_id, a.status AS assignment_status, a.accepted_at AS assigned_at,
-        cr.id AS request_id, cr.status AS request_status, cr.address_text, cr.price_amount, cr.currency_code, cr.commission_bps,
-        ST_Y(cr.location::geometry) AS patient_lat, ST_X(cr.location::geometry) AS patient_lng,
-        s.id AS service_id, s.title_ar AS service_title, s.code AS service_code, s.requires_prescription,
-        b.display_name AS beneficiary_name,
-        u.display_name AS patient_name, u.phone_e164 AS patient_phone
-      FROM request_assignments a
-      JOIN care_requests cr ON cr.id = a.request_id
-      JOIN services s ON s.id = cr.service_id
-      JOIN beneficiaries b ON b.id = cr.beneficiary_id
-      JOIN users u ON u.id = cr.requester_user_id
-      WHERE a.nurse_id = $1 AND a.status = 'ACTIVE'
-        AND cr.status IN ('ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
-      ORDER BY a.accepted_at DESC LIMIT 1
-    `, [nurse.id]);
-
-    if (!q.rowCount) {
-      return {
-        hasActive: false,
-        verified: nurse.verified,
-        availability: nurse.availability_intent,
-        workStatus: nurse.work_status,
-        assignment: null,
-      };
-    }
-    return {
-      hasActive: true,
-      verified: nurse.verified,
-      availability: nurse.availability_intent,
-      workStatus: nurse.work_status,
-      assignment: q.rows[0],
-    };
+    return this.recovery.nurseAssignments(r.user!.id);
   }
 }

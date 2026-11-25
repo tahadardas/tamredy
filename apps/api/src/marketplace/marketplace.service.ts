@@ -16,11 +16,8 @@ export class MarketplaceService {
    */
   async listOpenRequests(nurseUserId: string, query: MarketplaceQueryDto) {
     const nurse = (await this.db.query(
-      `SELECT n.id, n.user_id, nl.location AS last_loc,
-              ST_X(nl.location::geometry) AS nurse_lng,
-              ST_Y(nl.location::geometry) AS nurse_lat
+      `SELECT n.id, n.user_id
        FROM nurses n
-       LEFT JOIN nurse_locations nl ON nl.nurse_id = n.id
        WHERE n.user_id = $1`,
       [nurseUserId],
     )).rows[0];
@@ -32,6 +29,9 @@ export class MarketplaceService {
     const params: unknown[] = [nurseUserId, nurseId];
 
     let sql = `
+      WITH current_nurse AS (
+        SELECT nl.location FROM nurse_locations nl WHERE nl.nurse_id=$2
+      )
       SELECT cr.id,
              cr.booking_mode,
              cr.published_at,
@@ -45,12 +45,13 @@ export class MarketplaceService {
              s.code AS service_code,
              s.icon AS service_icon,
              s.expected_minutes AS primary_expected_minutes,
-             -- Approximate area extracted from address text (e.g., first segment)
-             split_part(cr.address_text, ',', 1) AS approximate_area,
+             a.name_ar AS approximate_area,
+             a.id AS area_id,
+             a.governorate_id,
              -- Approximate distance calculation if nurse location available
              CASE
-               WHEN $3::geometry IS NOT NULL THEN
-                 round((ST_Distance(cr.location, $3::geometry) / 1000.0)::numeric, 1)
+               WHEN cn.location IS NOT NULL THEN
+                 round((ST_Distance(cr.location, cn.location) / 1000.0)::numeric, 1)
                ELSE NULL
              END AS distance_km,
              -- Net nurse earnings calculation
@@ -66,6 +67,8 @@ export class MarketplaceService {
              ) AS is_saved
       FROM care_requests cr
       JOIN services s ON s.id = cr.service_id
+      LEFT JOIN areas a ON a.id=cr.area_id
+      LEFT JOIN current_nurse cn ON true
       WHERE cr.status = 'OPEN_FOR_PROPOSALS'
         AND cr.open_expires_at > now()
         -- Exclude requests where patient or nurse is mutually blocked
@@ -88,16 +91,19 @@ export class MarketplaceService {
         )
     `;
 
-    // Nurse location for distance
-    if (nurse.nurse_lng && nurse.nurse_lat) {
-      params.push(`POINT(${nurse.nurse_lng} ${nurse.nurse_lat})`);
-    } else {
-      params.push(null);
-    }
-
     if (query.serviceId) {
       params.push(query.serviceId);
       sql += ` AND (cr.service_id = $${params.length} OR EXISTS (SELECT 1 FROM care_request_items cri WHERE cri.request_id = cr.id AND cri.service_id = $${params.length}))`;
+    }
+
+    if (query.regionId) {
+      params.push(query.regionId);
+      sql += ` AND (a.id=$${params.length} OR a.governorate_id=$${params.length})`;
+    }
+
+    if (query.maxDistanceKm) {
+      params.push(query.maxDistanceKm * 1000);
+      sql += ` AND cn.location IS NOT NULL AND ST_DWithin(cr.location,cn.location,$${params.length})`;
     }
 
     // Sorting
@@ -147,10 +153,11 @@ export class MarketplaceService {
               cr.latest_acceptable_arrival_at, cr.price_amount, cr.currency_code,
               cr.commission_bps, cr.created_at,
               s.title_ar AS service_title, s.code AS service_code, s.icon AS service_icon,
-              split_part(cr.address_text, ',', 1) AS approximate_area,
+              a.name_ar AS approximate_area,
               round(cr.price_amount * (1.0 - (coalesce(cr.commission_bps, 2000)::numeric / 10000.0)), 2) AS estimated_nurse_earning
        FROM care_requests cr
        JOIN services s ON s.id = cr.service_id
+       LEFT JOIN areas a ON a.id=cr.area_id
        WHERE cr.id = $1`,
       [requestId],
     );

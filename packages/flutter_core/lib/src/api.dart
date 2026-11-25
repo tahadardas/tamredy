@@ -466,8 +466,8 @@ class TamreedyApi {
     int durationMinutes = 60,
   }) =>
       post('/v1/requests/$requestId/booking-mode', {
-        'targetBookingMode': 'OPEN',
-        'durationMinutes': durationMinutes,
+        'bookingMode': 'OPEN',
+        'openDurationMinutes': durationMinutes,
       });
 
   Future<Map<String, dynamic>> retryInstantDispatch(String requestId) =>
@@ -479,9 +479,9 @@ class TamreedyApi {
     DateTime? scheduledEndAt,
   }) =>
       post('/v1/requests/$requestId/booking-mode', {
-        'targetBookingMode': 'SCHEDULED',
-        'scheduledStartAt': scheduledStartAt.toIso8601String(),
-        if (scheduledEndAt != null) 'scheduledEndAt': scheduledEndAt.toIso8601String(),
+        'bookingMode': 'SCHEDULED',
+        'scheduledAt': scheduledStartAt.toUtc().toIso8601String(),
+        if (scheduledEndAt != null) 'scheduledEndAt': scheduledEndAt.toUtc().toIso8601String(),
       });
 
   Future<Map<String, dynamic>> extendWaitWindow(
