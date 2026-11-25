@@ -189,7 +189,11 @@ class PatientController extends ChangeNotifier {
   Timer? _demoMove;
   DateTime? _searchStart;
   String payMethod = kDemoMode ? 'wallet' : 'cash'; // wallet | cash | mixed
-  int rating = 5;
+  int rating = 0;
+  int punctualityRating = 0;
+  int clinicalRating = 0;
+  int conductRating = 0;
+  String ratingComment = '';
 
   // Price estimate + promo
   String promoCode = '';
@@ -562,11 +566,15 @@ class PatientController extends ChangeNotifier {
     Analytics.log('rating_submitted', {'stars': rating});
     final visit = bill?.visitId;
     if (kDemoMode || visit == null) return;
-    try {
-      await api.post('/v1/visits/$visit/patient-review', {'stars': rating});
-    } catch (_) {
-      /* review window is 48h; the user can retry from history later */
-    }
+    final payload = <String, dynamic>{
+      'stars': rating,
+      'overallStars': rating,
+      if (punctualityRating > 0) 'punctualityStars': punctualityRating,
+      if (clinicalRating > 0) 'clinicalStars': clinicalRating,
+      if (conductRating > 0) 'conductStars': conductRating,
+      if (ratingComment.trim().isNotEmpty) 'comment': ratingComment.trim(),
+    };
+    await api.post('/v1/visits/$visit/patient-review', payload);
   }
 
   String? historyError;
@@ -647,6 +655,25 @@ class PatientController extends ChangeNotifier {
     rating = r;
     Analytics.log('rating_selected', {'stars': r});
     notifyListeners();
+  }
+
+  void setPunctualityRating(int r) {
+    punctualityRating = r;
+    notifyListeners();
+  }
+
+  void setClinicalRating(int r) {
+    clinicalRating = r;
+    notifyListeners();
+  }
+
+  void setConductRating(int r) {
+    conductRating = r;
+    notifyListeners();
+  }
+
+  void setRatingComment(String text) {
+    ratingComment = text;
   }
 
   /// Center the picker on the device location.
@@ -1324,6 +1351,11 @@ class PatientController extends ChangeNotifier {
     service = null;
     selectedServiceQuantities.clear();
     clinicalApprovalStatus = null;
+    rating = 0;
+    punctualityRating = 0;
+    clinicalRating = 0;
+    conductRating = 0;
+    ratingComment = '';
     tab = 0;
     notifyListeners();
   }

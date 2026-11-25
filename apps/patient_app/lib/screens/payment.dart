@@ -177,6 +177,19 @@ class RatingScreen extends StatefulWidget {
 class _RatingScreenState extends State<RatingScreen> {
   bool _submitting = false;
   String? _error;
+  late final TextEditingController _commentCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _commentCtrl = TextEditingController(text: widget.c.ratingComment);
+  }
+
+  @override
+  void dispose() {
+    _commentCtrl.dispose();
+    super.dispose();
+  }
 
   String _ratingLabel(int stars) => switch (stars) {
     1 => 'غير راضٍ',
@@ -186,6 +199,61 @@ class _RatingScreenState extends State<RatingScreen> {
     5 => 'ممتاز',
     _ => 'اختر عدد النجوم لتقييم الزيارة',
   };
+
+  Widget _criteriaRow({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required int value,
+    required ValueChanged<int> onChanged,
+  }) {
+    final tc = context.tamColors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: tc.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: TamTypography.cardTitle(color: tc.textPrimary)),
+                    Text(subtitle, style: TamTypography.supporting(color: tc.textSecondary)),
+                  ],
+                ),
+              ),
+              if (value > 0)
+                TamStatusBadge(labelOverride: _ratingLabel(value), compact: true),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 2,
+            children: [
+              for (var i = 1; i <= 5; i++)
+                Semantics(
+                  button: true,
+                  label: '$title: $i من 5',
+                  child: IconButton(
+                    iconSize: 28,
+                    onPressed: _submitting ? null : () => onChanged(i),
+                    icon: Icon(
+                      i <= value ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: i <= value ? const Color(0xFFF59E0B) : tc.borderStrong,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -240,6 +308,53 @@ class _RatingScreenState extends State<RatingScreen> {
                   _ratingLabel(c.rating),
                   style: TamTypography.cardTitle(
                     color: c.rating > 0 ? tc.primary : tc.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SectionTitle('معايير التقييم التفصيلية (اختياري)'),
+          TamCard(
+            child: Column(
+              children: [
+                _criteriaRow(
+                  context: context,
+                  icon: Icons.schedule_rounded,
+                  title: 'الالتزام بالموعد',
+                  subtitle: 'حضور الممرض في الوقت المتفق عليه',
+                  value: c.punctualityRating,
+                  onChanged: c.setPunctualityRating,
+                ),
+                Divider(color: tc.border),
+                _criteriaRow(
+                  context: context,
+                  icon: Icons.medical_services_outlined,
+                  title: 'الاحترافية',
+                  subtitle: 'تنفيذ الخدمة بدقة ومهنية طبية',
+                  value: c.clinicalRating,
+                  onChanged: c.setClinicalRating,
+                ),
+                Divider(color: tc.border),
+                _criteriaRow(
+                  context: context,
+                  icon: Icons.favorite_outline_rounded,
+                  title: 'حسن التعامل',
+                  subtitle: 'الاحترام واللباقة والتواصل الواضح',
+                  value: c.conductRating,
+                  onChanged: c.setConductRating,
+                ),
+                Divider(color: tc.border),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _commentCtrl,
+                  maxLines: 3,
+                  enabled: !_submitting,
+                  onChanged: c.setRatingComment,
+                  decoration: InputDecoration(
+                    labelText: 'ملاحظات إضافية (اختياري)',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ],
