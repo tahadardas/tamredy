@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 /// Tamreedy Design System 2.0 (Aero Evolution) — Legacy static color aliases.
 /// Prefer `context.tamColors` for theme-aware Light/Dark semantic colors.
 abstract class AeroColors {
-  // Brand Anchors
+  // Brand Anchors (Medical Premium 2.0)
   static const Color primaryNavy = Color(0xFF0F172A);
+  static const Color primary = Color(0xFF0F766E);
   static const Color primaryDark = Color(0xFF115E59);
   static const Color accentTeal = Color(0xFF0D9488);
   static const Color secondarySky = Color(0xFF0EA5E9);

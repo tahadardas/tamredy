@@ -5,7 +5,8 @@ import 'design/tokens/tam_tokens.dart';
 class TamreedyColors {
   static const navy = Color(0xFF0F172A);
   static const deepNavy = Color(0xFF0B1220);
-  static const teal = Color(0xFF0D9488);
+  static const teal = Color(0xFF0F766E);
+  static const tealAccent = Color(0xFF0D9488);
   static const tealAlt = Color(0xFF115E59);
   static const secondary = Color(0xFF0EA5E9);
   static const background = Color(0xFFFFFFFF);

@@ -449,33 +449,34 @@ class StatCard extends StatelessWidget {
   final String value;
   const StatCard(this.label, this.value, {super.key});
   @override
-  Widget build(BuildContext context) => TamCard(
-    child: SizedBox(
-      width: double.infinity,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: tamText(
-              size: 15,
-              weight: FontWeight.w800,
-              color: TamreedyColors.navy,
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return TamCard(
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TamTypography.supporting(
+                color: c.textSecondary,
+                weight: FontWeight.w700,
+              ),
             ),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            value,
-            style: tamText(
-              size: 30,
-              weight: FontWeight.w800,
-              color: TamreedyColors.navy,
+            const SizedBox(height: TamSpacing.md),
+            Text(
+              value,
+              style: TamTypography.financialAmount(
+                color: c.textPrimary,
+                size: 28,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class PrimaryButton extends StatelessWidget {
@@ -498,29 +499,42 @@ class SoftButton extends StatelessWidget {
   final VoidCallback? onPressed;
   const SoftButton(this.label, {super.key, this.onPressed});
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Material(
-      color: TamreedyColors.tealTint,
-      borderRadius: BorderRadius.circular(TamreedyRadii.button),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(TamreedyRadii.button),
-        onTap: onPressed,
-        child: Container(
-          height: 54,
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: tamText(
-              size: 15,
-              weight: FontWeight.w800,
-              color: TamreedyColors.success,
+  Widget build(BuildContext context) {
+    final c = context.tamColors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Semantics(
+        button: true,
+        enabled: onPressed != null,
+        label: label,
+        child: Material(
+          color: c.primaryTint.withValues(alpha: c.isDark ? 0.35 : 0.75),
+          borderRadius: BorderRadius.circular(TamreedyRadii.button),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(TamreedyRadii.button),
+            onTap: onPressed,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 52),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              alignment: Alignment.center,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: aeroText(
+                  size: 15,
+                  weight: FontWeight.w700,
+                  color: c.isDark ? c.primaryAccent : c.primaryDark,
+                  height: 1.35,
+                ),
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class NoticeBox extends StatelessWidget {

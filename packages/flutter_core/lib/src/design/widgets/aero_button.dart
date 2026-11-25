@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../tokens/aero_colors.dart';
 import '../tokens/aero_motion_tokens.dart';
 import '../tokens/aero_radii.dart';
 import '../tokens/aero_shadows.dart';
 import '../tokens/aero_typography.dart';
+import '../tokens/tam_tokens.dart';
 
 enum AeroButtonVariant {
   primary,
@@ -148,7 +148,9 @@ class _AeroButtonState extends State<AeroButton> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     final enabled = widget.onPressed != null && !widget.isLoading;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
     Color textColor;
     Gradient? gradient;
@@ -160,51 +162,43 @@ class _AeroButtonState extends State<AeroButton> with SingleTickerProviderStateM
       case AeroButtonVariant.primary:
         textColor = Colors.white;
         gradient = enabled
-            ? const LinearGradient(
-                colors: [Color(0xFF0A5796), AeroColors.primaryNavy],
+            ? LinearGradient(
+                colors: [tc.primary, tc.primaryDark],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               )
-            : LinearGradient(
-                colors: [
-                  AeroColors.primaryNavy.withValues(alpha: 0.4),
-                  AeroColors.primaryNavy.withValues(alpha: 0.3),
-                ],
-              );
-        shadow = enabled ? AeroShadows.hero : null;
-        border = Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1);
+            : null;
+        solidColor = enabled ? null : tc.primary.withValues(alpha: 0.38);
+        shadow = enabled ? tc.elevatedShadow : null;
+        border = Border.all(color: Colors.white.withValues(alpha: 0.2), width: 1);
         break;
 
       case AeroButtonVariant.teal:
         textColor = Colors.white;
         gradient = enabled
-            ? const LinearGradient(
-                colors: [Color(0xFF0BB3A4), AeroColors.accentTeal],
+            ? LinearGradient(
+                colors: [tc.primaryAccent, tc.primary],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               )
-            : LinearGradient(
-                colors: [
-                  AeroColors.accentTeal.withValues(alpha: 0.4),
-                  AeroColors.accentTeal.withValues(alpha: 0.3),
-                ],
-              );
-        shadow = enabled ? AeroShadows.hero : null;
-        border = Border.all(color: Colors.white.withValues(alpha: 0.3), width: 1);
+            : null;
+        solidColor = enabled ? null : tc.primary.withValues(alpha: 0.38);
+        shadow = enabled ? tc.elevatedShadow : null;
+        border = Border.all(color: Colors.white.withValues(alpha: 0.22), width: 1);
         break;
 
       case AeroButtonVariant.secondary:
-        textColor = enabled ? AeroColors.primaryNavy : AeroColors.textMuted;
-        solidColor = enabled ? AeroColors.glassElevated : Colors.white.withValues(alpha: 0.5);
+        textColor = enabled ? tc.textPrimary : tc.textMuted;
+        solidColor = enabled ? tc.surfaceElevated : tc.surface.withValues(alpha: 0.6);
         border = Border.all(
-          color: enabled ? AeroColors.borderLight : const Color(0xFFE2E8F0),
+          color: enabled ? tc.borderStrong : tc.border,
           width: 1.2,
         );
-        shadow = enabled ? AeroShadows.card : null;
+        shadow = enabled ? tc.cardShadow : null;
         break;
 
       case AeroButtonVariant.ghost:
-        textColor = enabled ? AeroColors.primaryNavy : AeroColors.textMuted;
+        textColor = enabled ? tc.primary : tc.textMuted;
         solidColor = Colors.transparent;
         border = null;
         shadow = null;
@@ -213,17 +207,17 @@ class _AeroButtonState extends State<AeroButton> with SingleTickerProviderStateM
       case AeroButtonVariant.danger:
         textColor = Colors.white;
         gradient = enabled
-            ? const LinearGradient(
-                colors: [Color(0xFFEF4444), AeroColors.danger],
+            ? LinearGradient(
+                colors: [tc.danger, const Color(0xFFB91C1C)],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               )
             : null;
-        solidColor = enabled ? null : AeroColors.danger.withValues(alpha: 0.3);
+        solidColor = enabled ? null : tc.danger.withValues(alpha: 0.38);
         shadow = enabled
             ? [
                 BoxShadow(
-                  color: AeroColors.danger.withValues(alpha: 0.25),
+                  color: tc.danger.withValues(alpha: 0.25),
                   blurRadius: 16,
                   offset: const Offset(0, 6),
                 ),
@@ -253,13 +247,15 @@ class _AeroButtonState extends State<AeroButton> with SingleTickerProviderStateM
               Flexible(
                 child: Text(
                   widget.label,
+                  textAlign: TextAlign.center,
                   style: aeroText(
                     size: widget.fontSize,
                     weight: FontWeight.w700,
                     color: textColor,
+                    height: 1.3,
                   ),
                   overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
+                  maxLines: 2,
                 ),
               ),
               if (widget.trailingIcon != null) ...[
@@ -269,28 +265,37 @@ class _AeroButtonState extends State<AeroButton> with SingleTickerProviderStateM
             ],
           );
 
-    return GestureDetector(
-      onTapDown: _onTapDown,
-      onTapUp: _onTapUp,
-      onTapCancel: _onTapCancel,
-      onTap: enabled ? _handleTap : null,
-      behavior: HitTestBehavior.opaque,
-      child: ScaleTransition(
-        scale: _scaleAnimation,
-        child: Container(
-          width: widget.width,
-          height: widget.height,
-          padding: widget.padding,
-          decoration: BoxDecoration(
-            gradient: gradient,
-            color: solidColor,
-            borderRadius: BorderRadius.circular(AeroRadii.button),
-            border: border,
-            boxShadow: shadow,
-          ),
-          alignment: Alignment.center,
-          child: content,
-        ),
+    final box = Container(
+      width: widget.width,
+      constraints: BoxConstraints(minHeight: widget.height),
+      padding: widget.padding,
+      decoration: BoxDecoration(
+        gradient: gradient,
+        color: solidColor,
+        borderRadius: BorderRadius.circular(AeroRadii.button),
+        border: border,
+        boxShadow: shadow,
+      ),
+      alignment: Alignment.center,
+      child: content,
+    );
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: widget.label,
+      child: GestureDetector(
+        onTapDown: reduceMotion ? null : _onTapDown,
+        onTapUp: reduceMotion ? null : _onTapUp,
+        onTapCancel: reduceMotion ? null : _onTapCancel,
+        onTap: enabled ? _handleTap : null,
+        behavior: HitTestBehavior.opaque,
+        child: reduceMotion
+            ? box
+            : ScaleTransition(
+                scale: _scaleAnimation,
+                child: box,
+              ),
       ),
     );
   }

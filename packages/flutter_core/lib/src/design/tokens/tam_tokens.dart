@@ -54,6 +54,7 @@ abstract class TamMotion {
 @immutable
 class TamThemeColors extends ThemeExtension<TamThemeColors> {
   final Color primary;
+  final Color primaryAccent;
   final Color primaryDark;
   final Color primaryTint;
   final Color secondary;
@@ -81,6 +82,7 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
 
   const TamThemeColors({
     required this.primary,
+    required this.primaryAccent,
     required this.primaryDark,
     required this.primaryTint,
     required this.secondary,
@@ -108,7 +110,8 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
   });
 
   static const light = TamThemeColors(
-    primary: Color(0xFF0D9488),
+    primary: Color(0xFF0F766E),
+    primaryAccent: Color(0xFF0D9488),
     primaryDark: Color(0xFF115E59),
     primaryTint: Color(0xFFCCFBF1),
     secondary: Color(0xFF0EA5E9),
@@ -137,6 +140,7 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
 
   static const dark = TamThemeColors(
     primary: Color(0xFF14B8A6),
+    primaryAccent: Color(0xFF2DD4BF),
     primaryDark: Color(0xFF0D9488),
     primaryTint: Color(0xFF134E4A),
     secondary: Color(0xFF38BDF8),
@@ -208,6 +212,7 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
   @override
   TamThemeColors copyWith({
     Color? primary,
+    Color? primaryAccent,
     Color? primaryDark,
     Color? primaryTint,
     Color? secondary,
@@ -235,6 +240,7 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
   }) {
     return TamThemeColors(
       primary: primary ?? this.primary,
+      primaryAccent: primaryAccent ?? this.primaryAccent,
       primaryDark: primaryDark ?? this.primaryDark,
       primaryTint: primaryTint ?? this.primaryTint,
       secondary: secondary ?? this.secondary,
@@ -267,6 +273,7 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
     if (other is! TamThemeColors) return this;
     return TamThemeColors(
       primary: Color.lerp(primary, other.primary, t)!,
+      primaryAccent: Color.lerp(primaryAccent, other.primaryAccent, t)!,
       primaryDark: Color.lerp(primaryDark, other.primaryDark, t)!,
       primaryTint: Color.lerp(primaryTint, other.primaryTint, t)!,
       secondary: Color.lerp(secondary, other.secondary, t)!,
