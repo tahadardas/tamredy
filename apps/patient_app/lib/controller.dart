@@ -183,6 +183,7 @@ class PatientController extends ChangeNotifier {
   LatLng? position; // confirmed visit location
   double accuracy = 30;
   LatLng? nursePos;
+  int _lastTrackingSequence = 0;
   RouteInfo? route;
   int _pollCount = 0;
   Timer? _demoMove;
@@ -298,6 +299,20 @@ class PatientController extends ChangeNotifier {
     } else {
       resync();
     }
+  }
+
+  void onLiveData(String type, Map<String, dynamic> payload) {
+    if (type != 'tracking.updated' || payload['requestId']?.toString() != requestId) return;
+    final sequence = (num.tryParse('${payload['sequenceNumber']}') ?? 0).toInt();
+    if (sequence <= _lastTrackingSequence) return;
+    final latitude = num.tryParse('${payload['latitude']}');
+    final longitude = num.tryParse('${payload['longitude']}');
+    final capturedAt = DateTime.tryParse('${payload['capturedAt']}');
+    if (latitude == null || longitude == null || capturedAt == null ||
+        DateTime.now().difference(capturedAt.toLocal()) > const Duration(seconds: 120)) return;
+    _lastTrackingSequence = sequence;
+    nursePos = LatLng(latitude.toDouble(), longitude.toDouble());
+    notifyListeners();
   }
 
   // ---- promo codes ----
@@ -804,7 +819,7 @@ class PatientController extends ChangeNotifier {
               ? VisitStage.openMarketplace
               : VisitStage.searching;
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      _timer = Timer.periodic(const Duration(seconds: 30), (_) => _poll());
       return true;
     } catch (e) {
       error = explainError(e, fallback: 'تعذر إنشاء الطلب. تحقق من الخدمة والموقع وحاول مرة أخرى');
@@ -879,7 +894,7 @@ class PatientController extends ChangeNotifier {
 
         if (stage != VisitStage.none) {
           _timer?.cancel();
-          _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+          _timer = Timer.periodic(const Duration(seconds: 30), (_) => _poll());
           if (stage == VisitStage.enRoute && nursePos != null) {
             _loadRoute();
           }
@@ -1087,7 +1102,7 @@ class PatientController extends ChangeNotifier {
       openExpiresAt = DateTime.tryParse('${res['openExpiresAt'] ?? res['open_expires_at']}')?.toLocal();
       stage = VisitStage.openMarketplace;
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      _timer = Timer.periodic(const Duration(seconds: 30), (_) => _poll());
       return true;
     } catch (e) {
       error = explainError(e, fallback: 'تعذر تحويل الطلب إلى السوق المفتوح');
@@ -1112,7 +1127,7 @@ class PatientController extends ChangeNotifier {
       marketplaceStatus = null;
       stage = VisitStage.searching;
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      _timer = Timer.periodic(const Duration(seconds: 30), (_) => _poll());
       return true;
     } catch (e) {
       error = explainError(e, fallback: 'تعذر إعادة محاولة البحث الفوري');
@@ -1172,7 +1187,7 @@ class PatientController extends ChangeNotifier {
       stage = VisitStage.assigned;
       marketplaceStatus = 'COMPLETED';
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(seconds: 6), (_) => _poll());
+      _timer = Timer.periodic(const Duration(seconds: 30), (_) => _poll());
       await _poll();
       return true;
     } catch (e) {

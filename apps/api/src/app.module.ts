@@ -130,6 +130,12 @@ import { RequestItemsService } from './requests/request-items.service.js';
 import { ClinicalApprovalController } from './clinical-approvals/clinical-approval.controller.js';
 import { ClinicalApprovalService } from './clinical-approvals/clinical-approval.service.js';
 import { ClinicalApprovalRepository } from './clinical-approvals/clinical-approval.repository.js';
+import { GeoIndexService } from './live-location/geo-index.service.js';
+import { LiveLocationService } from './live-location/live-location.service.js';
+import { LocationPersistenceService } from './live-location/location-persistence.service.js';
+import { LocationValidator } from './live-location/location-validator.js';
+import { TrackingAuthorizationService } from './live-location/tracking-authorization.service.js';
+import { OperationalMetricsService } from './observability/operational-metrics.service.js';
 import {
   VerificationProvider,
   TestVerificationProvider,
@@ -153,7 +159,7 @@ import { RequestRecordService } from './admin/request-record.service.js';
   providers:[
     RequestRecordService,AdminScheduleService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,AuthGuard,RequestsService,RequestRecoveryService,RequestItemsService,ClinicalApprovalRepository,ClinicalApprovalService,AssignmentOrchestrator,BillingService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,ChatService,TrustService,NurseCalendarService,CarePlansService,HealthRecordsService,ClinicalReportsService,FavoritesService,PackagesService,LedgerService,NurseFinancialService,VoiceService,NotificationsService,NurseEligibilityEngine,MarketplaceEligibilityService,MarketplaceService,ProposalsService,AssignmentService,BookingModeService,AdminBookingService,
+    DocStore,PromoService,AutoDiscountService,FeesService,DuesService,ReferralService,RoutesService,AuthService,{provide:SmsProvider,useClass:DevConsoleSms},DbService,ReferenceCacheService,OperationalMetricsService,AuthGuard,RequestsService,RequestRecoveryService,RequestItemsService,ClinicalApprovalRepository,ClinicalApprovalService,AssignmentOrchestrator,BillingService,GeoIndexService,LocationValidator,LocationPersistenceService,TrackingAuthorizationService,LiveLocationService,DispatchService,NursesService,ReviewsService,CommitmentService,AppealsService,LiveGateway,SavedPlacesRepository,SavedPlacesService,SafetyRepository,SafetyService,CheckinsRepository,CheckinsService,StaffCasesRepository,StaffCasesService,TrustedContactsRepository,TrustedContactsService,SafeAbortRepository,SafeAbortService,DirectoryRepository,DirectoryService,ShiftsRepository,ShiftsService,HandoversService,NightPolicyService,VisitRiskService,EvidenceRepository,EvidenceService,RetentionService,ChatService,TrustService,NurseCalendarService,CarePlansService,HealthRecordsService,ClinicalReportsService,FavoritesService,PackagesService,LedgerService,NurseFinancialService,VoiceService,NotificationsService,NurseEligibilityEngine,MarketplaceEligibilityService,MarketplaceService,ProposalsService,AssignmentService,BookingModeService,AdminBookingService,
     TestVerificationProvider,SmsVerificationProvider,WhatsAppVerificationProvider,
     {
       provide: VerificationProvider,

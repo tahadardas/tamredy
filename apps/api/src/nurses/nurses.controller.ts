@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Put, Query, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
-import { AvailabilityDto, LocationDto } from '../common/dto.js';
+import { AvailabilityDto } from '../common/dto.js';
+import { LiveLocationUpdateDto } from '../live-location/location-update.dto.js';
 import { NursesService } from './nurses.service.js';
 import { DispatchService } from '../dispatch/dispatch.service.js';
 import { validatedPage } from '../common/page-query.js';
@@ -25,7 +26,7 @@ export class NursesController {
     private readonly requestItems:RequestItemsService,
   ) {}
   @Put('me/availability') availability(@Request() r:AuthRequest,@Body() dto:AvailabilityDto){requireRole(r.user!,'NURSE');return this.nurses.availability(r.user!.id,dto);}
-  @Put('me/location') location(@Request() r:AuthRequest,@Body() dto:LocationDto){requireRole(r.user!,'NURSE');return this.nurses.location(r.user!.id,dto);}
+  @Put('me/location') location(@Request() r:AuthRequest,@Body() dto:LiveLocationUpdateDto){requireRole(r.user!,'NURSE');return this.nurses.location(r.user!.id,r.user!.deviceSessionId,dto);}
   @Post('me/heartbeat') heartbeat(@Request() r:AuthRequest){requireRole(r.user!,'NURSE');return this.nurses.heartbeat(r.user!.id);}
   @Get('me/history') history(@Request() r:AuthRequest,@Query('limit') limit?:string,@Query('cursor') cursor?:string){requireRole(r.user!,'NURSE');return this.nurses.history(r.user!.id,validatedPage(limit,cursor,`nurse:${r.user!.id}`));}
   @Get('me/offers') offers(@Request() r:AuthRequest){requireRole(r.user!,'NURSE');return this.dispatch.offersForUser(r.user!.id);}

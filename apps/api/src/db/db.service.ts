@@ -6,7 +6,15 @@ export class DbService implements OnModuleDestroy {
   private readonly pool: Pool;
   constructor() {
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-    this.pool = new Pool({ connectionString: process.env.DATABASE_URL,max:20,statement_timeout:10000,connectionTimeoutMillis:3000 });
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.DATABASE_POOL_MAX ?? 20),
+      min: Number(process.env.DATABASE_POOL_MIN ?? 0),
+      statement_timeout: Number(process.env.DATABASE_STATEMENT_TIMEOUT_MS ?? 10_000),
+      connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 3_000),
+      idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30_000),
+      maxLifetimeSeconds: Number(process.env.DATABASE_CONNECTION_MAX_LIFETIME_SECONDS ?? 1_800),
+    });
     this.pool.on('error', error=>{
       const code='code' in error && typeof error.code==='string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
         ? error.code : 'DATABASE_CONNECTION_FAILED';

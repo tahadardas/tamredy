@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -181,6 +182,31 @@ class TamreedyApi {
   }
 
   Future<String?> accessToken() => _storage.read(key: 'access_token');
+
+  Future<String?> deviceSessionId() async {
+    final token = await accessToken();
+    if (token == null) return null;
+    final segments = token.split('.');
+    if (segments.length != 3) return null;
+    try {
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(segments[1]))),
+      );
+      return payload is Map && payload['dsi'] is String ? payload['dsi'] as String : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<int> nextLocationSequence() async {
+    final sessionId = await deviceSessionId();
+    if (sessionId == null) throw StateError('Device-bound session is required');
+    final key = 'location_sequence_$sessionId';
+    final previous = int.tryParse(await _storage.read(key: key) ?? '') ?? 0;
+    final next = previous >= 2147483647 ? 1 : previous + 1;
+    await _storage.write(key: key, value: '$next');
+    return next;
+  }
 
   /// Persistent hardware-anchored device identifier stored safely in secure storage.
   Future<String> getDeviceId() async {

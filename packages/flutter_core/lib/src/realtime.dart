@@ -37,6 +37,17 @@ const liveEvents = [
   'payment.paid',
   'payment.tip',
   'tracking.updated',
+  'call.incoming',
+  'call.ringing',
+  'call.accepted',
+  'call.rejected',
+  'call.cancel',
+  'call.signal',
+  'call.connected',
+  'call.reconnecting',
+  'call.ended',
+  'call.missed',
+  'call.failed',
 ];
 
 /// Best-effort realtime channel. REST is the source of truth: every (re)connect,
@@ -119,6 +130,53 @@ class LiveChannel {
     _socket?.dispose();
     _socket = null;
     _seenEvents.clear();
+  }
+}
+
+/// Dedicated authenticated location transport. Socket.IO is primary; callers
+/// retain the HTTP endpoint as a reconciliation fallback when this channel is
+/// unavailable or does not acknowledge the sequence in time.
+class LiveLocationChannel {
+  final TamreedyApi api;
+  io.Socket? _socket;
+  bool get connected => _socket?.connected == true;
+
+  LiveLocationChannel(this.api);
+
+  Future<void> start() async {
+    if (_socket != null) return;
+    final token = await api.accessToken();
+    if (token == null) return;
+    final socket = io.io(
+      '${TamreedyApi.baseUrl}/live',
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .setAuth({'token': token})
+          .enableReconnection()
+          .setReconnectionDelay(1000)
+          .setReconnectionDelayMax(15000)
+          .disableAutoConnect()
+          .build(),
+    );
+    _socket = socket;
+    socket.connect();
+  }
+
+  Future<bool> send(Map<String, dynamic> payload) async {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return false;
+    final completer = Completer<bool>();
+    socket.emitWithAck('location.update', payload, ack: (response) {
+      if (!completer.isCompleted) {
+        completer.complete(response is Map && response['sequenceNumber'] == payload['sequenceNumber']);
+      }
+    });
+    return completer.future.timeout(const Duration(seconds: 2), onTimeout: () => false);
+  }
+
+  void dispose() {
+    _socket?.dispose();
+    _socket = null;
   }
 }
 

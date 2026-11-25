@@ -1,12 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
-import { AvailabilityDto, LocationDto } from '../common/dto.js';
+import { AvailabilityDto } from '../common/dto.js';
 import { conflict, missing } from '../common/errors.js';
 import { PageArgs, makePage } from '../common/pagination.js';
 import { DuesService } from '../pricing/fees.service.js';
+import { LiveLocationService } from '../live-location/live-location.service.js';
+import { LiveLocationUpdateDto } from '../live-location/location-update.dto.js';
 @Injectable()
 export class NursesService {
-  constructor(private readonly db: DbService, private readonly dues: DuesService = new DuesService()) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly liveLocation: LiveLocationService,
+    private readonly dues: DuesService = new DuesService(),
+  ) {}
   async availability(userId: string, dto: AvailabilityDto) {
     return this.db.transaction(async c => {
       const r=await c.query(`SELECT * FROM nurses WHERE user_id=$1 FOR UPDATE`,[userId]);
@@ -25,16 +31,8 @@ export class NursesService {
       return {availabilityIntent:dto.availability,workStatus:next};
     });
   }
-  async location(userId:string,dto:LocationDto) {
-    const nurse=await this.db.query(`SELECT id,work_status,availability_intent FROM nurses WHERE user_id=$1`,[userId]);
-    if(!nurse.rowCount) missing();
-    const n=nurse.rows[0];
-    if((n.availability_intent==='OFFLINE' && !['RESERVED','EN_ROUTE','IN_SERVICE'].includes(n.work_status)) || n.work_status==='SUSPENDED') conflict('LOCATION_UPDATES_NOT_ALLOWED_OFFLINE');
-    await this.db.query(`INSERT INTO nurse_locations(nurse_id,location,accuracy_m)
-       VALUES($1,ST_SetSRID(ST_MakePoint($2,$3),4326)::geography,$4)
-       ON CONFLICT(nurse_id) DO UPDATE SET location=EXCLUDED.location,accuracy_m=EXCLUDED.accuracy_m,recorded_at=now()`,[n.id,dto.longitude,dto.latitude,dto.accuracyMeters]);
-    await this.db.query(`UPDATE nurses SET last_heartbeat_at=now(),updated_at=now() WHERE id=$1`,[n.id]);
-    return {updated:true};
+  async location(userId:string,deviceSessionId:string|undefined,dto:LiveLocationUpdateDto) {
+    return this.liveLocation.ingest(userId,deviceSessionId,dto);
   }
   async heartbeat(userId:string) {
     const result=await this.db.query(`UPDATE nurses SET last_heartbeat_at=now(),updated_at=now()

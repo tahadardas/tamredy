@@ -91,6 +91,7 @@ class NurseController extends ChangeNotifier {
   StreamSubscription<Position>? _posSub;
   Timer? _routeTimer, _demoMove, _demoOfferTimer;
   DateTime _lastSent = DateTime.fromMillisecondsSinceEpoch(0);
+  late final LiveLocationChannel _navigationLocationChannel = LiveLocationChannel(api);
 
   // Home / earnings (demo values mirror the approved designs).
   int todayRequests = 5, completedVisits = 4;
@@ -604,6 +605,7 @@ class NurseController extends ChangeNotifier {
       return;
     }
     try {
+      await _navigationLocationChannel.start();
       final d = await api.getMap('/v1/nurse/assignments/$assignmentId');
       dest = LatLng(
         double.parse('${d['latitude']}'),
@@ -640,19 +642,29 @@ class NurseController extends ChangeNotifier {
             );
       _posSub = Geolocator.getPositionStream(locationSettings: settings).listen((
         pos,
-      ) {
+      ) async {
         myPos = LatLng(pos.latitude, pos.longitude);
         notifyListeners();
         // The server accepts location only while available/assigned; throttle uploads.
         if (DateTime.now().difference(_lastSent).inSeconds >= 4) {
           _lastSent = DateTime.now();
-          api
-              .put('/v1/nurse/me/location', {
+          final sessionId = await api.deviceSessionId();
+          if (sessionId == null) return;
+          final payload = <String, dynamic>{
                 'latitude': pos.latitude,
                 'longitude': pos.longitude,
                 'accuracyMeters': pos.accuracy,
-              })
-              .catchError((_) => <String, dynamic>{});
+                'capturedAt': pos.timestamp.toUtc().toIso8601String(),
+                'sequenceNumber': await api.nextLocationSequence(),
+                'sessionId': sessionId,
+                if (pos.speed >= 0) 'speedMetersPerSecond': pos.speed,
+                if (pos.heading >= 0) 'heading': pos.heading,
+                'locationSource': 'GPS',
+                if (assignmentId != null) 'assignmentId': assignmentId,
+              };
+          if (!await _navigationLocationChannel.send(payload)) {
+            api.put('/v1/nurse/me/location', payload).catchError((_) => <String, dynamic>{});
+          }
         }
       });
       await _loadRoute();
@@ -681,6 +693,7 @@ class NurseController extends ChangeNotifier {
     _routeTimer?.cancel();
     _demoMove?.cancel();
     _posSub = null;
+    _navigationLocationChannel.dispose();
     route = null;
     notifyListeners();
   }

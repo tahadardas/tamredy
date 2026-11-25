@@ -116,6 +116,7 @@ extension NurseReadinessStateX on NurseReadinessState {
 class AvailabilityManager extends ChangeNotifier {
   final TamreedyApi api;
   final Future<void> Function(List<dynamic> offers) onOffersReceived;
+  late final LiveLocationChannel _locationChannel = LiveLocationChannel(api);
 
   bool _intentAvailable = false;
   NurseReadinessState _state = NurseReadinessState.offline;
@@ -162,6 +163,7 @@ class AvailabilityManager extends ChangeNotifier {
     if (!available) {
       _state = NurseReadinessState.offline;
       _stopLoop();
+      _locationChannel.dispose();
       notifyListeners();
       if (!kDemoMode) {
         try {
@@ -182,6 +184,7 @@ class AvailabilityManager extends ChangeNotifier {
 
     try {
       await api.put('/v1/nurse/me/availability', {'availability': 'AVAILABLE'});
+      await _locationChannel.start();
       _startLoop();
       await syncNow();
     } on DioException {
@@ -316,6 +319,7 @@ class AvailabilityManager extends ChangeNotifier {
       }
 
       Position? pos;
+      var usedLastKnownPosition = false;
       try {
         pos = await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
@@ -326,6 +330,7 @@ class AvailabilityManager extends ChangeNotifier {
       } catch (_) {
         // Fallback to last known position if current GPS fix times out or fails indoors
         pos = await Geolocator.getLastKnownPosition();
+        usedLastKnownPosition = true;
       }
 
       if (pos == null) {
@@ -339,13 +344,38 @@ class AvailabilityManager extends ChangeNotifier {
       _currentPosition = pos;
       _lastAccuracy = pos.accuracy;
 
-      await api.put('/v1/nurse/me/location', {
+      final capturedAt = pos.timestamp;
+      final locationAge = DateTime.now().difference(capturedAt);
+      if (locationAge > const Duration(seconds: 120)) {
+        _lastLocationUpdate = capturedAt;
+        _state = NurseReadinessState.locationStale;
+        notifyListeners();
+        return;
+      }
+
+      final sessionId = await api.deviceSessionId();
+      if (sessionId == null) {
+        _state = NurseReadinessState.connectionLost;
+        notifyListeners();
+        return;
+      }
+
+      final payload = <String, dynamic>{
         'latitude': pos.latitude,
         'longitude': pos.longitude,
         'accuracyMeters': pos.accuracy,
-      });
+        'capturedAt': capturedAt.toUtc().toIso8601String(),
+        'sequenceNumber': await api.nextLocationSequence(),
+        'sessionId': sessionId,
+        if (pos.speed >= 0) 'speedMetersPerSecond': pos.speed,
+        if (pos.heading >= 0) 'heading': pos.heading,
+        'locationSource': usedLastKnownPosition ? 'LAST_KNOWN' : 'GPS',
+      };
+      if (!await _locationChannel.send(payload)) {
+        await api.put('/v1/nurse/me/location', payload);
+      }
 
-      _lastLocationUpdate = DateTime.now();
+      _lastLocationUpdate = capturedAt;
       _reevaluateState();
       notifyListeners();
     } catch (e) {
@@ -375,7 +405,7 @@ class AvailabilityManager extends ChangeNotifier {
           _state = NurseReadinessState.locationRequired;
           break;
         case 'LOCATION_STALE':
-          _state = NurseReadinessState.ready;
+          _state = NurseReadinessState.locationStale;
           break;
         case 'VERIFICATION_REQUIRED':
           _state = NurseReadinessState.verificationRequired;
@@ -429,9 +459,12 @@ class AvailabilityManager extends ChangeNotifier {
 
     final now = DateTime.now();
     final hbAge = _lastHeartbeat != null ? now.difference(_lastHeartbeat!).inSeconds : 999;
+    final locationAge = _lastLocationUpdate != null ? now.difference(_lastLocationUpdate!).inSeconds : 999;
 
     // Match the server cutoff for accepting an offer.
-    if (hbAge >= 120) {
+    if (locationAge >= 120) {
+      _state = NurseReadinessState.locationStale;
+    } else if (hbAge >= 120) {
       _state = NurseReadinessState.connectionLost;
     } else {
       _state = NurseReadinessState.ready;
@@ -441,6 +474,7 @@ class AvailabilityManager extends ChangeNotifier {
   @override
   void dispose() {
     _stopLoop();
+    _locationChannel.dispose();
     super.dispose();
   }
 }
