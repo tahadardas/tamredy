@@ -14,6 +14,31 @@ import 'screens/earnings.dart';
 import 'screens/marketplace.dart';
 
 final ValueNotifier<ThemeMode> nurseThemeMode = ValueNotifier(ThemeMode.light);
+final GlobalKey<NavigatorState> nurseNavigatorKey = GlobalKey<NavigatorState>();
+String? _visibleNurseCallId;
+
+Future<void> _openNurseCall(TamreedyApi api, Map<String, dynamic>? event) async {
+  final active = await api.getList('/v1/calls/active/mine');
+  if (active.isEmpty) return;
+  final preferred = event?['callId']?.toString();
+  final raw = active.cast<dynamic>().map((e) => Map<String, dynamic>.from(e as Map)).firstWhere(
+    (call) => preferred == null || call['id']?.toString() == preferred,
+    orElse: () => Map<String, dynamic>.from(active.first as Map),
+  );
+  final callId = raw['id']?.toString();
+  if (callId == null || callId == _visibleNurseCallId) return;
+  final navigator = nurseNavigatorKey.currentState;
+  if (navigator == null) return;
+  _visibleNurseCallId = callId;
+  await navigator.push(MaterialPageRoute(builder: (_) => TamInAppCallScreen(
+    api: api,
+    requestId: raw['request_id']?.toString() ?? event?['requestId']?.toString() ?? '',
+    peerName: 'المريض',
+    peerRole: 'مكالمة تمريضي آمنة',
+    incomingCallId: callId,
+  )));
+  _visibleNurseCallId = null;
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +64,7 @@ class TamreedyNurseApp extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
     valueListenable: nurseThemeMode,
     builder: (context, mode, _) => MaterialApp(
+      navigatorKey: nurseNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: tamreedyLightTheme(),
       darkTheme: tamreedyDarkTheme(),
@@ -66,6 +92,7 @@ class TamreedyNurseApp extends StatelessWidget {
               controller.guardian.location.sync();
             }
             await controller.resync();
+            WidgetsBinding.instance.addPostFrameCallback((_) => _openNurseCall(controller.api, null));
           },
           child: RealtimeHost(
             api: controller.api,
@@ -74,7 +101,10 @@ class TamreedyNurseApp extends StatelessWidget {
               await controller.resync();
             },
             onEvent: controller.onLive,
-            onEventData: controller.onLiveData,
+            onEventData: (type, payload) {
+              controller.onLiveData(type, payload);
+              if (type == 'call.incoming') _openNurseCall(controller.api, payload);
+            },
             child: NurseShell(c: controller),
           ),
         ),

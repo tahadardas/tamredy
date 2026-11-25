@@ -1,19 +1,41 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Request, UseGuards } from '@nestjs/common';
-import { IsIn, IsObject, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, AuthRequest } from '../auth/auth.guard.js';
 import { VoiceService } from './voice.service.js';
 
 class InitiateCallInputDto {
   @IsUUID()
   requestId!: string;
+
+  @IsOptional()
+  @IsUUID()
+  idempotencyKey?: string;
 }
 
 class CallSignalInputDto {
-  @IsIn(['SDP_OFFER', 'SDP_ANSWER', 'ICE_CANDIDATE'])
-  eventType!: 'SDP_OFFER' | 'SDP_ANSWER' | 'ICE_CANDIDATE';
+  @IsUUID()
+  eventId!: string;
+
+  @IsInt()
+  @Min(1)
+  sequenceNumber!: number;
+
+  @IsIn(['SDP_OFFER', 'SDP_ANSWER', 'ICE_CANDIDATE', 'ICE_RESTART'])
+  eventType!: 'SDP_OFFER' | 'SDP_ANSWER' | 'ICE_CANDIDATE' | 'ICE_RESTART';
 
   @IsObject()
   data!: Record<string, unknown>;
+}
+
+class CallQualityInputDto {
+  @IsOptional() @IsNumber() @Min(0) @Max(60000) rttMs?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(60000) jitterMs?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) packetLossPercent?: number;
+  @IsOptional() @IsNumber() @Min(0) bitrateKbps?: number;
+  @IsOptional() @IsString() @MaxLength(30) candidateType?: string;
+  @IsOptional() @IsString() @MaxLength(30) connectionType?: string;
+  @IsOptional() @IsBoolean() turnUsed?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(100) reconnectionCount?: number;
 }
 
 class EndCallInputDto {
@@ -34,7 +56,7 @@ export class VoiceController {
     @Request() r: AuthRequest,
     @Body() body: InitiateCallInputDto,
   ) {
-    return this.voice.initiateCall(r.user!.id, body.requestId);
+    return this.voice.initiateCall(r.user!.id, body.requestId, body.idempotencyKey);
   }
 
   @Post(':id/accept')
@@ -82,5 +104,22 @@ export class VoiceController {
     @Param('id') callId: string,
   ) {
     return this.voice.getCall(r.user!.id, callId);
+  }
+
+  @Post(':id/connected')
+  @HttpCode(200)
+  connected(@Request() r: AuthRequest, @Param('id') callId: string) {
+    return this.voice.markConnected(r.user!.id, callId);
+  }
+
+  @Get('active/mine')
+  active(@Request() r: AuthRequest) {
+    return this.voice.activeCalls(r.user!.id);
+  }
+
+  @Post(':id/quality')
+  @HttpCode(202)
+  quality(@Request() r: AuthRequest, @Param('id') callId: string, @Body() body: CallQualityInputDto) {
+    return this.voice.recordQuality(r.user!.id, callId, body);
   }
 }

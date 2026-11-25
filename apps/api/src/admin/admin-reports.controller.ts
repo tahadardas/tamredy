@@ -111,6 +111,16 @@ export class AdminReportsController {
     const acceptedDirect = Number(directReqs.accepted_direct || 0);
     const directAcceptPct = totalDirect > 0 ? Math.round((acceptedDirect / totalDirect) * 1000) / 10 : 0;
 
+    const voiceQuality = (await this.db.query(`SELECT
+      count(*) FILTER (WHERE call_status='CONNECTED')::int AS connected_calls,
+      count(*) FILTER (WHERE call_status IN ('FAILED','MISSED'))::int AS failed_or_missed_calls,
+      round(avg(extract(epoch FROM (connected_at-ringing_at))) FILTER (WHERE connected_at IS NOT NULL)::numeric,2) AS avg_setup_seconds,
+      round((SELECT avg(rtt_ms) FROM voice_call_quality_samples WHERE created_at>now()-interval '30 days')::numeric,2) AS avg_rtt_ms,
+      round((SELECT avg(jitter_ms) FROM voice_call_quality_samples WHERE created_at>now()-interval '30 days')::numeric,2) AS avg_jitter_ms,
+      round((SELECT avg(packet_loss_percent) FROM voice_call_quality_samples WHERE created_at>now()-interval '30 days')::numeric,2) AS avg_packet_loss_percent,
+      (SELECT count(*)::int FROM voice_call_quality_samples WHERE turn_used AND created_at>now()-interval '30 days') AS turn_samples
+      FROM voice_call_sessions WHERE created_at>now()-interval '30 days'`)).rows[0];
+
     return {
       gmv,
       netRevenue,
@@ -131,6 +141,7 @@ export class AdminReportsController {
         activePlansCount: activePlans,
         activePackagesCount: activePackages,
       },
+      voiceQuality,
     };
   }
 

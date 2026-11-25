@@ -12,6 +12,31 @@ import 'screens/track.dart';
 import 'screens/referral.dart';
 
 final ValueNotifier<ThemeMode> patientThemeMode = ValueNotifier(ThemeMode.light);
+final GlobalKey<NavigatorState> patientNavigatorKey = GlobalKey<NavigatorState>();
+String? _visiblePatientCallId;
+
+Future<void> _openPatientCall(TamreedyApi api, Map<String, dynamic>? event) async {
+  final active = await api.getList('/v1/calls/active/mine');
+  if (active.isEmpty) return;
+  final preferred = event?['callId']?.toString();
+  final raw = active.cast<dynamic>().map((e) => Map<String, dynamic>.from(e as Map)).firstWhere(
+    (call) => preferred == null || call['id']?.toString() == preferred,
+    orElse: () => Map<String, dynamic>.from(active.first as Map),
+  );
+  final callId = raw['id']?.toString();
+  if (callId == null || callId == _visiblePatientCallId) return;
+  final navigator = patientNavigatorKey.currentState;
+  if (navigator == null) return;
+  _visiblePatientCallId = callId;
+  await navigator.push(MaterialPageRoute(builder: (_) => TamInAppCallScreen(
+    api: api,
+    requestId: raw['request_id']?.toString() ?? event?['requestId']?.toString() ?? '',
+    peerName: 'الممرض المعتمد',
+    peerRole: 'مكالمة تمريضي آمنة',
+    incomingCallId: callId,
+  )));
+  _visiblePatientCallId = null;
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +61,7 @@ class TamreedyPatientApp extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
     valueListenable: patientThemeMode,
     builder: (context, mode, _) => MaterialApp(
+      navigatorKey: patientNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: tamreedyLightTheme(),
       darkTheme: tamreedyDarkTheme(),
@@ -57,11 +83,16 @@ class TamreedyPatientApp extends StatelessWidget {
             await PatientAlarm.init();
             await PatientAlarm.requestPermissions();
             await controller.loadAll();
+            WidgetsBinding.instance.addPostFrameCallback((_) => _openPatientCall(controller.api, null));
           },
           child: RealtimeHost(
             api: controller.api,
             onResync: controller.resync,
             onEvent: controller.onLive,
+            onEventData: (type, payload) {
+              controller.onLiveData(type, payload);
+              if (type == 'call.incoming') _openPatientCall(controller.api, payload);
+            },
             child: PatientShell(c: controller),
           ),
         ),

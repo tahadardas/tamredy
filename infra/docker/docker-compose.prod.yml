@@ -26,6 +26,12 @@ x-api-env: &api-env
   MAPS_PROVIDER: ${MAPS_PROVIDER:-osm}
   ORS_API_KEY: ${ORS_API_KEY:-}
   GOOGLE_MAPS_SERVER_KEY: ${GOOGLE_MAPS_SERVER_KEY:-}
+  LIVE_LOCATION_REDIS_ENABLED: ${LIVE_LOCATION_REDIS_ENABLED:-false}
+  LOCATION_POSTGRES_FALLBACK_ENABLED: "true"
+  TURN_URLS: ${TURN_URLS:?set TURN_URLS}
+  TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?set TURN_SHARED_SECRET}
+  TURN_CREDENTIAL_TTL_SECONDS: ${TURN_CREDENTIAL_TTL_SECONDS:-900}
+  CALL_RING_TIMEOUT_SECONDS: ${CALL_RING_TIMEOUT_SECONDS:-40}
   WALLET_PROVIDER_ENABLED: "false"
 
 services:
@@ -57,6 +63,33 @@ services:
       retries: 20
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    restart: unless-stopped
+    mem_limit: 256m
+    command:
+      - sh
+      - -c
+      - >-
+        turnserver --config=/etc/coturn/turnserver.conf
+        --realm=$$TURN_REALM --external-ip=$$TURN_EXTERNAL_IP
+        --static-auth-secret=$$TURN_SHARED_SECRET
+        --cert=/run/secrets/tls/fullchain.pem --pkey=/run/secrets/tls/privkey.pem
+    environment:
+      TURN_REALM: ${TURN_REALM:?set TURN_REALM}
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:?set TURN_EXTERNAL_IP}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?set TURN_SHARED_SECRET}
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      - "49160-49200:49160-49200/udp"
+      - "49160-49200:49160-49200/tcp"
+    volumes:
+      - "./coturn.conf:/etc/coturn/turnserver.conf:ro"
+      - "${TURN_TLS_DIR:?set TURN_TLS_DIR}:/run/secrets/tls:ro"
 
   migrate:
     build: { context: ../.., dockerfile: infra/docker/Dockerfile.api }

@@ -13,11 +13,18 @@ import { releaseScheduledVisit } from './scheduling.js';
 import { doDispatch } from './dispatch.js';
 import { processBroadcast, runWinback } from './marketing.js';
 import { runSmartRecoveryJob } from './smart-recovery.js';
+import { expireVoiceCalls } from './voice-lifecycle.js';
 
 const dbUrl = process.env.DATABASE_URL;
 if (!dbUrl) throw new Error('DATABASE_URL required');
 
-const pool = new pg.Pool({ connectionString: dbUrl,max:10,statement_timeout:10000,connectionTimeoutMillis:3000 });
+const pool = new pg.Pool({
+  connectionString: dbUrl,
+  max: Number(process.env.DATABASE_POOL_MAX ?? 10),
+  statement_timeout: Number(process.env.DATABASE_STATEMENT_TIMEOUT_MS ?? 10_000),
+  connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 3_000),
+  idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30_000),
+});
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { enableOfflineQueue: false, maxRetriesPerRequest: 1, commandTimeout: 2000, retryStrategy: (times) => Math.min(times * 500, 5000) }) : undefined;
 
 function logFailure(job: string,error: unknown) {
@@ -71,6 +78,7 @@ async function runWorker(): Promise<void> {
   let lastWinback = 0;
   let lastPushRetry = 0;
   let lastDepartureCheck = 0;
+  let lastVoiceCleanup = 0;
 
   process.on('SIGINT', () => { stopping = true; });
   process.on('SIGTERM', () => { stopping = true; });
@@ -91,6 +99,10 @@ async function runWorker(): Promise<void> {
   let lastSafetyRetention = 0;
   let lastSmartRecovery = 0;
   async function runBackgroundJobs(): Promise<boolean> {
+    if (Date.now() - lastVoiceCleanup > 5000) {
+      lastVoiceCleanup = Date.now();
+      await expireVoiceCalls(pool).catch(error=>logFailure('voiceLifecycle',error));
+    }
     if (Date.now() - lastSmartRecovery > 10000) {
       lastSmartRecovery = Date.now();
       await runSmartRecoveryJob(pool).catch(error=>logFailure('smartRecovery',error));
