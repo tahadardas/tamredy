@@ -76,8 +76,10 @@ class _ServiceOutcomesScreenState extends State<ServiceOutcomesScreen> {
           payload['reason'] = detail;
         }
         if (!kDemoMode) {
-          await widget.c.api.post('/v1/nurse/requests/${widget.c.requestId}/items/${draft.item['id']}/outcome', payload);
+          final itemId = draft.item['id'];
+          await widget.c.api.post('/v1/nurse/requests/${widget.c.requestId}/items/$itemId/outcome', payload);
         }
+        draft.item['item_status'] = draft.status;
       }
       await widget.c.complete();
       if (widget.c.stage != NurseStage.completed) {

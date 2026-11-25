@@ -705,7 +705,7 @@ class PatientController extends ChangeNotifier {
 
   /// Creates the request, then follows its lifecycle.
   Future<bool> submit({DateTime? appointment}) async {
-    if (service == null || selectedServiceQuantities.isEmpty || busy) return false;
+    if (service == null || busy) return false;
     _searchStart = DateTime.now();
     Analytics.log('request_submitted', {
       'service_id': service!.id,
@@ -767,7 +767,8 @@ class PatientController extends ChangeNotifier {
         {
           'beneficiaryId': beneficiaryId,
           if (appointment != null) 'scheduledAt': appointment.toUtc().toIso8601String(),
-          'items': [
+          if (selectedServiceQuantities.isEmpty) 'serviceId': service!.id
+          else 'items': [
             for (final entry in selectedServiceQuantities.entries)
               {'serviceId': entry.key, 'quantity': entry.value},
           ],
@@ -779,8 +780,8 @@ class PatientController extends ChangeNotifier {
           'nonEmergencyConfirmed': true,
           if (service!.requiresPrescription) 'prescriptionConfirmed': true,
           if (promoCode.isNotEmpty) 'promoCode': promoCode,
-          'bookingMode': bookingMode,
-          if (bookingMode == 'OPEN') 'openDurationMinutes': 60,
+          'bookingMode': appointment != null ? 'SCHEDULED' : bookingMode,
+          if (appointment == null && bookingMode == 'OPEN') 'openDurationMinutes': 60,
         },
         {'Idempotency-Key': _idemKey!},
       );
@@ -858,6 +859,7 @@ class PatientController extends ChangeNotifier {
 
         stage = switch (status) {
           'SCHEDULED' => VisitStage.scheduled,
+          'OPEN_FOR_PROPOSALS' => VisitStage.openMarketplace,
           'REQUESTED' || 'OFFERING' => (marketplaceStatus == 'OPEN_FOR_PROPOSALS' || bookingMode == 'OPEN')
               ? VisitStage.openMarketplace
               : VisitStage.searching,
@@ -881,6 +883,17 @@ class PatientController extends ChangeNotifier {
           }
         }
       } else {
+        final unpaid = res['unpaidInvoices'] as List?;
+        if (unpaid != null && unpaid.isNotEmpty) {
+          requestId = (unpaid.first as Map)['id'] as String?;
+          if (requestId != null) {
+            clinicalApprovalStatus = null;
+            stage = VisitStage.completed;
+            await loadBill();
+            notifyListeners();
+            return;
+          }
+        }
         if (stage != VisitStage.none) {
           stage = VisitStage.none;
           requestId = null;

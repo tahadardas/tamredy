@@ -50,13 +50,14 @@ const adminId = (await pg.query(`INSERT INTO users(phone_e164,role,password_hash
 const asAdmin = { user: { id: adminId, role: 'ADMIN' } };
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('y'.repeat(40))]);
 const ctx = (token, url) => ({ switchToHttp: () => ({ getRequest: () => ({ headers: { authorization: `Bearer ${token}` }, url }) }) });
-let nurseId, phone = '+963911200001';
+let nurseId, initialPassword, phone = '+963911200001';
 
-test('a nurse added by staff gets the default password and must change it at first login', async () => {
+test('a nurse added by staff receives an expiring random password and must change it at first login', async () => {
   const made = await nurses.create(asAdmin, { phone, displayName: 'ممرض افتراضي' });
   nurseId = made.id;
-  assert.equal(made.temporaryPassword, '123456');
-  const t = await auth.login(phone, '123456');
+  initialPassword=made.temporaryPassword;
+  assert.equal(initialPassword.length,20);
+  const t = await auth.login(phone, initialPassword);
   assert.equal(t.role, 'NURSE'); assert.equal(t.mustChangePassword, true);
   // until the password is changed, only the auth routes work
   await assert.rejects(guard.canActivate(ctx(t.accessToken, '/v1/nurse/me/summary')), code('PASSWORD_CHANGE_REQUIRED'));
@@ -64,18 +65,18 @@ test('a nurse added by staff gets the default password and must change it at fir
 });
 
 test('change password: rejects weak/default/wrong values, then unlocks the account and ends old sessions', async () => {
-  const t = await auth.login(phone, '123456');
+  const t = await auth.login(phone, initialPassword);
   const uid = jwt.decode(t.accessToken).sub;
   const me = { user: { id: uid, role: 'NURSE' } };
   await assert.rejects(account.change(me, { currentPassword: 'wrong-password', newPassword: 'a-good-new-pass' }), code('WRONG_PASSWORD'));
-  await assert.rejects(account.change(me, { currentPassword: '123456', newPassword: '123456' }), code('WEAK_PASSWORD'));
-  await assert.rejects(account.change(me, { currentPassword: '123456', newPassword: '12345' }), code('WEAK_PASSWORD'));
-  await assert.rejects(account.change(me, { currentPassword: '123456', newPassword: '11111111' }), code('WEAK_PASSWORD'));
-  const fresh = await account.change(me, { currentPassword: '123456', newPassword: 'my-new-password' });
+  await assert.rejects(account.change(me, { currentPassword: initialPassword, newPassword: '123456' }), code('WEAK_PASSWORD'));
+  await assert.rejects(account.change(me, { currentPassword: initialPassword, newPassword: '12345' }), code('WEAK_PASSWORD'));
+  await assert.rejects(account.change(me, { currentPassword: initialPassword, newPassword: '11111111' }), code('WEAK_PASSWORD'));
+  const fresh = await account.change(me, { currentPassword: initialPassword, newPassword: 'my-new-password' });
   assert.ok(fresh.accessToken);
   await assert.rejects(guard.canActivate(ctx(t.accessToken, '/v1/auth/me')), code('SESSION_REVOKED'));
   assert.equal(await guard.canActivate(ctx(fresh.accessToken, '/v1/nurse/me/summary')), true);   // now unrestricted
-  await assert.rejects(auth.login(phone, '123456'), code('LOGIN_INVALID'));
+  await assert.rejects(auth.login(phone, initialPassword), code('LOGIN_INVALID'));
   assert.equal((await auth.login(phone, 'my-new-password')).mustChangePassword, false);
   await assert.rejects(auth.refresh(t.refreshToken), e => true);                                  // the old session was revoked
 });
@@ -97,10 +98,10 @@ test('recovery from the dashboard: reset issues an expiring random password, for
   assert.notEqual((await users.reset(asAdmin, sid)).temporaryPassword, '123456');
 });
 
-test('the default password is editable and validated', async () => {
+test('the configured legacy password is validated but never issued to new accounts', async () => {
   await assert.rejects(settings.save(asAdmin, 'security', { idleMinutes: 20, passwordMinLength: 12, defaultPassword: '123' }), code('BAD_DEFAULT_PW'));
   await settings.save(asAdmin, 'security', { idleMinutes: 20, passwordMinLength: 12, defaultPassword: '654321' });
-  assert.equal((await nurses.create(asAdmin, { phone: '+963911200002', displayName: 'ثانٍ' })).temporaryPassword, '654321');
+  assert.equal((await nurses.create(asAdmin, { phone: '+963911200002', displayName: 'ثانٍ' })).temporaryPassword.length,20);
   await settings.save(asAdmin, 'security', { idleMinutes: 20, passwordMinLength: 12, defaultPassword: '123456' });
 });
 

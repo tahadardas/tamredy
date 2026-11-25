@@ -16,20 +16,21 @@ class CollectDto { @IsInt() @Min(1) @Max(1_000_000_000) amount!: number; }
 
 const BILL_SQL = `SELECT cr.id AS request_id,cr.status,cr.requester_user_id,cr.service_minutes,
     i.subtotal AS gross_amount,i.discount_amount,i.total_amount AS amount_due,
-    CASE i.status WHEN 'PARTIALLY_PAID' THEN 'PARTIAL' ELSE i.status END AS payment_status,
+    CASE i.status WHEN 'PARTIALLY_PAID' THEN 'PARTIAL' WHEN 'ISSUED' THEN 'DUE' ELSE i.status END AS payment_status,
     i.currency_code,cr.nurse_earning,cr.commission_bps_applied,i.surcharge_amount,i.distance_fee,i.tax_amount,
     i.tip_amount,cr.pricing->'fees'->>'taxLabel' AS tax_label,cr.promo_snapshot->>'code' AS promo_code,
     s.title_ar AS service_title,v.id AS visit_id,i.id AS invoice_id,i.invoice_number,i.issued_at,
-    coalesce((SELECT sum(cc.amount) FROM cash_collections cc WHERE cc.visit_id=v.id),0) AS collected
+    coalesce(i.paid_amount,0) AS collected
   FROM care_requests cr JOIN services s ON s.id=cr.service_id
-  LEFT JOIN request_assignments a ON a.request_id=cr.id
-  LEFT JOIN visits v ON v.assignment_id=a.id
-  LEFT JOIN invoices i ON i.request_id=cr.id`;
+  LEFT JOIN invoices i ON i.request_id=cr.id
+  LEFT JOIN visits v ON v.id=i.visit_id
+  LEFT JOIN request_assignments a ON a.id=v.assignment_id`;
 
 function shape(r: any) {
   const due = Number(r.amount_due ?? 0), collected = Number(r.collected ?? 0);
   return {
-    requestId: r.request_id, visitId: r.visit_id, status: r.status, serviceTitle: r.service_title, currency: r.currency_code,
+    requestId: r.request_id, visitId: r.visit_id, invoiceId: r.invoice_id, invoiceNumber: r.invoice_number,
+    status: r.status, serviceTitle: r.service_title, currency: r.currency_code,
     billed: r.amount_due != null, minutes: r.service_minutes, gross: Number(r.gross_amount ?? 0), discount: Number(r.discount_amount ?? 0),
     promoCode: r.promo_code, due, collected, paymentStatus: r.payment_status,
     surcharge: Number(r.surcharge_amount ?? 0), distanceFee: Number(r.distance_fee ?? 0), tax: Number(r.tax_amount ?? 0), taxLabel: r.tax_label ?? 'ضريبة',

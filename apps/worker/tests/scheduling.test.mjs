@@ -25,7 +25,8 @@ test('scheduled visits wait, then release once; late and cancelled visits do not
     .replaceAll('geography(Point,4326)', 'double precision').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
   await db.exec('CREATE FUNCTION ST_DWithin(double precision,double precision,double precision) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT abs($1-$2)<=$3 $$');
   for (const name of ['003_admin_reads_audit', '006_pricing_promos_rewards', '007_fees_tiers_dues_referrals',
-    '009_nurse_admin_documents_settings', '021_open_dispatch_and_cancellation_foundation', '022_open_dispatch_eligibility', '027_scheduled_visits']) {
+    '009_nurse_admin_documents_settings', '021_open_dispatch_and_cancellation_foundation', '022_open_dispatch_eligibility',
+    '027_scheduled_visits','056_clinical_approval_gate']) {
     await db.exec(sql(name));
   }
   await db.exec(`

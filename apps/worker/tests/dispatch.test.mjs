@@ -9,7 +9,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
   const db = new PGlite();
   t.after(() => db.close());
   // Exercise the production SQL with distances represented as meters on one axis.
-  for (const migration of ['001_core', '005_password_accounts_push', '016_expand_dispatch_waves_limit', '018_dispatch_diagnostics_and_deliveries', '021_open_dispatch_and_cancellation_foundation']) {
+  for (const migration of ['001_core', '005_password_accounts_push', '016_expand_dispatch_waves_limit', '018_dispatch_diagnostics_and_deliveries', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate']) {
     const sql = readFileSync(new URL(`../../../infra/db/migrations/${migration}.sql`, import.meta.url), 'utf8')
       .replace(/CREATE EXTENSION[^;]*;/g, '')
       .replace(/geography\(Point,4326\)/g, 'double precision')

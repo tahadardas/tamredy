@@ -50,7 +50,7 @@ export class AssignmentOrchestrator {
       * Number(input.request.commission_bps) / 10_000);
     const account = (await client.query(`SELECT * FROM nurse_financial_accounts
       WHERE nurse_id=$1 FOR UPDATE`, [input.nurseId])).rows[0];
-    if (account && account.financial_model !== 'RECEIVABLES' && estimatedCommission > 0) {
+    if (account && estimatedCommission > 0) {
       const held = (await client.query(`SELECT coalesce(sum(prepaid_amount),0) AS prepaid,
         coalesce(sum(credit_amount),0) AS credit FROM financial_reservations
         WHERE nurse_id=$1 AND status='HELD'`, [input.nurseId])).rows[0];
@@ -60,11 +60,11 @@ export class AssignmentOrchestrator {
         FROM financial_ledger_entries WHERE account_id IN ($1,$2)`,
       [`CASH_HELD_BY_NURSE:${input.nurseId}`,`NURSE_PAYABLE:${input.nurseId}`])).rows[0];
       const prepaidAvailable = Math.max(0,Number(account.prepaid_balance)-Number(held.prepaid));
-      const prepaidAmount = Math.min(estimatedCommission,prepaidAvailable);
+      const prepaidAmount = account.financial_model==='RECEIVABLES' ? 0 : Math.min(estimatedCommission,prepaidAvailable);
       const creditAmount = estimatedCommission-prepaidAmount;
       if (account.financial_model === 'PREPAID' && creditAmount > 0) conflict('INSUFFICIENT_PREPAID_BALANCE');
       const creditAvailable = Math.max(0,Number(account.credit_limit)-Number(position.dues)-Number(held.credit));
-      if (account.financial_model === 'HYBRID' && creditAmount > creditAvailable) {
+      if (account.financial_model !== 'PREPAID' && creditAmount > creditAvailable) {
         conflict('FINANCIAL_LIMIT_REACHED');
       }
       const reservation = await client.query(`INSERT INTO financial_reservations(
@@ -86,7 +86,7 @@ export class AssignmentOrchestrator {
       const durationMinutes = input.plannedStart && input.plannedEnd
         ? Math.max(1, Math.ceil((input.plannedEnd.getTime() - input.plannedStart.getTime()) / 60_000))
         : null;
-      assignmentId = (await client.query<{ id: string }>(`
+      const inserted = (await client.query<{ id: string }>(`
         INSERT INTO request_assignments(
           request_id,nurse_id,status,accepted_at,departure_due_at,
           planned_start_at,planned_end_at,service_duration_minutes
@@ -97,9 +97,12 @@ export class AssignmentOrchestrator {
             * interval '1 second' END,$4,$5,$6
         RETURNING id
       `, [input.request.id,input.nurseId,input.reserveImmediately,
-        input.plannedStart?.toISOString() ?? null,input.plannedEnd?.toISOString() ?? null,durationMinutes])).rows[0].id;
+        input.plannedStart?.toISOString() ?? null,input.plannedEnd?.toISOString() ?? null,durationMinutes])).rows[0];
+      if (!inserted) conflict('ASSIGNMENT_CONFLICT');
+      assignmentId=inserted.id;
     } catch (error) {
       if ((error as { code?: string }).code === '23505') conflict('ASSIGNMENT_CONFLICT');
+      if ((error as { code?: string }).code === '23P01') conflict('NURSE_SCHEDULE_CONFLICT');
       throw error;
     }
 

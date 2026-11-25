@@ -108,6 +108,7 @@ export async function transitionRequest(
      RETURNING version`,
     [input.requestId, input.toStatus, input.fromStatus, input.currentVersion],
   );
-  if (updated.rowCount !== 1) conflict('REQUEST_VERSION_CONFLICT');
-  return updated.rows[0].version;
+  const result=updated.rows[0];
+  if (!result) conflict('REQUEST_VERSION_CONFLICT');
+  return result.version;
 }

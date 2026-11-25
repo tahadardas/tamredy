@@ -90,10 +90,11 @@ export class RequestRecoveryService {
         cr.id AS request_id,cr.status AS request_status,cr.version,cr.booking_mode,
         cr.marketplace_status,cr.price_amount,cr.currency_code,cr.commission_bps,
         cr.scheduled_start_at,cr.scheduled_end_at,sv.appointment_at AS scheduled_at,
-        CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN cr.address_text END AS address_text,
-        CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
+        facts.departure_window_open,
+        CASE WHEN facts.departure_window_open THEN cr.address_text END AS address_text,
+        CASE WHEN facts.departure_window_open
           THEN ST_Y(cr.location::geometry) END AS patient_lat,
-        CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
+        CASE WHEN facts.departure_window_open
           THEN ST_X(cr.location::geometry) END AS patient_lng,
         s.id AS service_id,s.title_ar AS service_title,s.code AS service_code,s.requires_prescription,
         b.display_name AS beneficiary_name,
@@ -105,6 +106,10 @@ export class RequestRecoveryService {
       JOIN beneficiaries b ON b.id=cr.beneficiary_id
       JOIN users u ON u.id=cr.requester_user_id
       LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
+      CROSS JOIN LATERAL (SELECT a.status='ACTIVE' OR (
+        a.status='RESERVED' AND cr.status='ASSIGNED' AND a.planned_start_at
+          -a.travel_buffer_before_minutes*interval '1 minute'<=statement_timestamp()
+      ) AS departure_window_open) facts
       WHERE a.nurse_id=$1 AND a.status IN ('RESERVED','ACTIVE')
         AND cr.status IN ('SCHEDULED','ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
       ORDER BY coalesce(sv.appointment_at,cr.scheduled_start_at,a.accepted_at),a.id
@@ -115,7 +120,8 @@ export class RequestRecoveryService {
       FROM invoices i JOIN visits v ON v.id=i.visit_id JOIN request_assignments a ON a.id=v.assignment_id
       WHERE a.nurse_id=$1 AND i.status IN ('ISSUED','PARTIALLY_PAID')
       ORDER BY i.issued_at DESC,i.id DESC LIMIT 50`, [nurse.id]);
-    const active = assignments.rows.find(row => row.assignment_status==='ACTIVE') ?? null;
+    const active = assignments.rows.find(row => row.assignment_status==='ACTIVE')
+      ?? assignments.rows.find(row=>row.departure_window_open===true) ?? null;
     return {
       hasActive: active !== null,
       verified: nurse.verified,

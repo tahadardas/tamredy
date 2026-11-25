@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
-import { LedgerService, type LedgerLegInput } from '../wallet/ledger.service.js';
+import { LedgerService, fromMinor, toMinor, type LedgerLegInput } from '../wallet/ledger.service.js';
 import { DuesService } from './fees.service.js';
 import { ReferralService } from './referral.service.js';
 
@@ -103,10 +103,23 @@ export class BillingService {
     for (const reservation of reservations.rows) {
       await this.ledger.resolveReservation(client,reservation.id,'COMMITTED');
       if (reservation.nurse_id) {
+        const reservedPrepaid=toMinor(reservation.prepaid_amount);
+        const finalCommission=toMinor(bill.commission);
+        const prepaidApplied=fromMinor(reservedPrepaid<finalCommission ? reservedPrepaid : finalCommission);
+        if (toMinor(prepaidApplied)>0n) {
+          await this.ledger.postTransaction(client,{
+            transactionType:'PREPAID_COMMISSION_APPLIED',referenceType:'INVOICE',referenceId:invoice.id,
+            idempotencyKey:`invoice-prepaid:${invoice.id}:${reservation.id}`,currencyCode,
+            legs:[
+              {accountId:`PREPAID_LIABILITY:${reservation.nurse_id}`,debitAmount:prepaidApplied,creditAmount:0},
+              {accountId:`NURSE_PAYABLE:${reservation.nurse_id}`,debitAmount:0,creditAmount:prepaidApplied},
+            ],
+          });
+        }
         await client.query(`UPDATE nurse_financial_accounts SET
           reserved_balance=greatest(0,reserved_balance-$2),
           prepaid_balance=greatest(0,prepaid_balance-$3),updated_at=statement_timestamp()
-          WHERE nurse_id=$1`, [reservation.nurse_id,reservation.amount,reservation.prepaid_amount]);
+          WHERE nurse_id=$1`, [reservation.nurse_id,reservation.amount,prepaidApplied]);
       }
     }
     return { invoice, replayed: false };
@@ -145,12 +158,18 @@ export class BillingService {
     if (!row) throw new ConflictException({ code: 'INVOICE_NOT_COLLECTIBLE' });
     if (row.status === 'PAID') throw new ConflictException({ code: 'ALREADY_PAID' });
 
-    const payable = Number(row.total_amount)+Number(row.tip_amount);
-    const remainingBefore = payable-Number(row.paid_amount);
-    const applied = Math.min(amount,remainingBefore);
-    const change = amount-applied;
-    const paidAmount = Number(row.paid_amount)+applied;
-    const status = paidAmount === payable ? 'PAID' : 'PARTIALLY_PAID';
+    const payable = toMinor(row.total_amount)+toMinor(row.tip_amount);
+    const previouslyPaid=toMinor(row.paid_amount);
+    const remainingBefore = payable-previouslyPaid;
+    if (remainingBefore<=0n) throw new ConflictException({code:'ALREADY_PAID'});
+    const received=toMinor(amount);
+    const appliedMinor = received<remainingBefore ? received : remainingBefore;
+    const paidMinor = previouslyPaid+appliedMinor;
+    const applied=fromMinor(appliedMinor);
+    const change=fromMinor(received-appliedMinor);
+    const paidAmount=fromMinor(paidMinor);
+    const remaining=Number(fromMinor(payable-paidMinor));
+    const status = paidMinor === payable ? 'PAID' : 'PARTIALLY_PAID';
 
     const transaction = await this.ledger.postTransaction(client, {
       transactionType: 'CASH_COLLECTION',referenceType: 'INVOICE',referenceId: row.id,
@@ -178,11 +197,11 @@ export class BillingService {
     }
     await client.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
       VALUES($1,$2,$3,$4::jsonb)`, [requestId,nurseUserId,`payment.${status.toLowerCase()}`,
-      JSON.stringify({received:amount,applied,change,remaining:payable-paidAmount,collectionId:collection.id})]);
+      JSON.stringify({received:amount,applied,change,remaining,collectionId:collection.id})]);
     await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
       VALUES($1,$2,$3::jsonb)`, [`payment.${status.toLowerCase()}`,requestId,
       JSON.stringify({requestId,recipientUserId:row.requester_user_id})]);
-    return { ...collection,status,remaining:payable-paidAmount,change,replayed:false };
+    return { ...collection,status,remaining,change:Number(change),replayed:false };
   }
 
   async setTip(

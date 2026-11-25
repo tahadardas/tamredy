@@ -261,31 +261,35 @@ function App() {
         setTick(t => t + 1);
         return;
       }
-      const [m, r] = await Promise.all([getJson('/v1/admin/dashboard'), getJson('/v1/admin/requests')]);
-      const paths: Record<string, string> = {
-        live: 'live',
-        extras: 'dashboard/extras',
-        pending: 'credentials/pending',
-        finance: 'finance/summary',
-        settlements: 'finance/settlements',
-        reviews: 'reviews/summary',
-        settings: 'system-settings',
+      const panelPaths: Record<string, Record<string,string>> = {
+        dashboard:{extras:'dashboard/extras'},
+        map:{live:'live'},
+        applications:{pending:'credentials/pending'},
+        credentials:{pending:'credentials/pending'},
+        finance:{finance:'finance/summary',settlements:'finance/settlements'},
+        wallet:{settlements:'finance/settlements'},
+        reviews:{reviews:'reviews/summary'},
       };
+      const paths = {settings:'system-settings',...panelPaths[active]};
       const got: Record<string, any> = {};
-      await Promise.all(
+      const [m,page] = await Promise.all([
+        active === 'dashboard' ? getJson('/v1/admin/dashboard') : null,
+        ['dashboard','requests'].includes(active) ? getJson('/v1/admin/requests') as Promise<Page<RequestRow>> : null,
+        Promise.all(
         Object.entries(paths).map(async ([k, p]) => {
           try {
             got[k] = await getJson(`/v1/admin/${p}`);
           } catch {
             /* optional panel */
           }
-        }),
-      );
-      const page = r as Page<RequestRow>;
-      setExtra(got);
-      setMetrics(m);
-      setRequests(page.items);
-      setCursor(page.nextCursor);
+        })),
+      ]);
+      setExtra(current=>({...current,...got}));
+      if (m) setMetrics(m);
+      if (page) {
+        setRequests(page.items);
+        setCursor(page.nextCursor);
+      }
       setError('');
       setTick(t => t + 1);
     } catch (e) {
@@ -293,7 +297,7 @@ function App() {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     void reload();

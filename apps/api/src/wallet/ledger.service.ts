@@ -22,16 +22,16 @@ interface PostTransactionInput {
   reversalOfTransactionId?: string;
 }
 
-function toMinor(value: MoneyInput): bigint {
+export function toMinor(value: MoneyInput): bigint {
   const raw = String(value).trim();
   if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) {
     throw new BadRequestException({ code: 'INVALID_MONEY_AMOUNT' });
   }
-  const [whole, fraction = ''] = raw.split('.');
+  const [whole = '0', fraction = ''] = raw.split('.');
   return BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
 }
 
-function fromMinor(value: bigint): string {
+export function fromMinor(value: bigint): string {
   const whole = value / 100n;
   const fraction = (value % 100n).toString().padStart(2, '0');
   return `${whole}.${fraction}`;

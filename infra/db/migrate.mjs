@@ -1,7 +1,16 @@
-import pg from 'pg';
+import { createRequire } from 'node:module';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+const deploymentRequire = createRequire(import.meta.url);
+const workspaceRequire = createRequire(new URL('../../apps/api/package.json',import.meta.url));
+let pgPath;
+try { pgPath=deploymentRequire.resolve('pg'); }
+catch(error) {
+  if(error.code!=='MODULE_NOT_FOUND') throw error;
+  pgPath=workspaceRequire.resolve('pg');
+}
+const pg=deploymentRequire(pgPath);
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL required');
 const dirname = fileURLToPath(new URL('.', import.meta.url));

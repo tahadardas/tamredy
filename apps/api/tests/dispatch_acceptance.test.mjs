@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { notifyDelayedDepartures } from '../../worker/src/departure-reminders.ts';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+import { configureBilling,migrateBillingFixtures } from './helpers/billing-fixture.mjs';
 import { DispatchService } from '../dist/dispatch/dispatch.service.js';
+import { NurseEligibilityEngine } from '../dist/dispatch/nurse-eligibility.engine.js';
+import { AssignmentOrchestrator } from '../dist/dispatch/assignment.orchestrator.js';
 import { AppealsService } from '../dist/requests/appeals.service.js';
 import { CommitmentService } from '../dist/requests/commitment.service.js';
 import { cancelRequest } from '../dist/requests/cancellation.service.js';
@@ -12,7 +16,7 @@ const migrations = new URL('../../../infra/db/migrations/', import.meta.url);
 const read = (name) => readFileSync(new URL(`${name}.sql`, migrations), 'utf8');
 
 test('acceptance, fixed ETA and cancellation maintain a single replayable result', async (t) => {
-  const pg = new PGlite();
+  const pg = new PGlite({extensions:{pgcrypto}});
   t.after(() => pg.close());
   await pg.exec(read('001_core').replace(/CREATE EXTENSION[^;]*;/g, '')
     .replaceAll('geography(Point,4326)', 'double precision')
@@ -31,11 +35,14 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   `);
   await pg.exec(read('022_open_dispatch_eligibility'));
   await pg.exec(read('024_departure_reminders'));
+  await pg.exec(read('027_scheduled_visits'));
+  await pg.exec('CREATE TABLE app_settings(key text PRIMARY KEY,value jsonb)');
+  await pg.exec(read('050_smart_booking_and_open_marketplace'));
+  await pg.exec(read('052_request_lifecycle_integrity'));
+  await migrateBillingFixtures(pg);
+  await pg.exec(read('056_clinical_approval_gate'));
   await pg.exec(`
-    CREATE TABLE app_settings(key text PRIMARY KEY, value jsonb);
     CREATE TABLE user_blocks(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), blocker_user_id uuid, blocked_user_id uuid, revoked_at timestamptz);
-    CREATE TABLE care_request_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), request_id uuid, service_id uuid, price_amount numeric, expected_minutes int);
-    CREATE TABLE scheduled_visits(request_id uuid PRIMARY KEY, appointment_at timestamptz);
     INSERT INTO users(phone_e164,role) VALUES ('patient-1','PATIENT'),('nurse-1','NURSE');
     INSERT INTO beneficiaries(owner_user_id,display_name,consent_status)
       SELECT id,'زيارة اختبارية','GRANTED' FROM users WHERE role='PATIENT';
@@ -44,7 +51,9 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
       price_amount,currency_code,commission_bps,search_started_at,search_expires_at,search_radius_meters,
       search_max_heartbeat_seconds,search_max_location_seconds,search_max_accuracy_meters)
     SELECT b.owner_user_id,b.id,s.id,0,'MANUAL_PIN','دمشق',100,'SYP',2000,now()-interval '1 minute',
-      now()+interval '1 minute',3000,60,120,100 FROM beneficiaries b CROSS JOIN services s;
+    now()+interval '1 minute',3000,60,120,100 FROM beneficiaries b CROSS JOIN services s WHERE s.code='TEST';
+    INSERT INTO care_request_items(request_id,service_id,unit_price)
+      SELECT id,service_id,price_amount FROM care_requests;
     INSERT INTO nurses(user_id,verified,availability_intent,work_status,last_heartbeat_at)
       SELECT id,true,'AVAILABLE','AVAILABLE',now() FROM users WHERE role='NURSE';
     INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved)
@@ -79,7 +88,9 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
     routeCalls++;
     return {durationSeconds: 600, distanceMeters: 1000, polyline: 'test'};
   }};
-  const dispatch = new DispatchService(db, undefined, undefined, routes);
+  const engine=new NurseEligibilityEngine(db);
+  const {billing,fees}=configureBilling(db);
+  const dispatch = new DispatchService(db,engine,new AssignmentOrchestrator(engine),billing,fees,routes);
   const {offer, user_id: nurse} = (await query('SELECT o.id AS offer,n.user_id FROM request_offers o JOIN nurses n ON n.id=o.nurse_id')).rows[0];
   await assert.rejects(dispatch.accept(nurse, offer), error => error.getStatus() === 410);
   await query(`UPDATE request_offers SET expires_at=(SELECT search_expires_at FROM care_requests)`);

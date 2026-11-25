@@ -17,8 +17,17 @@ import { runSmartRecoveryJob } from './smart-recovery.js';
 const dbUrl = process.env.DATABASE_URL;
 if (!dbUrl) throw new Error('DATABASE_URL required');
 
-const pool = new pg.Pool({ connectionString: dbUrl, max: 10, statement_timeout: 10000 });
+const pool = new pg.Pool({ connectionString: dbUrl,max:10,statement_timeout:10000,connectionTimeoutMillis:3000 });
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { enableOfflineQueue: false, maxRetriesPerRequest: 1, commandTimeout: 2000, retryStrategy: (times) => Math.min(times * 500, 5000) }) : undefined;
+
+function logFailure(job: string,error: unknown) {
+  const candidate = typeof error==='object' && error!==null && 'code' in error ? error.code : null;
+  const code = typeof candidate==='string' && /^[A-Z0-9_]{1,40}$/.test(candidate)
+    ? candidate : 'WORKER_OPERATION_FAILED';
+  console.error(JSON.stringify({service:'tamreedy-worker',event:'job.failed',job,code}));
+}
+pool.on('error',error=>logFailure('database',error));
+redis?.on('error',error=>logFailure('redis',error));
 
 let sa;
 try {
@@ -27,14 +36,10 @@ try {
     : process.env.FCM_SERVICE_ACCOUNT_JSON;
   sa = loadServiceAccount(raw);
 } catch (e) {
-  console.warn('[FCM] Notice: Service account file could not be read or parsed:', e);
+  logFailure('push.configuration',e);
 }
 
 const fcm = sa ? new FcmClient(sa) : undefined;
-console.log(`[Worker Boot] Starting Tamreedy Dispatch & Notification Engine...`);
-console.log(`[Worker Boot] Database: Connected`);
-console.log(`[Worker Boot] Redis: ${redis ? 'Configured' : 'Not configured'}`);
-console.log(`[Worker Boot] Push (FCM): ${fcm ? 'CONFIGURED & READY (Project: ' + sa?.project_id + ')' : 'NOT_CONFIGURED (Push disabled, fallback REST polling & Socket.IO active)'}`);
 
 async function flushRealtimeOutbox(): Promise<boolean> {
   if (!redis) return false;
@@ -58,6 +63,10 @@ async function flushPushOutbox(): Promise<boolean> {
 }
 
 async function runWorker(): Promise<void> {
+  await pool.query('SELECT 1');
+  console.info(JSON.stringify({
+    service:'tamreedy-worker',event:'worker.started',realtimeConfigured:!!redis,pushConfigured:!!fcm,
+  }));
   let stopping = false;
   let lastWinback = 0;
   let lastPushRetry = 0;
@@ -72,7 +81,7 @@ async function runWorker(): Promise<void> {
       try {
         if (await run()) continue;
       } catch (error) {
-        console.error(`[${name} Error]`, error);
+        logFailure(name,error);
         delay = 1500;
       }
       if (!stopping) await new Promise(resolve => setTimeout(resolve, delay));
@@ -84,7 +93,7 @@ async function runWorker(): Promise<void> {
   async function runBackgroundJobs(): Promise<boolean> {
     if (Date.now() - lastSmartRecovery > 10000) {
       lastSmartRecovery = Date.now();
-      await runSmartRecoveryJob(pool).catch(error => console.error('[SmartRecovery Error]', error));
+      await runSmartRecoveryJob(pool).catch(error=>logFailure('smartRecovery',error));
     }
     if (Date.now() - lastDepartureCheck > 5000) {
       lastDepartureCheck = Date.now();
@@ -96,11 +105,11 @@ async function runWorker(): Promise<void> {
     }
     if (fcm && Date.now() - lastPushRetry > 5000) {
       lastPushRetry = Date.now();
-      await retryPendingPushes(pool, fcm).catch(error => console.error('[Retry Push Error]', error));
+      await retryPendingPushes(pool,fcm).catch(error=>logFailure('retryPush',error));
     }
     if (Date.now() - lastWinback > 6 * 3600_000) {
       lastWinback = Date.now();
-      await runWinback(pool).catch(error => console.error('[Winback Error]', error));
+      await runWinback(pool).catch(error=>logFailure('winback',error));
     }
     return processBroadcast(pool, fcm);
   }
@@ -120,4 +129,9 @@ async function runWorker(): Promise<void> {
   console.log('[Worker Stopped] Graceful shutdown complete.');
 }
 
-void runWorker();
+void runWorker().catch(async error=>{
+  logFailure('worker',error);
+  redis?.disconnect();
+  await pool.end();
+  process.exitCode=1;
+});

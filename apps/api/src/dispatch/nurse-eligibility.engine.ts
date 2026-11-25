@@ -71,18 +71,24 @@ export class NurseEligibilityEngine {
           WHERE ra.nurse_id=n.id AND ra.status='ACTIVE'
             AND active_request.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
             AND active_request.id<>cr.id) AS has_active_execution,
-        coalesce(n.dues_ceiling_amount, 0) AS dues_ceiling_amount,
+        coalesce((SELECT nurse_debt_limit FROM pricing_settings WHERE id=1),0) AS dues_ceiling_amount,
         greatest(coalesce((SELECT sum(CASE
           WHEN e.account_id='CASH_HELD_BY_NURSE:'||n.id::text THEN e.debit_amount-e.credit_amount
           WHEN e.account_id='NURSE_PAYABLE:'||n.id::text THEN e.debit_amount-e.credit_amount
           ELSE 0 END) FROM financial_ledger_entries e
           WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||n.id::text,'NURSE_PAYABLE:'||n.id::text)),0),0) AS current_dues_amount,
-        nfa.financial_model, nfa.credit_limit, nfa.prepaid_balance, nfa.reserved_balance
+        nfa.financial_model, nfa.credit_limit, nfa.prepaid_balance,
+        coalesce(held.prepaid,0) AS held_prepaid,coalesce(held.credit,0) AS held_credit,
+        round(cr.price_amount*cr.commission_bps/10000) AS estimated_commission
       FROM nurses n
       JOIN users u ON u.id=n.user_id
       CROSS JOIN care_requests cr
       LEFT JOIN nurse_locations nl ON nl.nurse_id=n.id
       LEFT JOIN nurse_financial_accounts nfa ON nfa.nurse_id=n.id
+      LEFT JOIN LATERAL (
+        SELECT sum(prepaid_amount) AS prepaid,sum(credit_amount) AS credit
+        FROM financial_reservations WHERE nurse_id=n.id AND status='HELD'
+      ) held ON nfa.id IS NOT NULL
       WHERE n.id=$1 AND cr.id=$2
     `, [nurseId, requestId])).rows[0];
 
@@ -139,12 +145,17 @@ export class NurseEligibilityEngine {
     }
     if (facts.has_active_execution && options.context !== 'BROWSE') reasons.push(reason('NURSE_HAS_ACTIVE_EXECUTION'));
     if (Number(facts.dues_ceiling_amount) > 0
-      && Number(facts.current_dues_amount) >= Number(facts.dues_ceiling_amount)) reasons.push(reason('SETTLEMENT_REQUIRED'));
-    if (facts.financial_model === 'PREPAID'
-      && Number(facts.prepaid_balance) - Number(facts.reserved_balance) <= 0) reasons.push(reason('INSUFFICIENT_PREPAID_BALANCE'));
-    if (facts.financial_model === 'HYBRID'
-      && Number(facts.prepaid_balance) + Number(facts.credit_limit) - Number(facts.reserved_balance) <= 0) {
-      reasons.push(reason('FINANCIAL_LIMIT_REACHED'));
+      && Number(facts.current_dues_amount) > Number(facts.dues_ceiling_amount)
+      && options.context!=='START') reasons.push(reason('SETTLEMENT_REQUIRED'));
+    if (facts.financial_model && options.context!=='START') {
+      const prepaid = facts.financial_model==='RECEIVABLES' ? 0
+        : Math.max(0,Number(facts.prepaid_balance)-Number(facts.held_prepaid));
+      const credit=Math.max(0,Number(facts.credit_limit)-Number(facts.current_dues_amount)-Number(facts.held_credit));
+      if (facts.financial_model==='PREPAID' && Number(facts.estimated_commission)>prepaid) {
+        reasons.push(reason('INSUFFICIENT_PREPAID_BALANCE'));
+      } else if (facts.financial_model!=='PREPAID' && Number(facts.estimated_commission)>prepaid+credit) {
+        reasons.push(reason('FINANCIAL_LIMIT_REACHED'));
+      }
     }
 
     if (options.proposedStart && options.proposedEnd) {

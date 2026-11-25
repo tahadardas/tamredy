@@ -31,7 +31,8 @@ const db = {
   },
 };
 const mkt = new MarketingController(db), autos = new AutoDiscountService(), me = new MeController(db);
-const pricing = new PricingController(db, new PromoService(db));
+const { FeesService } = await import('../dist/pricing/fees.service.js');
+const pricing = new PricingController(db,new PromoService(db),new FeesService(),undefined,autos);
 const code = c => e => e.getResponse?.().code === c;
 const id = async (sql, p) => (await pg.query(sql, p)).rows[0].id;
 

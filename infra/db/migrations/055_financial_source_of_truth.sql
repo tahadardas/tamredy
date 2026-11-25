@@ -126,7 +126,7 @@ FROM cash_collections cc
 JOIN visits v ON v.id=cc.visit_id
 JOIN request_assignments a ON a.id=v.assignment_id
 JOIN care_requests cr ON cr.id=a.request_id
-WHERE cc.amount>0
+WHERE cc.amount>0 AND cc.status='CONFIRMED'
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO financial_ledger_entries(transaction_id,reference_type,reference_id,account_id,debit_amount,credit_amount,currency)
@@ -135,14 +135,14 @@ SELECT cc.id,'VISIT',cc.visit_id::text,'CASH_HELD_BY_NURSE:'||cc.collector_nurse
 FROM cash_collections cc
 JOIN visits v ON v.id=cc.visit_id JOIN request_assignments a ON a.id=v.assignment_id
 JOIN care_requests cr ON cr.id=a.request_id
-WHERE cc.amount>0 AND NOT EXISTS(SELECT 1 FROM financial_ledger_entries e
+WHERE cc.amount>0 AND cc.status='CONFIRMED' AND NOT EXISTS(SELECT 1 FROM financial_ledger_entries e
   WHERE e.transaction_id=cc.id AND e.account_id='CASH_HELD_BY_NURSE:'||cc.collector_nurse_id::text);
 INSERT INTO financial_ledger_entries(transaction_id,reference_type,reference_id,account_id,debit_amount,credit_amount,currency)
 SELECT cc.id,'VISIT',cc.visit_id::text,'PATIENT_RECEIVABLE',0,cc.amount,coalesce(cr.currency_code,'SYP_NEW')
 FROM cash_collections cc
 JOIN visits v ON v.id=cc.visit_id JOIN request_assignments a ON a.id=v.assignment_id
 JOIN care_requests cr ON cr.id=a.request_id
-WHERE cc.amount>0 AND NOT EXISTS(SELECT 1 FROM financial_ledger_entries e
+WHERE cc.amount>0 AND cc.status='CONFIRMED' AND NOT EXISTS(SELECT 1 FROM financial_ledger_entries e
   WHERE e.transaction_id=cc.id AND e.account_id='PATIENT_RECEIVABLE');
 
 ALTER TABLE cash_collections
@@ -153,12 +153,13 @@ ALTER TABLE cash_collections
   ALTER COLUMN change_amount SET NOT NULL,
   ADD CONSTRAINT chk_collection_payload_digest CHECK (payload_digest ~ '^[a-f0-9]{64}$'),
   ADD CONSTRAINT chk_collection_amounts CHECK (
-    received_amount>0 AND applied_amount>=0 AND change_amount>=0
+    (received_amount>0 OR (received_amount=0 AND idempotency_key='legacy:'||id::text))
+    AND applied_amount>=0 AND change_amount>=0
     AND received_amount=applied_amount+change_amount AND amount=applied_amount
   ),
   ADD CONSTRAINT uq_cash_collection_idempotency UNIQUE(collector_nurse_id,idempotency_key);
 
-UPDATE cash_collections SET transaction_id=id WHERE amount>0 AND transaction_id IS NULL;
+UPDATE cash_collections SET transaction_id=id WHERE amount>0 AND status='CONFIRMED' AND transaction_id IS NULL;
 
 CREATE INDEX idx_cash_collections_visit_time ON cash_collections(visit_id,created_at,id);
 
@@ -247,7 +248,7 @@ SELECT DISTINCT ON (cr.id) cr.id,v.id,
   coalesce(cr.currency_code,'SYP_NEW'),coalesce(cr.gross_amount,cr.price_amount,0),
   coalesce(cr.discount_amount,0),coalesce(cr.surcharge_amount,0),coalesce(cr.distance_fee,0),
   coalesce(cr.tax_amount,0),coalesce(cr.tip_amount,0),coalesce(cr.amount_due,cr.price_amount,0),
-  least(coalesce((SELECT sum(cc.amount) FROM cash_collections cc WHERE cc.visit_id=v.id),0),
+  least(coalesce((SELECT sum(cc.amount) FROM cash_collections cc WHERE cc.visit_id=v.id AND cc.status='CONFIRMED'),0),
     coalesce(cr.amount_due,cr.price_amount,0)+coalesce(cr.tip_amount,0)),
   coalesce(cr.pricing,'{}'::jsonb),coalesce(cr.billed_at,v.completed_at),cr.paid_at
 FROM care_requests cr JOIN request_assignments a ON a.request_id=cr.id
@@ -312,3 +313,17 @@ ALTER TABLE care_request_items
     AND (item_status='PENDING' OR status_reason IS NOT NULL OR item_status='COMPLETED')
   ) NOT VALID;
 ALTER TABLE care_request_items VALIDATE CONSTRAINT chk_request_item_execution;
+
+-- Single-service requests created before item snapshots existed still need a
+-- pending execution item. Historical closed visits keep their recorded facts.
+INSERT INTO care_request_items(
+  request_id,service_id,quantity,unit_price,expected_minutes,pricing_snapshot,clinical_requirements_snapshot
+)
+SELECT r.id,r.service_id,1,r.price_amount,greatest(1,coalesce(s.expected_minutes,30)),
+  coalesce(r.pricing,'{}'::jsonb),jsonb_build_object(
+    'requiresPrescription',s.requires_prescription,
+    'requiresClinicalReview',s.requires_clinical_review,
+    'riskClassification',s.risk_classification)
+FROM care_requests r JOIN services s ON s.id=r.service_id
+WHERE r.status NOT IN ('COMPLETED','CANCELLED','EXPIRED')
+  AND NOT EXISTS(SELECT 1 FROM care_request_items i WHERE i.request_id=r.id);

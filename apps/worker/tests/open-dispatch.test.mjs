@@ -13,7 +13,7 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
   await db.exec(migration('001_core').replace(/CREATE EXTENSION[^;]*;/g, '')
     .replaceAll('geography(Point,4326)', 'double precision')
     .replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
-  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation']) {
+  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate']) {
     await db.exec(migration(name));
   }
   await db.exec(`

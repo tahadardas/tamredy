@@ -142,7 +142,10 @@ export class DispatchService {
       const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,currency_code,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
       const request=rr.rows[0];
       await c.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
-      const assignment=await c.query(`SELECT id,status FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
+      const assignment=await c.query(`SELECT id,status,
+        planned_start_at IS NULL OR planned_start_at
+          - travel_buffer_before_minutes*interval '1 minute'<=statement_timestamp() AS may_depart
+        FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
       if(request?.status===target.to && assignment.rowCount) return {requestId,assignmentId,status:target.to,replayed:true};
       const assignmentStatus = assignment.rows[0]?.status;
       if(!assignment.rowCount || (assignmentStatus!=='ACTIVE' && !(action==='depart' && assignmentStatus==='RESERVED'))) {
@@ -150,6 +153,7 @@ export class DispatchService {
       }
       if(request?.status!==target.from) conflict('INVALID_STATE_TRANSITION');
       if (action === 'depart' && assignmentStatus === 'RESERVED') {
+        if (!assignment.rows[0]?.may_depart) conflict('SCHEDULED_DEPARTURE_TOO_EARLY');
         try {
           await c.query(`UPDATE request_assignments SET status='ACTIVE' WHERE id=$1 AND status='RESERVED'`, [assignmentId]);
         } catch (error) {
@@ -214,7 +218,17 @@ export class DispatchService {
         const pricing=request.pricing&&Object.keys(request.pricing).length?request.pricing:{basePrice:request.price_amount};
         const rep=await this.fees.reputation(c,nurseId);
         const bps=commissionFor(Number(request.commission_bps??2000),await this.fees.tiers(c),rep.reputation,rep.reviews); // top-rated nurses keep more
-        const bill=computeBill(ruleFromRow(pricing),Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
+        const delivered = (await c.query(`SELECT
+          coalesce(sum(unit_price*performed_quantity),0) AS base_price,
+          coalesce(sum(round(expected_minutes::numeric*performed_quantity/quantity)),0) AS included_minutes,
+          bool_and(performed_quantity=quantity AND item_status='COMPLETED') AS fully_performed
+          FROM care_request_items WHERE request_id=$1`, [requestId])).rows[0];
+        const rule=ruleFromRow(pricing);
+        if (!delivered.fully_performed) {
+          rule.basePrice=Number(delivered.base_price);
+          rule.includedMinutes=Math.max(1,Number(delivered.included_minutes));
+        }
+        const bill=computeBill(rule,Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
           arrivedAt:new Date(t.rows[0]?.started_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
         await c.query(`UPDATE care_requests SET service_minutes=$2,gross_amount=$3,discount_amount=$4,surcharge_amount=$5,distance_fee=$6,tax_amount=$7,
           amount_due=$8::numeric,commission_bps_applied=$9,commission_amount=$10,nurse_earning=$11,owed_to_company=$12,

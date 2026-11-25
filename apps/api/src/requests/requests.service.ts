@@ -71,6 +71,9 @@ export class RequestsService {
       if (servicesRes.rowCount !== serviceIds.length) {
         invalid('One or more selected services are unavailable or not clinically approved');
       }
+      if (new Set(servicesRes.rows.map(row=>row.currency_code)).size!==1) {
+        invalid('REQUEST_ITEMS_REQUIRE_SINGLE_CURRENCY');
+      }
 
       const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
       const anyRequiresPrescription = servicesRes.rows.some(r => r.requires_prescription);
@@ -92,7 +95,7 @@ export class RequestsService {
         const unitPrice = Number(s.price_amount);
         totalBasePrice += unitPrice * it.quantity;
         totalExpectedMinutes += (Number(s.expected_minutes) || 30) * it.quantity;
-        weightedCommission += unitPrice * it.quantity * (Number(s.commission_bps) || 2000);
+        weightedCommission += unitPrice * it.quantity * Number(s.commission_bps ?? 2000);
       }
       const combinedCommissionBps = totalBasePrice > 0 ? Math.round(weightedCommission/totalBasePrice) : 0;
 
@@ -106,6 +109,8 @@ export class RequestsService {
       const combinedRule = {
         ...baseRule,
         basePrice: totalBasePrice,
+        includedMinutes: rawItems.reduce((total,item)=>total
+          + ruleFromRow(serviceMap.get(item.serviceId)!).includedMinutes*item.quantity,0),
         expectedMinutes: totalExpectedMinutes,
       };
 

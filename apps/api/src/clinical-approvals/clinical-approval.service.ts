@@ -37,8 +37,9 @@ export class ClinicalApprovalService {
 
   async listPending(actorUserId: string) {
     const result = await this.repository.pending();
-    await this.db.query(`INSERT INTO clinical_access_audit(request_id,actor_user_id,action)
-      SELECT request_id,$1,'LIST_QUEUE' FROM request_clinical_reviews WHERE status='PENDING'`, [actorUserId]);
+    if (result.rows.length) await this.db.query(`INSERT INTO clinical_access_audit(request_id,actor_user_id,action)
+      SELECT request_id,$1,'LIST_QUEUE' FROM unnest($2::uuid[]) AS listed(request_id)`,
+    [actorUserId,result.rows.map(row=>row.request_id)]);
     return result.rows;
   }
 

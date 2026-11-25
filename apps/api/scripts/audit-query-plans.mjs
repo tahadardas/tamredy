@@ -11,14 +11,14 @@ try{
   const indexes=await client.query(`SELECT tablename,indexname,indexdef FROM pg_indexes
     WHERE schemaname='public' AND tablename IN
     ('care_requests','nurses','nurse_locations','request_offers','request_assignments',
-     'services','beneficiaries','nurse_credentials','nurse_skills','ledger_lines')
+     'services','beneficiaries','nurse_credentials','nurse_skills','financial_ledger_entries')
     ORDER BY tablename,indexname`);
   console.log(`Existing tracked indexes: ${indexes.rowCount}`);
   for(const row of indexes.rows)console.log(`${row.tablename} / ${row.indexname}`);
   const expected=['idx_requests_owner_created_id','idx_requests_created_id','idx_requests_status_created_id',
     'idx_nurse_locations_gist','idx_credentials_nurse_expiry','idx_skills_service_approved_nurse',
-    'idx_assignments_nurse_history','uq_active_assignment_per_request',
-    'uq_active_assignment_per_nurse','idx_ledger_lines_transaction'];
+    'idx_assignments_nurse_history','uq_open_assignment_per_request',
+    'uq_executing_assignment_per_nurse','idx_ledger_transaction','idx_marketplace_approved_created'];
   const found=new Set(indexes.rows.map(r=>r.indexname));
   const missing=expected.filter(x=>!found.has(x));
   if(missing.length){console.error('Missing index(es):',missing.join(', '));process.exitCode=1;}

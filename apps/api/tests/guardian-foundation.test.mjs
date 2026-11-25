@@ -156,6 +156,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   const shiftRepository = new ShiftsRepository(adapter);
   const shiftService = new ShiftsService(shiftRepository, grants);
   const ops = new StaffCasesService(grants, shiftRepository);
+  const ungrantedReviewer = await makeUser('clinical-no-safety', 'CLINICAL_REVIEWER');
   const plainAdmin = await makeUser('admin', 'ADMIN');
   const operator = await makeUser('operator', 'ADMIN');
   const otherOperator = await makeUser('operator-b', 'ADMIN');
@@ -168,7 +169,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     name: 'جهة اختبارية', category: 'APPROVED_SUPPORT', governorate: 'دمشق',
     dialNumber: '000000', officialSource: 'مرجع اختباري', publishVerified: false,
   };
-  await assert.rejects(directory.save(plainAdmin, draft), { status: 403 });
+  await assert.rejects(directory.save(ungrantedReviewer, draft), { status: 403 });
   const directoryEntry = await directory.save(supervisor, draft);
   assert.deepEqual(await directory.visible(), []);
   await directory.save(supervisor, { ...draft, publishVerified: true }, directoryEntry.id);
@@ -193,7 +194,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     decision: 'ACCEPTED', allowsLocation: true,
     verificationReference: 'verification-1', verifiedPhone: nominated.phone,
   };
-  await assert.rejects(contacts.consent(plainAdmin, contact.id, confirmation), { status: 403 });
+  await assert.rejects(contacts.consent(ungrantedReviewer, contact.id, confirmation), { status: 403 });
   await assert.rejects(contacts.consent(supervisor, contact.id, {
     ...confirmation, verifiedPhone: '+963987654322',
   }), { status: 409 });
@@ -204,8 +205,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await contacts.remove(nurse, contact.id);
   assert.deepEqual(await contacts.list(nurse), []);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM trusted_contact_consents WHERE contact_id=$1', [contact.id])).rows[0].n, 3);
-  await assert.rejects(ops.list(plainAdmin), { status: 403 });
-  await assert.rejects(ops.dashboard(plainAdmin), { status: 403 });
+  await assert.rejects(ops.list(ungrantedReviewer), { status: 403 });
+  await assert.rejects(ops.dashboard(ungrantedReviewer), { status: 403 });
   const summary = await ops.dashboard(operator);
   assert.equal(summary.canResolve, false);
   assert.equal(summary.coverage, 'UNCOVERED');
@@ -396,7 +397,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   const approval = await evidence.approve(supervisor,entry.id, {
     exporterId: separate, purpose: 'مراجعة الحادثة', recipient: 'جهة مراجعة معتمدة',
   });
-  await assert.rejects(evidence.generate(supervisor,entry.id,approval.id), {status: 403});
+  await assert.rejects(evidence.generate(ungrantedReviewer,entry.id,approval.id), {status: 403});
+  await assert.rejects(evidence.generate(supervisor,entry.id,approval.id), {status: 404});
   const exported = await evidence.generate(separate,entry.id,approval.id);
   assert.equal((await evidence.generate(separate,entry.id,approval.id)).id,exported.id);
   const bytes = await evidence.download(separate,exported.id);

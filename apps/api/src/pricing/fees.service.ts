@@ -50,7 +50,8 @@ export class DuesService {
       coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_TO_NURSE'
         AND e.account_id='NURSE_PAYABLE:'||$1::text THEN e.debit_amount ELSE 0 END),0) AS to_nurse,
       (SELECT nurse_debt_limit FROM pricing_settings WHERE id=1) AS debt_limit
-      FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id`, [nurseId])).rows[0];
+      FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
+      WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||$1::text,'NURSE_PAYABLE:'||$1::text)`, [nurseId])).rows[0];
     const cashHeld = Number(r.cash_held), nursePayable = Number(r.nurse_payable);
     const fromNurse = Number(r.from_nurse), toNurse = Number(r.to_nurse), limit = Number(r.debt_limit);
     const balance = cashHeld - nursePayable;

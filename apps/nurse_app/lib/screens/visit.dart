@@ -121,12 +121,32 @@ class VisitFlowScreen extends StatelessWidget {
         ),
         if (assigned)
           PrimaryButton('بدأت التوجه إلى المريض', onPressed: c.busy ? null : c.depart)
-        else if (!arrived)
-          SoftButton('وصلت إلى الموقع', onPressed: c.arrive)
+        else if (!arrived) ...[
+          SoftButton('وصلت إلى الموقع', onPressed: c.busy ? null : () => c.arrive()),
+          if (c.arrivalOverrideAvailable)
+            SoftButton('توثيق استثناء الموقع', onPressed: c.busy ? null : () => _arrivalOverride(context)),
+        ]
         else
           PrimaryButton('بدء الزيارة', onPressed: c.start),
       ],
     );
+  }
+
+  Future<void> _arrivalOverride(BuildContext context) async {
+    var reason='';
+    final result=await showDialog<String>(
+      context:context,
+      builder:(dialogContext)=>StatefulBuilder(builder:(dialogContext,update)=>AlertDialog(
+        title:const Text('سبب تعذر التحقق من الموقع'),
+        content:TextField(maxLength:500,maxLines:3,onChanged:(value)=>update(()=>reason=value.trim())),
+        actions:[
+          TextButton(onPressed:()=>Navigator.of(dialogContext).pop(),child:const Text('إلغاء')),
+          TextButton(onPressed:reason.length<5 ? null : ()=>Navigator.of(dialogContext).pop(reason),
+            child:const Text('حفظ السبب')),
+        ],
+      )),
+    );
+    if (result!=null && context.mounted) await c.arrive(overrideReason:result);
   }
 
   // N04

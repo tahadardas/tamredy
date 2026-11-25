@@ -323,8 +323,9 @@ export class HealthRecordsService {
       FROM care_requests cr
       JOIN request_assignments ra ON ra.request_id = cr.id AND ra.status = 'ACTIVE'
       JOIN nurses n ON n.id = ra.nurse_id
-      WHERE cr.id = $1
-    `, [requestId]);
+      JOIN beneficiaries b ON b.id=cr.beneficiary_id AND b.consent_status='GRANTED'
+      WHERE cr.id=$1 AND n.user_id=$2 AND cr.status IN ('ARRIVED','IN_SERVICE')
+    `, [requestId,nurseUserId]);
 
     if (!reqRes.rowCount) throw new NotFoundException({ code: 'ACTIVE_ASSIGNMENT_NOT_FOUND' });
     if (reqRes.rows[0].nurse_user_id !== nurseUserId) throw new ForbiddenException({ code: 'NOT_ASSIGNED_NURSE' });
