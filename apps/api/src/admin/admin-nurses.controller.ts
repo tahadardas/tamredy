@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post,
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from '../auth/auth.guard.js';
-import { defaultPasswordFor, hashPassword } from '../auth/auth.service.js';
+import { generatePassword, hashPassword } from '../auth/auth.service.js';
 import { issueManualRecoveryPassword } from '../auth/manual-password-recovery.js';
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
@@ -87,12 +87,13 @@ export class AdminNursesController {
 
   @Post('nurses/manage') async create(@Request() r: AuthRequest, @Body() d: CreateNurseDto) {
     requireRole(r.user!, 'ADMIN');
-    const password = d.password ?? await defaultPasswordFor(this.db);
+    const password = d.password ?? generatePassword(20);
     return this.db.transaction(async c => {
       if ((await c.query('SELECT 1 FROM users WHERE phone_e164=$1', [d.phone])).rowCount) conflict('PHONE_ALREADY_REGISTERED');
       if (d.nurseNo && (await c.query('SELECT 1 FROM nurses WHERE nurse_no=$1', [d.nurseNo])).rowCount) conflict('NURSE_NO_TAKEN');
       await checkRegion(c, d.governorateId, d.areaId);
-      const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash,must_change_password,created_by) VALUES($1,'NURSE',$2,$3,true,$4) RETURNING id`,
+      const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash,must_change_password,created_by,temporary_password_expires_at)
+        VALUES($1,'NURSE',$2,$3,true,$4,statement_timestamp()+interval '30 minutes') RETURNING id`,
         [d.phone, d.displayName, hashPassword(password), r.user!.id])).rows[0];
       const n = (await c.query(`INSERT INTO nurses(user_id,nurse_no,governorate_id,area_id,specialty,national_id_enc,notes) VALUES($1,coalesce($2,nextval('nurse_no_seq')),$3,$4,$5,$6,$7) RETURNING id,nurse_no`,
         [u.id, d.nurseNo ?? null, d.governorateId ?? null, d.areaId ?? null, d.specialty ?? null, d.nationalId ? this.docs.encryptText(d.nationalId) : null, d.notes ?? null])).rows[0];

@@ -260,7 +260,7 @@ export class VoiceService {
   async getCall(userId: string, callId: string) {
     const res = await this.db.query(`
       SELECT s.*,
-             u1.phone_e164 AS caller_phone, u2.phone_e164 AS receiver_phone
+             u1.display_name AS caller_name, u2.display_name AS receiver_name
       FROM voice_call_sessions s
       JOIN users u1 ON u1.id = s.caller_user_id
       JOIN users u2 ON u2.id = s.receiver_user_id

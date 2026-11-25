@@ -53,6 +53,6 @@ CREATE TABLE clinical_access_audit (
   request_id uuid NOT NULL REFERENCES care_requests(id),
   evidence_id uuid REFERENCES request_clinical_evidence(id),
   actor_user_id uuid NOT NULL REFERENCES users(id),
-  action text NOT NULL CHECK(action IN ('LIST_QUEUE','VIEW_EVIDENCE','UPLOAD_EVIDENCE','DECIDE')),
+  action text NOT NULL CHECK(action IN ('LIST_QUEUE','LIST_EVIDENCE','VIEW_EVIDENCE','UPLOAD_EVIDENCE','DECIDE')),
   occurred_at timestamptz NOT NULL DEFAULT statement_timestamp()
 );

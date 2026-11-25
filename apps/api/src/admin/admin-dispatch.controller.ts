@@ -102,7 +102,7 @@ export class AdminDispatchController {
       SELECT cr.id, cr.status, cr.address_text, cr.price_amount, cr.currency_code,
              cr.created_at, cr.updated_at,
              s.title_ar AS service_title, s.code AS service_code,
-             u.display_name AS requester_name, u.phone_e164 AS requester_phone,
+             u.display_name AS requester_name, '***'||right(u.phone_e164,4) AS requester_phone,
              dj.next_wave, dj.next_run_at
       FROM care_requests cr
       JOIN services s ON s.id = cr.service_id
@@ -123,7 +123,7 @@ export class AdminDispatchController {
     // 3. Offers created
     const offers = await this.db.query(`
       SELECT ro.id, ro.wave_no, ro.status, ro.created_at, ro.expires_at,
-             n.id AS nurse_id, u.display_name AS nurse_name, u.phone_e164 AS nurse_phone
+             n.id AS nurse_id, u.display_name AS nurse_name, '***'||right(u.phone_e164,4) AS nurse_phone
       FROM request_offers ro
       JOIN nurses n ON n.id = ro.nurse_id
       JOIN users u ON u.id = n.user_id

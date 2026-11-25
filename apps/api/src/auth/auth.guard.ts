@@ -43,8 +43,12 @@ export async function requireActiveDeviceSession(
   userId: string,
   sessionId: unknown,
 ): Promise<void> {
-  // Browser and legacy tokens may be issued without a device binding.
-  if (sessionId === undefined || sessionId === null) return;
+  if (sessionId === undefined || sessionId === null) {
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LEGACY_UNBOUND_SESSIONS !== 'true') {
+      throw new UnauthorizedException({ code: 'DEVICE_SESSION_REQUIRED' });
+    }
+    return;
+  }
   if (typeof sessionId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)) {
     throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
   }

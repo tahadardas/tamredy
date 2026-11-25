@@ -50,6 +50,15 @@ export class ClinicalApprovalService {
     return { row, bytes: await this.documents.read(row.storage_key) };
   }
 
+  async listEvidence(actorUserId: string, requestId: string) {
+    const review = await this.db.query('SELECT 1 FROM request_clinical_reviews WHERE request_id=$1', [requestId]);
+    if (!review.rowCount) missing();
+    const evidence = await this.repository.evidenceForRequest(requestId);
+    await this.db.query(`INSERT INTO clinical_access_audit(request_id,actor_user_id,action)
+      VALUES($1,$2,'LIST_EVIDENCE')`, [requestId,actorUserId]);
+    return evidence.rows;
+  }
+
   async decide(actorUserId: string, requestId: string, dto: ClinicalDecisionDto) {
     return this.db.transaction(async client => {
       const review = (await this.repository.lock(client,requestId)).rows[0];

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Put, Query, Request, UseGuards } from '@nestjs/common';
-import { IsArray, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { HealthRecordsService, ObservationInputDto, UpdateBeneficiaryProfileDto, VisitNoteInputDto } from './health-records.service.js';
@@ -20,6 +20,9 @@ class SingleObservationDto implements ObservationInputDto {
   @MaxLength(500)
   notes?: string;
 
+  @IsOptional() @IsString() @MaxLength(100) textValue?: string;
+  @IsOptional() @IsString() @MaxLength(30) unit?: string;
+
   @IsOptional()
   @IsIn(['NURSE_VISIT', 'PATIENT_SELF_REPORT', 'CLINICAL_VERIFIED'])
   source?: 'NURSE_VISIT' | 'PATIENT_SELF_REPORT' | 'CLINICAL_VERIFIED';
@@ -27,6 +30,7 @@ class SingleObservationDto implements ObservationInputDto {
 
 class RecordObservationsDto {
   @IsArray()
+  @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => SingleObservationDto)
   observations!: SingleObservationDto[];
@@ -37,8 +41,10 @@ class RecordObservationsDto {
 }
 
 class SaveVisitNoteDto implements VisitNoteInputDto {
+  @IsOptional()
   @IsArray()
-  servicesPerformed!: Array<{ serviceId: string; titleAr: string; status: 'COMPLETED' | 'SKIPPED'; skipReason?: string }>;
+  @ArrayMaxSize(20)
+  servicesPerformed?: Array<{ serviceId: string; titleAr: string; status: 'COMPLETED' | 'SKIPPED'; skipReason?: string }>;
 
   @IsString()
   @MaxLength(4000)
@@ -64,7 +70,17 @@ class SaveVisitNoteDto implements VisitNoteInputDto {
   amendmentReason?: string;
 
   @IsOptional()
+  @IsBoolean()
   isDraft?: boolean;
+}
+
+class CompatibilityObservationsDto extends RecordObservationsDto {
+  @IsUUID() requestId!: string;
+  @IsOptional() @IsUUID() beneficiaryId?: string;
+}
+
+class CompatibilityVisitNoteDto extends SaveVisitNoteDto {
+  @IsUUID() requestId!: string;
 }
 
 @Controller('v1')
@@ -97,9 +113,10 @@ export class HealthRecordsController {
     @Param('id') beneficiaryId: string,
     @Query('type') observationType?: string,
     @Query('limit') limit?: string,
+    @Query('requestId') requestId?: string,
   ) {
     const numLimit = limit ? parseInt(limit, 10) : 50;
-    return this.health.getObservationTimeline(r.user!.id, beneficiaryId, observationType, numLimit);
+    return this.health.getObservationTimeline(r.user!.id, beneficiaryId, observationType, numLimit, requestId);
   }
 
   @Post('beneficiaries/:id/observations')
@@ -144,19 +161,16 @@ export class HealthRecordsController {
   @HttpCode(201)
   async postHealthObservations(
     @Request() r: AuthRequest,
-    @Body() body: any,
+    @Body() body: CompatibilityObservationsDto,
   ) {
-    const benId = body.beneficiaryId;
-    const reqId = body.requestId;
-    const obsList = body.observations ?? (body.observationType ? [body] : []);
-    return this.health.recordObservations(r.user!.id, benId, reqId, obsList);
+    return this.health.recordObservations(r.user!.id, body.beneficiaryId, body.requestId, body.observations);
   }
 
   @Post('health-records/notes')
   @HttpCode(201)
   async postHealthNotes(
     @Request() r: AuthRequest,
-    @Body() body: any,
+    @Body() body: CompatibilityVisitNoteDto,
   ) {
     requireRole(r.user!, 'NURSE');
     return this.health.saveVisitNote(r.user!.id, body.requestId, body, body.isDraft);

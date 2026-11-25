@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpException, Param, ParseUUIDPipe, P
 import { IsString, MaxLength } from 'class-validator';
 import { randomUUID } from 'node:crypto';
 import { AuthGuard, AuthRequest } from './auth.guard.js';
+import { permissionsFor } from './permissions.js';
 import { AuthService, defaultPasswordFor, hashPassword, verifyPassword } from './auth.service.js';
 import { DbService } from '../db/db.service.js';
 
@@ -14,7 +15,7 @@ export class AccountController {
 
   @Get('me') async me(@Request() r: AuthRequest) {
     const u = (await this.db.query('SELECT id,role,display_name,phone_e164,must_change_password FROM users WHERE id=$1', [r.user!.id])).rows[0];
-    return { ...u, mustChangePassword: u.must_change_password };
+    return { ...u, mustChangePassword: u.must_change_password, permissions: permissionsFor(u.role) };
   }
 
   @Get('sessions') async sessions(@Request() r: AuthRequest) {

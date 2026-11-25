@@ -20,6 +20,7 @@ import {SafetyDirectory} from './pages_safety_directory';
 import {DispatchMonitor} from './pages_dispatch';
 import {CancellationAppeals} from './pages_appeals';
 import {AppointmentsSchedule, SupportReports, LedgerAudit, BITelemetry, BookingMarketplaceAdmin} from './pages_expansion';
+import {ClinicalReviews} from './pages_clinical_reviews';
 
 export type NavItem = {
   id: string;
@@ -65,6 +66,7 @@ export const navCategories: NavCategory[] = [
       },
       {id: 'nurses', label: 'دليل الممرضين', icon: 'users', title: 'دليل الكوادر التمريضية', desc: 'بيانات الممرضين، المهارات، والمستندات الثبوتية'},
       {id: 'credentials', label: 'اعتماد التراخيص', icon: 'check', title: 'اعتماد الصلاحيات والتراخيص', desc: 'تدقيق المستندات الطبية واعتماد سريان المهنة'},
+      {id: 'clinical-reviews', label: 'المراجعات السريرية', icon: 'check', title: 'المراجعات السريرية', desc: 'التحقق من الوصفات والمتطلبات السريرية قبل توزيع الطلب'},
       {id: 'top', label: 'المتميزون والمكافآت', icon: 'heart', title: 'الكادر التمريضي المتميز', desc: 'أفضل الممرضين تقييماً ومكافآت الأداء'},
       {id: 'accounts', label: 'إدارة الحسابات', icon: 'user', title: 'إدارة المستخدمين والحسابات', desc: 'سجلات المرضى والممرضين والحسابات الإدارية'},
     ],
@@ -252,6 +254,7 @@ function App() {
       }
       setMustChange(false);
       if (who.role === 'CLINICAL_REVIEWER') {
+        setActive(current => ['applications','credentials','clinical-reviews'].includes(current) ? current : 'clinical-reviews');
         const pending = await getJson('/v1/admin/credentials/pending').catch(() => undefined);
         setExtra({pending});
         setError('');
@@ -356,6 +359,7 @@ function App() {
     applications: <Applications live={live} />,
     nurses: <Nurses live={live} />,
     credentials: <Credentials live={live} />,
+    'clinical-reviews': <ClinicalReviews />,
     finance: <Finance live={live} />,
     wallet: <WalletRec live={live} />,
     'ledger-audit': <LedgerAudit live={live} />,
@@ -388,7 +392,9 @@ function App() {
         </div>
 
         <nav className="side-nav">
-          {navCategories.map(cat => (
+          {navCategories.map(cat => ({...cat,items:me?.role==='CLINICAL_REVIEWER'
+            ? cat.items.filter(item=>['applications','credentials','clinical-reviews'].includes(item.id))
+            : cat.items})).filter(cat=>cat.items.length).map(cat => (
             <div key={cat.title} className="nav-group">
               <span className="nav-group-title">{cat.title}</span>
               <div className="nav-group-items">

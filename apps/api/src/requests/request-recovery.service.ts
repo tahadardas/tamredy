@@ -23,7 +23,7 @@ export class RequestRecoveryService {
         sv.appointment_at AS scheduled_at,
         a.id AS assignment_id, a.nurse_id,
         CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.display_name END AS nurse_name,
-        CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.phone_e164 END AS nurse_phone,
+        NULL::text AS nurse_phone,
         CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at>statement_timestamp()-interval '120 seconds'
           THEN ST_Y(nl.location::geometry) END AS nurse_lat,
         CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at>statement_timestamp()-interval '120 seconds'
@@ -98,7 +98,7 @@ export class RequestRecoveryService {
         s.id AS service_id,s.title_ar AS service_title,s.code AS service_code,s.requires_prescription,
         b.display_name AS beneficiary_name,
         CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.display_name END AS patient_name,
-        CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.phone_e164 END AS patient_phone
+        NULL::text AS patient_phone
       FROM request_assignments a
       JOIN care_requests cr ON cr.id=a.request_id
       JOIN services s ON s.id=cr.service_id

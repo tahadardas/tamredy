@@ -28,4 +28,11 @@ export class ClinicalApprovalRepository {
     return this.db.query(`SELECT e.*,cr.requester_user_id FROM request_clinical_evidence e
       JOIN care_requests cr ON cr.id=e.request_id WHERE e.id=$1 AND e.deleted_at IS NULL`, [evidenceId]);
   }
+
+
+  evidenceForRequest(requestId: string) {
+    return this.db.query(`SELECT id,evidence_type,original_filename,mime_type,file_size_bytes,created_at
+      FROM request_clinical_evidence WHERE request_id=$1 AND deleted_at IS NULL
+      ORDER BY created_at,id`, [requestId]);
+  }
 }
