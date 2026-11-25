@@ -136,7 +136,13 @@ class _SearchingRadarAnimationState extends State<SearchingRadarAnimation> with 
 class TrackScreen extends StatelessWidget {
   final PatientController c;
   final TamBottomNav nav;
-  const TrackScreen({super.key, required this.c, required this.nav});
+  final bool embedded;
+  const TrackScreen({
+    super.key,
+    required this.c,
+    required this.nav,
+    this.embedded = false,
+  });
 
   Future<void> _attachEvidence(BuildContext context, String requestId, String type) async {
     final messages = ScaffoldMessenger.of(context);
@@ -200,7 +206,8 @@ class TrackScreen extends StatelessWidget {
       return TamScaffold(
         title: 'المراجعة السريرية',
         subtitle: pending ? 'بانتظار اعتماد المستندات' : 'تعذر اعتماد الطلب سريريًا',
-        nav: nav,
+        nav: embedded ? null : nav,
+        showHeader: !embedded,
         children: [
           if (pending) ...[
             PrimaryButton(
@@ -323,7 +330,8 @@ class TrackScreen extends StatelessWidget {
       return TamScaffold(
         title: 'لم نجد ممرضاً متاحاً فوراً',
         subtitle: 'تعذر توفير كادر فوري في هذه اللحظة',
-        nav: nav,
+        nav: embedded ? null : nav,
+        showHeader: !embedded,
         children: [
           TamCard(
             padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),

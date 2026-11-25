@@ -8,7 +8,11 @@ import 'patient_alarm.dart';
 import 'screens/home.dart';
 import 'screens/history.dart';
 import 'screens/wallet.dart';
-import 'screens/track.dart';
+import 'screens/chat.dart';
+import 'screens/saved_places.dart';
+import 'screens/health_record.dart';
+import 'screens/favorite_nurses.dart';
+import 'screens/care_plans.dart';
 import 'screens/referral.dart';
 
 final ValueNotifier<ThemeMode> patientThemeMode = ValueNotifier(ThemeMode.light);
@@ -69,8 +73,10 @@ class TamreedyPatientApp extends StatelessWidget {
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      builder: (context, child) =>
-          Directionality(textDirection: TextDirection.rtl, child: child!),
+      builder: (context, child) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: TamScaledTextScope(child: child!),
+      ),
       home: AuthGate(
         api: controller.api,
         role: 'PATIENT',
@@ -104,7 +110,7 @@ class TamreedyPatientApp extends StatelessWidget {
 const patientNav = [
   NavItem(Icons.home_outlined, 'الرئيسية'),
   NavItem(Icons.calendar_today_outlined, 'طلباتي'),
-  NavItem(Icons.account_balance_wallet_outlined, 'محفظتي'),
+  NavItem(Icons.chat_bubble_outline_rounded, 'الرسائل'),
   NavItem(Icons.person_outline, 'حسابي'),
 ];
 
@@ -137,11 +143,9 @@ class PatientShell extends StatelessWidget {
       );
       switch (c.tab) {
         case 1:
-          return c.stage == VisitStage.none
-              ? HistoryScreen(c: c, nav: nav)
-              : TrackScreen(c: c, nav: nav);
+          return HistoryScreen(c: c, nav: nav);
         case 2:
-          return WalletScreen(c: c, nav: nav);
+          return _PatientMessagesTab(c: c, nav: nav);
         case 3:
           return _PatientProfileScreen(c: c, nav: nav);
         default:
@@ -149,6 +153,39 @@ class PatientShell extends StatelessWidget {
       }
     },
   );
+}
+
+class _PatientMessagesTab extends StatelessWidget {
+  final PatientController c;
+  final TamBottomNav nav;
+  const _PatientMessagesTab({required this.c, required this.nav});
+
+  @override
+  Widget build(BuildContext context) {
+    final reqId = c.requestId;
+    if (reqId != null && c.stage != VisitStage.none) {
+      return PatientChatScreen(
+        c: c,
+        requestId: reqId,
+        nurseName: c.nurseBadge?['name']?.toString() ?? 'الممرض المعتمد',
+      );
+    }
+    return TamScaffold(
+      title: 'الرسائل',
+      subtitle: 'محادثات الزيارات النشطة',
+      nav: nav,
+      children: [
+        TamEmptyState(
+          icon: Icons.chat_bubble_outline_rounded,
+          title: 'لا توجد محادثات نشطة حالياً',
+          message:
+              'عند قبول طلبك وإسناده لممرض، يمكنك التواصل معه مباشرة من هنا.',
+          actionLabel: 'استعراض طلباتي',
+          onAction: () => c.setTab(1),
+        ),
+      ],
+    );
+  }
 }
 
 class _PatientProfileScreen extends StatelessWidget {
@@ -173,6 +210,33 @@ class _PatientProfileScreen extends StatelessWidget {
                 subtitle: 'المستفيد الافتراضي',
               ),
               ListRow(
+                icon: Icons.place_outlined,
+                title: 'الأماكن المحفوظة',
+                subtitle: 'إدارة عناوين الزيارة المحفوظة',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => TamScaffold(
+                      title: 'الأماكن المحفوظة',
+                      subtitle: 'إدارة عناوين الزيارة المحفوظة',
+                      showBack: true,
+                      children: [
+                        SavedPlaces(
+                          api: c.api,
+                          onSelected: (p) {
+                            c.selectVisitLocation(
+                              p.point,
+                              p.address,
+                              accuracyMeters: p.accuracy,
+                            );
+                            Navigator.of(context).pop();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              ListRow(
                 icon: Icons.logout_rounded,
                 title: 'تسجيل الخروج',
                 subtitle: 'الخروج والتبديل لحساب آخر',
@@ -195,45 +259,131 @@ class _PatientProfileScreen extends StatelessWidget {
             ],
           ),
         ),
-        const SectionTitle('المظهر'),
+        const SectionTitle('الرعاية والسجل الصحي'),
         TamCard(
-          child: ValueListenableBuilder<ThemeMode>(
-            valueListenable: patientThemeMode,
-            builder: (context, mode, _) => Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'سمة العرض',
-                  style: aeroText(
-                    size: 14,
-                    weight: FontWeight.w700,
-                    color: tc.textPrimary,
+          child: Column(
+            children: [
+              ListRow(
+                icon: Icons.folder_shared_outlined,
+                title: 'السجل الصحي والتقارير',
+                subtitle: 'الحساسية والتاريخ المرضي والوصفات',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => HealthRecordScreen(c: c),
                   ),
                 ),
-                const SizedBox(height: TamSpacing.sm),
-                SegmentedButton<ThemeMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: ThemeMode.light,
-                      label: Text('فاتح'),
-                      icon: Icon(Icons.light_mode_outlined),
+              ),
+              ListRow(
+                icon: Icons.favorite_outline_rounded,
+                title: 'الممرضون المفضلون',
+                subtitle: 'الكوادر التمريضية المفضلة لديك',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => FavoriteNursesScreen(c: c),
+                  ),
+                ),
+              ),
+              ListRow(
+                icon: Icons.calendar_month_outlined,
+                title: 'خطط الرعاية المستمرة',
+                subtitle: 'متابعة الزيارات الدورية المجدولة',
+                divider: false,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => CarePlansScreen(c: c),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SectionTitle('المالية والفواتير'),
+        TamCard(
+          child: Column(
+            children: [
+              ListRow(
+                icon: Icons.receipt_long_outlined,
+                title: 'الفواتير وسجل الطلبات',
+                subtitle: 'استعراض الفواتير المستحقة والسابقة',
+                onTap: () => c.setTab(1),
+              ),
+              ListRow(
+                icon: Icons.account_balance_wallet_outlined,
+                title: 'المحفظة الإلكترونية',
+                subtitle: 'حالة التفعيل وطرق الدفع المعتمدة',
+                divider: false,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => WalletScreen(c: c, nav: nav),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SectionTitle('المظهر وسهولة القراءة'),
+        TamCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<ThemeMode>(
+                valueListenable: patientThemeMode,
+                builder: (context, mode, _) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'سمة العرض',
+                      style: TamTypography.cardTitle(color: tc.textPrimary),
                     ),
-                    ButtonSegment(
-                      value: ThemeMode.dark,
-                      label: Text('داكن'),
-                      icon: Icon(Icons.dark_mode_outlined),
-                    ),
-                    ButtonSegment(
-                      value: ThemeMode.system,
-                      label: Text('النظام'),
-                      icon: Icon(Icons.brightness_auto_outlined),
+                    const SizedBox(height: TamSpacing.sm),
+                    SegmentedButton<ThemeMode>(
+                      segments: const [
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          label: Text('فاتح'),
+                          icon: Icon(Icons.light_mode_outlined),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          label: Text('داكن'),
+                          icon: Icon(Icons.dark_mode_outlined),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          label: Text('النظام'),
+                          icon: Icon(Icons.brightness_auto_outlined),
+                        ),
+                      ],
+                      selected: {mode},
+                      onSelectionChanged: (s) => patientThemeMode.value = s.first,
                     ),
                   ],
-                  selected: {mode},
-                  onSelectionChanged: (s) => patientThemeMode.value = s.first,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: TamSpacing.lg),
+              ValueListenableBuilder<double>(
+                valueListenable: tamUiScale,
+                builder: (context, scale, _) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'حجم النص للوضوح (وضع كبار السن)',
+                      style: TamTypography.cardTitle(color: tc.textPrimary),
+                    ),
+                    const SizedBox(height: TamSpacing.sm),
+                    SegmentedButton<double>(
+                      segments: const [
+                        ButtonSegment(value: 1.0, label: Text('قياسي')),
+                        ButtonSegment(value: 1.15, label: Text('كبير')),
+                        ButtonSegment(value: 1.3, label: Text('أكبر')),
+                      ],
+                      selected: {scale},
+                      onSelectionChanged: (s) => tamUiScale.value = s.first,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
         if (!kDemoMode) ...[
