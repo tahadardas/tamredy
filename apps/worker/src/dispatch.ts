@@ -79,7 +79,8 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
   try {
     await c.query('BEGIN');
     const due = await c.query(`
-      SELECT j.request_id, cr.status, cr.service_id, cr.requester_user_id, cr.search_expires_at
+      SELECT j.request_id, cr.status, cr.service_id, cr.requester_user_id, cr.search_expires_at,
+        cr.clinical_approval_status
       FROM dispatch_jobs j JOIN care_requests cr ON cr.id = j.request_id
       WHERE j.next_run_at <= now()
       ORDER BY j.next_run_at, j.request_id LIMIT 1
@@ -103,7 +104,7 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
     }
     const wave: number = job.rows[0].next_wave;
 
-    if (request.status !== 'OFFERING') {
+    if (request.status !== 'OFFERING' || !['NOT_REQUIRED','APPROVED'].includes(request.clinical_approval_status)) {
       await c.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [requestId]);
       await c.query('COMMIT');
       return true;

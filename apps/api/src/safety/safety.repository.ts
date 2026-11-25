@@ -84,7 +84,12 @@ export class SafetyRepository {
     await client.query(`INSERT INTO emergency_event_actions(event_id,actor_user_id,action)
       VALUES($1,$2,'RECEIVED')`, [eventId, owner]);
     await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-      VALUES('safety.sos_received',$1,jsonb_build_object('eventId',$1::uuid))`, [eventId]);
+      VALUES('safety.sos_received',$1,jsonb_build_object(
+        'eventId',$1::uuid,
+        'recipientUserIds',coalesce((SELECT jsonb_agg(DISTINCT g.user_id)
+          FROM safety_staff_grants g JOIN users u ON u.id=g.user_id
+          WHERE g.revoked_at IS NULL AND u.status='ACTIVE'),'[]'::jsonb)
+      ))`, [eventId]);
   }
 
   async event(owner: string, id: string) {

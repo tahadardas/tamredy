@@ -91,8 +91,9 @@ test('staff see the application with names and region, can open files (audited),
 
 test('approval creates the account with the initial password, a verified nurse, her documents and an approved licence', async () => {
   const r = await admin.approve(asAdmin, appId);
-  assert.deepEqual([r.account.phone, r.account.defaultPassword], ['+963922000001', '123456']);
-  const t = await auth.login('+963922000001', '123456');
+  assert.equal(r.account.phone,'+963922000001');
+  assert.equal(r.account.defaultPassword.length,20);
+  const t = await auth.login('+963922000001',r.account.defaultPassword);
   assert.deepEqual([t.role, t.mustChangePassword], ['NURSE', true]);
   const n = (await pg.query('SELECT verified,governorate_id,area_id,specialty FROM nurses WHERE id=$1', [r.nurseId])).rows[0];
   assert.deepEqual([n.verified, n.governorate_id, n.area_id, n.specialty], [true, gov, area, 'عناية منزلية']);

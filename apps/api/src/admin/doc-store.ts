@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { BadRequestException, Injectable } from '@nestjs/common';
 
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -33,6 +33,7 @@ export class DocStore {
   private key(): Buffer {
     const k = process.env.DOCS_ENC_KEY;
     if (k && /^[0-9a-f]{64}$/i.test(k)) return Buffer.from(k, 'hex');
+    if (process.env.NODE_ENV === 'production') throw new Error('DOCS_ENC_KEY is required in production');
     const s = process.env.JWT_SECRET;
     if (!s || s.length < 32) throw new Error('JWT_SECRET (or DOCS_ENC_KEY) required for document encryption');
     return Buffer.from(hkdfSync('sha256', s, 'tamreedy-docs', 'docs-v1', 32));
@@ -40,7 +41,8 @@ export class DocStore {
   private root() { return resolve(process.env.UPLOADS_DIR ?? './uploads'); }
   private path(key: string) {
     const p = resolve(this.root(), key);
-    if (!p.startsWith(this.root())) throw new Error('bad storage key'); // path traversal guard
+    const rel = relative(this.root(),p);
+    if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('bad storage key');
     return p;
   }
 

@@ -1,14 +1,24 @@
-import { closeOpenOffers } from './offer-outbox.js';
 import { Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
-import { conflict, forbidden, gone, missing } from '../common/errors.js';
+import { conflict, gone, missing } from '../common/errors.js';
 import { commissionFor, computeBill, ruleFromRow } from '../pricing/pricing.js';
-import { DuesService, FeesService } from '../pricing/fees.service.js';
+import { FeesService } from '../pricing/fees.service.js';
 import { RoutesService } from '../maps/routes.service.js';
+import { NurseEligibilityEngine } from './nurse-eligibility.engine.js';
+import { transitionRequest } from '../requests/request-lifecycle.js';
+import { AssignmentOrchestrator } from './assignment.orchestrator.js';
+import { BillingService } from '../pricing/billing.service.js';
 
 @Injectable()
 export class DispatchService {
-  constructor(private readonly db: DbService, private readonly fees: FeesService = new FeesService(), private readonly dues: DuesService = new DuesService(), private readonly routes: RoutesService = new RoutesService()) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly eligibility: NurseEligibilityEngine,
+    private readonly assignments: AssignmentOrchestrator,
+    private readonly billing: BillingService,
+    private readonly fees: FeesService,
+    private readonly routes: RoutesService,
+  ) {}
 
   async offersForUser(userId: string) {
     const results = await this.db.query(`SELECT o.id,o.request_id,o.expires_at,o.wave_no,statement_timestamp() AS server_now,
@@ -57,88 +67,21 @@ export class DispatchService {
       }
       if(request?.status !== 'OFFERING') conflict('REQUEST_ALREADY_ASSIGNED_OR_CLOSED');
       if(!offer || offer.status!=='OPEN' || !offer.unexpired) gone();
-      if(!nurse?.verified || nurse.work_status !== 'AVAILABLE' || nurse.availability_intent!=='AVAILABLE') {
-        conflict('NURSE_NOT_AVAILABLE');
-      }
-      const blocked = await c.query(`
-        SELECT 1 FROM user_blocks ub
-        WHERE ((ub.blocker_user_id = $1 AND ub.blocked_user_id = $2)
-           OR (ub.blocker_user_id = $2 AND ub.blocked_user_id = $1))
-          AND ub.revoked_at IS NULL
-        LIMIT 1
-      `, [userId, request.requester_user_id]);
-      if (blocked.rowCount) conflict('MUTUALLY_BLOCKED');
-
-      const sched = await c.query(
-        `SELECT appointment_at FROM scheduled_visits WHERE request_id = $1`,
-        [requestId],
-      );
-      if (sched.rowCount) {
-        const appointmentAt = new Date(sched.rows[0].appointment_at);
-        const expectedMin = Number(request.pricing?.expectedMinutes) || 30;
-        const conflictRes = await c.query(
-          `SELECT nurse_has_schedule_conflict($1, $2::timestamptz, $3::timestamptz, $4) AS conflict`,
-          [
-            nurseId,
-            new Date(appointmentAt.getTime() - 30 * 60 * 1000).toISOString(),
-            new Date(appointmentAt.getTime() + (expectedMin + 30) * 60 * 1000).toISOString(),
-            requestId,
-          ],
-        );
-        if (conflictRes.rows[0]?.conflict) {
-          conflict('NURSE_SCHEDULE_CONFLICT');
-        }
-      }
-      const ready = await c.query(`SELECT 1 FROM nurses n
-        JOIN users u ON u.id=n.user_id AND u.status='ACTIVE'
-        JOIN care_requests r ON r.id=$2
-        LEFT JOIN nurse_locations nl ON nl.nurse_id=n.id
-        WHERE n.id=$1
-          AND n.last_heartbeat_at > clock_timestamp()-coalesce(r.search_max_heartbeat_seconds,120)*interval '1 second'
-          AND NOT EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id=n.id AND a.status='ACTIVE')
-          AND (r.search_expires_at IS NULL OR (
-            nl.recorded_at > clock_timestamp()-r.search_max_location_seconds*interval '1 second'
-            AND nl.accuracy_m <= r.search_max_accuracy_meters
-            AND ST_DWithin(nl.location,r.location,r.search_radius_meters)
-          ))`,[nurseId,requestId]);
-      if (!ready.rowCount) conflict('NURSE_NOT_AVAILABLE');
-      if (nightPolicy) {
-        const denial = (await c.query(`SELECT guardian_dispatch_denial($1,$2,statement_timestamp()) AS reason`,
-          [nurseId,requestId])).rows[0]?.reason;
-        if (denial) conflict(denial);
-      }
-      const qualified=await c.query(`SELECT 1 FROM nurse_skills sk
-        WHERE sk.nurse_id=$1 AND sk.service_id=$2 AND sk.approved=true AND EXISTS(
-          SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id=sk.nurse_id
-          AND nc.approved=true AND nc.expires_at>clock_timestamp())`,[nurseId,request.service_id]);
-      if(!qualified.rowCount) forbidden();
-      if((await this.dues.balance(c,nurseId)).blocked) conflict('SETTLEMENT_REQUIRED'); // owes the company more than the allowed limit
-      const ins=await c.query(`WITH policy AS (
-        SELECT nullif(coalesce((SELECT (value->>'departureReminderSeconds')::integer
-          FROM app_settings WHERE key='dispatch'),0),0) AS seconds
-      )
-      INSERT INTO request_assignments(request_id,nurse_id,accepted_at,departure_due_at)
-        SELECT $1,$2,statement_timestamp(),statement_timestamp()+seconds*interval '1 second' FROM policy
-        RETURNING id`,[requestId,nurseId]);
-      const assignmentId=ins.rows[0].id;
+      const assigned = await this.assignments.assignLocked(c, {
+        request,
+        nurseId,
+        actor: 'NURSE',
+        actorUserId: userId,
+        source: 'INSTANT_OFFER',
+        sourceId: offerId,
+        reserveImmediately: true,
+      });
+      const assignmentId=assigned.assignmentId;
       if (companion) await c.query(`INSERT INTO safety_companion_reservations(assignment_id,companion_id)
         VALUES($1,$2)`, [assignmentId,companion]);
-      const updateNurse=await c.query(`UPDATE nurses SET work_status='RESERVED',updated_at=now()
-        WHERE id=$1 AND work_status='AVAILABLE'`,[nurseId]);
-      if(updateNurse.rowCount!==1) conflict('NURSE_NOT_AVAILABLE');
-      const updateRequest=await c.query(`UPDATE care_requests SET status='ASSIGNED',version=version+1,
-        closed_at=statement_timestamp(),close_reason='ASSIGNED',updated_at=statement_timestamp()
-        WHERE id=$1 AND status='OFFERING'
-          AND (search_expires_at IS NULL OR search_expires_at>statement_timestamp())
-          AND EXISTS (SELECT 1 FROM request_offers o WHERE o.id=$2 AND o.expires_at>statement_timestamp()
-            ${process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true'
-              ? 'AND guardian_dispatch_denial(o.nurse_id,care_requests.id,statement_timestamp()) IS NULL' : ''})`,[requestId,offerId]);
-      if(updateRequest.rowCount!==1) gone();
       // Distance the nurse must cover (straight line x 1.3 road factor) -> automatic travel fee when enabled.
       await c.query(`UPDATE care_requests SET travel_distance_m=(SELECT round(ST_Distance(nl.location,cr.location)*1.3)::int
         FROM nurse_locations nl JOIN care_requests cr ON cr.id=$1 WHERE nl.nurse_id=$2) WHERE id=$1`,[requestId,nurseId]);
-      await closeOpenOffers(c, requestId, 'ASSIGNED', offerId);
-      await c.query('DELETE FROM dispatch_jobs WHERE request_id=$1',[requestId]);
       await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
         VALUES($1,$2,'request.assigned',$3::jsonb)`,[requestId,userId,JSON.stringify({assignmentId,nurseId})]);
       await c.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
@@ -181,7 +124,8 @@ export class DispatchService {
     }
   }
 
-  async transition(userId: string, assignmentId: string, action: 'depart'|'arrive'|'start'|'complete') {
+  async transition(userId: string, assignmentId: string, action: 'depart'|'arrive'|'start'|'complete',
+    options?: { geofenceOverrideReason?: string }) {
     const specs={
       depart:{from:'ASSIGNED',to:'EN_ROUTE',nurse:'EN_ROUTE'},
       arrive:{from:'EN_ROUTE',to:'ARRIVED',nurse:'EN_ROUTE'},
@@ -195,13 +139,49 @@ export class DispatchService {
         JOIN nurses n ON n.id=a.nurse_id WHERE a.id=$1 AND n.user_id=$2`,[assignmentId,userId]);
       if(!assignmentLookup.rowCount) missing();
       const {request_id:requestId,nurse_id:nurseId}=assignmentLookup.rows[0];
-      const rr=await c.query('SELECT id,status,requester_user_id,pricing,promo_snapshot,price_amount,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
+      const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,currency_code,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
       const request=rr.rows[0];
       await c.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
-      const assignment=await c.query(`SELECT id,status FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
+      const assignment=await c.query(`SELECT id,status,
+        planned_start_at IS NULL OR planned_start_at
+          - travel_buffer_before_minutes*interval '1 minute'<=statement_timestamp() AS may_depart
+        FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
       if(request?.status===target.to && assignment.rowCount) return {requestId,assignmentId,status:target.to,replayed:true};
-      if(!assignment.rowCount || assignment.rows[0].status!=='ACTIVE') conflict('ASSIGNMENT_INACTIVE');
+      const assignmentStatus = assignment.rows[0]?.status;
+      if(!assignment.rowCount || (assignmentStatus!=='ACTIVE' && !(action==='depart' && assignmentStatus==='RESERVED'))) {
+        conflict('ASSIGNMENT_INACTIVE');
+      }
       if(request?.status!==target.from) conflict('INVALID_STATE_TRANSITION');
+      if (action === 'depart' && assignmentStatus === 'RESERVED') {
+        if (!assignment.rows[0]?.may_depart) conflict('SCHEDULED_DEPARTURE_TOO_EARLY');
+        try {
+          await c.query(`UPDATE request_assignments SET status='ACTIVE' WHERE id=$1 AND status='RESERVED'`, [assignmentId]);
+        } catch (error) {
+          if ((error as { code?: string }).code === '23505') conflict('NURSE_HAS_ACTIVE_EXECUTION');
+          throw error;
+        }
+      }
+      if (action === 'arrive') {
+        const location = (await c.query(`SELECT nl.recorded_at,nl.accuracy_m,
+          round(ST_Distance(nl.location,r.location))::int AS distance_m
+          FROM nurse_locations nl JOIN care_requests r ON r.id=$2
+          WHERE nl.nurse_id=$1`, [nurseId,requestId])).rows[0];
+        const valid = location && new Date(location.recorded_at).getTime() > Date.now()-120_000
+          && Number(location.accuracy_m)<=150 && Number(location.distance_m)<=250;
+        if (!valid) {
+          const overrideReason=options?.geofenceOverrideReason?.trim();
+          if (!overrideReason || overrideReason.length<5) conflict('ARRIVAL_GEOFENCE_FAILED');
+          await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
+            VALUES($1,$2,'visit.arrival.geofence_override',$3::jsonb)`, [requestId,userId,JSON.stringify({
+            reason:overrideReason,distanceMeters:location?.distance_m ?? null,
+            accuracyMeters:location?.accuracy_m ?? null,recordedAt:location?.recorded_at ?? null,
+          })]);
+        }
+      }
+      if (action === 'start') {
+        const eligibility = await this.eligibility.evaluate(nurseId, requestId, { context: 'START' }, c);
+        if (!eligibility.eligible) conflict(eligibility.reasons[0]?.code ?? 'NURSE_NOT_ELIGIBLE');
+      }
       if (action === 'depart') {
         await c.query(`WITH estimate AS (
           SELECT $2::integer AS duration, $3::text AS provider FROM nurse_locations nl
@@ -226,22 +206,48 @@ export class DispatchService {
         if(r.rowCount!==1) conflict('VISIT_NOT_ARRIVED');
       }
       if(action==='complete') {
+        const notes = await c.query(`SELECT 1 FROM clinical_visit_notes
+          WHERE request_id=$1 AND status IN ('SUBMITTED','FINALIZED','AMENDED')`, [requestId]);
+        if (!notes.rowCount) conflict('CLINICAL_VISIT_NOTE_REQUIRED');
         const r=await c.query(`UPDATE visits SET completed_at=now(),outcome='COMPLETED' WHERE assignment_id=$1 AND started_at IS NOT NULL AND completed_at IS NULL`,[assignmentId]);
         if(r.rowCount!==1) conflict('VISIT_NOT_STARTED');
         await c.query(`UPDATE request_assignments SET status='RELEASED',released_at=now(),reason='COMPLETED' WHERE id=$1`,[assignmentId]);
         // Full bill from the real time at the patient, using the pricing snapshot taken when the order was placed.
-        const t=await c.query(`SELECT EXTRACT(EPOCH FROM (completed_at-arrived_at)) AS secs,arrived_at FROM visits WHERE assignment_id=$1`,[assignmentId]);
+        const t=await c.query(`SELECT id,EXTRACT(EPOCH FROM (completed_at-started_at)) AS secs,started_at
+          FROM visits WHERE assignment_id=$1`,[assignmentId]);
         const pricing=request.pricing&&Object.keys(request.pricing).length?request.pricing:{basePrice:request.price_amount};
         const rep=await this.fees.reputation(c,nurseId);
         const bps=commissionFor(Number(request.commission_bps??2000),await this.fees.tiers(c),rep.reputation,rep.reviews); // top-rated nurses keep more
-        const bill=computeBill(ruleFromRow(pricing),Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
-          arrivedAt:new Date(t.rows[0]?.arrived_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
+        const delivered = (await c.query(`SELECT
+          coalesce(sum(unit_price*performed_quantity),0) AS base_price,
+          coalesce(sum(round(expected_minutes::numeric*performed_quantity/quantity)),0) AS included_minutes,
+          bool_and(performed_quantity=quantity AND item_status='COMPLETED') AS fully_performed
+          FROM care_request_items WHERE request_id=$1`, [requestId])).rows[0];
+        const rule=ruleFromRow(pricing);
+        if (!delivered.fully_performed) {
+          rule.basePrice=Number(delivered.base_price);
+          rule.includedMinutes=Math.max(1,Number(delivered.included_minutes));
+        }
+        const bill=computeBill(rule,Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
+          arrivedAt:new Date(t.rows[0]?.started_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
         await c.query(`UPDATE care_requests SET service_minutes=$2,gross_amount=$3,discount_amount=$4,surcharge_amount=$5,distance_fee=$6,tax_amount=$7,
           amount_due=$8::numeric,commission_bps_applied=$9,commission_amount=$10,nurse_earning=$11,owed_to_company=$12,
           payment_status=CASE WHEN $8::numeric=0 THEN 'PAID' ELSE 'DUE' END,billed_at=now() WHERE id=$1`,
           [requestId,bill.minutes,bill.gross,bill.discount,bill.surcharge,bill.distanceFee,bill.tax,bill.due,bill.commissionBps,bill.commission,bill.nurseEarning,bill.owedToCompany]);
+        await this.billing.issueInvoice(
+          c,requestId,t.rows[0].id,nurseId,request.currency_code ?? 'SYP_NEW',bill,pricing,
+        );
       }
-      await c.query(`UPDATE care_requests SET status=$2,version=version+1,updated_at=now() WHERE id=$1`,[requestId,target.to]);
+      await transitionRequest(c, {
+        requestId,
+        fromStatus: request.status,
+        toStatus: target.to,
+        currentVersion: request.version,
+        actor: 'NURSE',
+        actorUserId: userId,
+        reason: `VISIT_${action.toUpperCase()}`,
+        metadata: { assignmentId, nurseId },
+      });
       if(action==='complete') {
         await c.query(`UPDATE nurses SET work_status=CASE WHEN availability_intent='AVAILABLE'
           AND last_heartbeat_at>now()-interval '120 seconds' THEN 'AVAILABLE'

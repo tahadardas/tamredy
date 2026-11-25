@@ -4,7 +4,7 @@ import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from '../auth/aut
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
 import { nextWave } from '../common/states.js';
-import { defaultPasswordFor, hashPassword, verifyPassword } from '../auth/auth.service.js';
+import { generatePassword, hashPassword } from '../auth/auth.service.js';
 
 class CredentialDecisionDto {
   @IsIn(['APPROVE', 'REJECT', 'NEEDS_INFO']) decision!: 'APPROVE' | 'REJECT' | 'NEEDS_INFO';
@@ -173,13 +173,15 @@ export class AdminReportsController {
       if (dto.decision === 'APPROVE') {
         const u = (await c.query(`SELECT u.id,u.phone_e164,u.display_name,u.password_hash,u.must_change_password,u.status FROM nurses n JOIN users u ON u.id=n.user_id WHERE n.id=$1 FOR UPDATE OF u`, [row.nurse_id])).rows[0];
         if (u && u.status === 'ACTIVE') {
-          const def = await defaultPasswordFor(this.db);
-          let initial = u.must_change_password && verifyPassword(def, u.password_hash);
+          let temporaryPassword: string | undefined;
           if (!u.password_hash) {
-            await c.query('UPDATE users SET password_hash=$2,must_change_password=true WHERE id=$1', [u.id, hashPassword(def)]);
-            initial = true;
+            temporaryPassword = generatePassword(20);
+            await c.query(`UPDATE users SET password_hash=$2,must_change_password=true,
+              temporary_password_expires_at=statement_timestamp()+interval '30 minutes' WHERE id=$1`,
+            [u.id,hashPassword(temporaryPassword)]);
           }
-          account = { phone: u.phone_e164, name: u.display_name, usingDefaultPassword: initial, ...(initial ? { defaultPassword: def } : {}) };
+          account = { phone: u.phone_e164, name: u.display_name, usingDefaultPassword: !!temporaryPassword,
+            ...(temporaryPassword ? { defaultPassword: temporaryPassword } : {}) };
         }
       }
       return {id, reviewStatus: status, account};
@@ -189,12 +191,17 @@ export class AdminReportsController {
   @Get('finance/summary') async finance(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
     const q = await this.db.query(`SELECT
-      coalesce(sum(cr.price_amount),0) AS visits_value,
-      coalesce(sum(cr.price_amount*cr.commission_bps/10000),0) AS commission,
-      coalesce(sum(cr.price_amount-cr.price_amount*cr.commission_bps/10000),0) AS nurse_due,
-      (SELECT coalesce(sum(amount),0) FROM cash_collections WHERE status<>'CONFIRMED') AS pending_settlements
-      FROM care_requests cr WHERE cr.status='COMPLETED' AND cr.updated_at>=date_trunc('month',now())`);
-    return {...q.rows[0], period: 'MONTH_TO_DATE', source: 'ESTIMATE_NOT_LEDGER'};
+      coalesce(sum(i.total_amount),0) AS visits_value,
+      coalesce((SELECT sum(e.credit_amount-e.debit_amount) FROM financial_ledger_entries e
+        JOIN financial_transactions t ON t.id=e.transaction_id
+        WHERE e.account_id='COMMISSION_REVENUE' AND t.posted_at>=date_trunc('month',now())),0) AS commission,
+      coalesce((SELECT sum(e.credit_amount-e.debit_amount) FROM financial_ledger_entries e
+        JOIN financial_transactions t ON t.id=e.transaction_id
+        WHERE e.account_id LIKE 'NURSE_PAYABLE:%' AND t.posted_at>=date_trunc('month',now())),0) AS nurse_due,
+      (SELECT coalesce(sum(i2.total_amount+i2.tip_amount-i2.paid_amount),0) FROM invoices i2
+        WHERE i2.status IN ('ISSUED','PARTIALLY_PAID')) AS pending_settlements
+      FROM invoices i WHERE i.issued_at>=date_trunc('month',now())`);
+    return {...q.rows[0], period: 'MONTH_TO_DATE', source: 'FINANCIAL_LEDGER'};
   }
 
   @Get('finance/settlements') async settlements(@Request() r: AuthRequest) {
@@ -228,8 +235,8 @@ export class AdminReportsController {
     const items = await this.db.query(`
       SELECT vr.id, vr.visit_id, vr.reviewer_role, vr.stars, vr.behavior_notes, vr.created_at,
         cr.id AS request_id, s.title_ar AS service_title,
-        patient_u.display_name AS patient_name, patient_u.phone_e164 AS patient_phone,
-        nurse_u.display_name AS nurse_name, nurse_u.phone_e164 AS nurse_phone
+        patient_u.display_name AS patient_name, '***'||right(patient_u.phone_e164,4) AS patient_phone,
+        nurse_u.display_name AS nurse_name, '***'||right(nurse_u.phone_e164,4) AS nurse_phone
       FROM visit_reviews vr
       JOIN visits v ON v.id = vr.visit_id
       JOIN request_assignments a ON a.id = v.assignment_id

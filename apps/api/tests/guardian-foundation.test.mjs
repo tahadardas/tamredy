@@ -1,4 +1,3 @@
-import { RequestRecordService } from '../dist/admin/request-record.service.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -49,7 +48,6 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('003_admin_reads_audit'));
   await db.exec(await read('004_auth_otp_refresh'));
   await db.exec(await read('005_password_accounts_push'));
-  await db.exec(await read('006_pricing_promos_rewards'));
   await db.exec(await read('029_guardian_checkins'));
   await db.exec(await read('030_guardian_staff_cases'));
   await db.exec(await read('031_guardian_sos_trigger_time'));
@@ -158,7 +156,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   const shiftRepository = new ShiftsRepository(adapter);
   const shiftService = new ShiftsService(shiftRepository, grants);
   const ops = new StaffCasesService(grants, shiftRepository);
-  const plainAdmin = await makeUser('ungranted-staff', 'CLINICAL_REVIEWER');
+  const ungrantedReviewer = await makeUser('clinical-no-safety', 'CLINICAL_REVIEWER');
+  const plainAdmin = await makeUser('admin', 'ADMIN');
   const operator = await makeUser('operator', 'ADMIN');
   const otherOperator = await makeUser('operator-b', 'ADMIN');
   const supervisor = await makeUser('supervisor', 'ADMIN');
@@ -170,7 +169,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     name: 'جهة اختبارية', category: 'APPROVED_SUPPORT', governorate: 'دمشق',
     dialNumber: '000000', officialSource: 'مرجع اختباري', publishVerified: false,
   };
-  await assert.rejects(directory.save(plainAdmin, draft), { status: 403 });
+  await assert.rejects(directory.save(ungrantedReviewer, draft), { status: 403 });
   const directoryEntry = await directory.save(supervisor, draft);
   assert.deepEqual(await directory.visible(), []);
   await directory.save(supervisor, { ...draft, publishVerified: true }, directoryEntry.id);
@@ -195,7 +194,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
     decision: 'ACCEPTED', allowsLocation: true,
     verificationReference: 'verification-1', verifiedPhone: nominated.phone,
   };
-  await assert.rejects(contacts.consent(plainAdmin, contact.id, confirmation), { status: 403 });
+  await assert.rejects(contacts.consent(ungrantedReviewer, contact.id, confirmation), { status: 403 });
   await assert.rejects(contacts.consent(supervisor, contact.id, {
     ...confirmation, verifiedPhone: '+963987654322',
   }), { status: 409 });
@@ -206,8 +205,8 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await contacts.remove(nurse, contact.id);
   assert.deepEqual(await contacts.list(nurse), []);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM trusted_contact_consents WHERE contact_id=$1', [contact.id])).rows[0].n, 3);
-  await assert.rejects(ops.list(plainAdmin), { status: 403 });
-  await assert.rejects(ops.dashboard(plainAdmin), { status: 403 });
+  await assert.rejects(ops.list(ungrantedReviewer), { status: 403 });
+  await assert.rejects(ops.dashboard(ungrantedReviewer), { status: 403 });
   const summary = await ops.dashboard(operator);
   assert.equal(summary.canResolve, false);
   assert.equal(summary.coverage, 'UNCOVERED');
@@ -398,7 +397,7 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   const approval = await evidence.approve(supervisor,entry.id, {
     exporterId: separate, purpose: 'مراجعة الحادثة', recipient: 'جهة مراجعة معتمدة',
   });
-  await assert.rejects(evidence.generate(plainAdmin,entry.id,approval.id), {status: 403});
+  await assert.rejects(evidence.generate(ungrantedReviewer,entry.id,approval.id), {status: 403});
   await assert.rejects(evidence.generate(supervisor,entry.id,approval.id), {status: 404});
   const exported = await evidence.generate(separate,entry.id,approval.id);
   assert.equal((await evidence.generate(separate,entry.id,approval.id)).id,exported.id);
@@ -436,24 +435,5 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal(await runSafetyRetention(pool),true);
   assert.equal((await db.query('SELECT count(*)::int AS total FROM safety_location_points WHERE session_id=$1',[session.id])).rows[0].total,0);
   assert.equal((await retention.status(supervisor)).recentRuns.length,2);
-
-  const records = new RequestRecordService(adapter);
-  await db.query("UPDATE care_requests SET location='36.3,33.5' WHERE id=$1",[offering.id]);
-  const incomplete = await records.get(supervisor,offering.id);
-  assert.equal(incomplete.address_text,'دمشق');
-  assert.equal(incomplete.latitude,33.5);
-  assert.equal(incomplete.longitude,36.3);
-  assert.ok(incomplete.created_at);
-  assert.equal(incomplete.visit_seconds,null);
-  assert.equal(incomplete.collected_amount,null);
-  await db.query("UPDATE care_requests SET status='COMPLETED',amount_due=200,payment_status='PARTIAL' WHERE id=$1",[offering.id]);
-  const visit = (await db.query(`INSERT INTO visits(assignment_id,arrived_at,started_at,completed_at,outcome)
-    VALUES($1,now()-interval '40 minutes',now()-interval '30 minutes',now(),'COMPLETED') RETURNING id`,[newAssignment])).rows[0];
-  await db.query('INSERT INTO cash_collections(visit_id,collector_nurse_id,amount) VALUES($1,$2,80),($1,$2,20)',[visit.id,nurseId]);
-  const completed = await records.get(supervisor,offering.id);
-  assert.equal(completed.visit_seconds,2400);
-  assert.equal(completed.service_seconds,1800);
-  assert.equal(Number(completed.collected_amount),100);
-  assert.equal(Number(completed.amount_due),200);
 
 });

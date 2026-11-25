@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
+import 'package:uuid/uuid.dart';
 import 'alarm.dart';
 import 'availability_manager.dart';
 
@@ -46,6 +48,7 @@ class NurseController extends ChangeNotifier {
   String? assignmentId;
   bool busy = false;
   String? error;
+  bool arrivalOverrideAvailable = false;
 
   bool get available => availabilityManager.intentAvailable;
   NurseReadinessState get readinessState => availabilityManager.state;
@@ -55,6 +58,7 @@ class NurseController extends ChangeNotifier {
   BillInfo? bill;
   String? collectMsg;
   bool collectShort = false;
+  final _collectionStore = const FlutterSecureStorage();
 
   // Profile and verified clinical skills
   List<String> skills = [];
@@ -200,7 +204,23 @@ class NurseController extends ChangeNotifier {
         }
       } else {
         _demoOfferTimer?.cancel();
-    availabilityManager.setActiveAssignment(false);
+        availabilityManager.setActiveAssignment(false);
+        final unpaid = res['unpaidInvoices'] as List?;
+        if (stage != NurseStage.offer && unpaid != null && unpaid.isNotEmpty) {
+          final pending = unpaid.firstWhere(
+            (row) => (row as Map)['request_id'] == requestId,
+            orElse: () => unpaid.first,
+          ) as Map;
+          final restoredId = pending['request_id'] as String?;
+          if (restoredId != null) {
+            if (requestId != restoredId) bill = null;
+            requestId = restoredId;
+            assignmentId = pending['assignment_id'] as String?;
+            stage = NurseStage.completed;
+            await loadBill();
+            return;
+          }
+        }
         if (stage != NurseStage.idle && stage != NurseStage.offer) {
           stage = NurseStage.idle;
           assignmentId = null;
@@ -495,17 +515,23 @@ class NurseController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _step(String command, NurseStage next) async {
+  Future<void> _step(String command, NurseStage next, {Map<String,dynamic>? body}) async {
     if (busy || (!kDemoMode && assignmentId == null)) return;
     busy = true;
     error = null;
     notifyListeners();
     try {
       if (!kDemoMode) {
-        await api.post('/v1/nurse/assignments/$assignmentId/$command');
+        await api.post('/v1/nurse/assignments/$assignmentId/$command',body);
       }
       stage = next;
     } on DioException catch (de) {
+      final response=de.response?.data;
+      if (command=='arrive' && response is Map && response['code']=='ARRIVAL_GEOFENCE_FAILED') {
+        arrivalOverrideAvailable = true;
+        error = 'تعذر التحقق من الوصول عبر الموقع. حدّث موقعك أو وثّق سبب الاستثناء.';
+        return;
+      }
       if (de.response?.statusCode == 409) {
         // Resync true state on 409 conflict
         await restoreActiveAssignment();
@@ -526,10 +552,12 @@ class NurseController extends ChangeNotifier {
     if (stage == NurseStage.enRoute) await _startNavigation();
   }
 
-  Future<void> arrive() async {
+  Future<void> arrive({String? overrideReason}) async {
     if (stage != NurseStage.enRoute) return;
-    await _step('arrive', NurseStage.arrived);
+    await _step('arrive', NurseStage.arrived,body: overrideReason == null
+      ? null : {'geofenceOverrideReason':overrideReason});
     if (stage == NurseStage.arrived) {
+      arrivalOverrideAvailable = false;
       _stopNavigation();
     }
   }
@@ -720,11 +748,21 @@ class NurseController extends ChangeNotifier {
           taxLabel: b.taxLabel,
         );
       } else {
-        final r = await api.post('/v1/nurse/requests/$requestId/collect', {
+        final id = requestId;
+        if (id == null) return;
+        final storageKey = 'cash-collection.v1.$id.$amount';
+        final key = await _collectionStore.read(key: storageKey) ?? const Uuid().v4();
+        await _collectionStore.write(key: storageKey, value: key);
+        final r = await api.post('/v1/nurse/requests/$id/collect', {
           'amount': amount,
-        });
-        collectMsg = '${r['message']}';
+        }, {'Idempotency-Key': key});
+        final remaining = (r['remaining'] as num?)?.round() ?? 0;
+        final change = (r['change'] as num?)?.round() ?? 0;
+        collectMsg = remaining > 0
+            ? 'المبلغ ناقص. المتبقي ${formatMoney(remaining)}'
+            : change > 0 ? 'تم التحصيل. الباقي ${formatMoney(change)}' : 'تم تحصيل كامل المبلغ';
         collectShort = r['status'] != 'PAID';
+        await _collectionStore.delete(key: storageKey);
         await loadBill();
         if (!collectShort) await loadDues();
       }
@@ -733,6 +771,9 @@ class NurseController extends ChangeNotifier {
       collectMsg = ((e.response?.data as Map?)?['code'] == 'ALREADY_PAID')
           ? 'تم الدفع مسبقًا'
           : 'تعذر تسجيل المبلغ، حاول مجددًا';
+      collectShort = true;
+    } catch (_) {
+      collectMsg = 'تعذر تأكيد التحصيل. حدّث الفاتورة قبل إعادة المحاولة.';
       collectShort = true;
     } finally {
       busy = false;

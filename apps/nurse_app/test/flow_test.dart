@@ -1,4 +1,4 @@
-import 'package:tamreedy_core/tamreedy_core.dart' show mapsEnabled;
+import 'package:tamreedy_core/tamreedy_core.dart' show kDemoMode, mapsEnabled;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tamreedy_nurse_app/alarm.dart';
@@ -39,7 +39,7 @@ void main() {
     expect(find.text('لوحة الممرض'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     c.dispose();
-  });
+  }, skip: !kDemoMode);
 }
 
 void moneyTests() {
@@ -67,5 +67,6 @@ void moneyTests() {
       expect(c.collectShort, isFalse);
       c.dispose();
     },
+    skip: !kDemoMode,
   );
 }

@@ -6,6 +6,7 @@ import {toast} from './toast';
  *  - Idle timeout: no activity for IDLE_MINUTES -> logout. */
 export const apiBase: string = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const RT = 'tm_rt';
+const DEVICE = 'tm_device';
 
 export interface SessionInfo { accessToken: string; role: string }
 let access = '';
@@ -18,6 +19,15 @@ const store = {
   get: () => { try { return sessionStorage.getItem(RT); } catch { return null; } },
   set: (v: string | null) => { try { v ? sessionStorage.setItem(RT, v) : sessionStorage.removeItem(RT); } catch { /* private mode */ } },
 };
+const deviceId = (() => {
+  try {
+    const existing = sessionStorage.getItem(DEVICE);
+    if (existing) return existing;
+    const created = crypto.randomUUID();
+    sessionStorage.setItem(DEVICE, created);
+    return created;
+  } catch { return crypto.randomUUID(); }
+})();
 
 async function raw(path: string, init: RequestInit = {}, token = access) {
   const headers = new Headers(init.headers);
@@ -31,11 +41,11 @@ async function raw(path: string, init: RequestInit = {}, token = access) {
 }
 
 export async function login(phone: string, password: string): Promise<void> {
-  const r = await raw('/v1/auth/login', {method: 'POST', body: JSON.stringify({phone, password})}, '');
+  const r = await raw('/v1/auth/login', {method: 'POST', body: JSON.stringify({phone, password, deviceId, deviceName: 'لوحة الويب', platform: 'web'})}, '');
   const d = await r.json().catch(() => ({}));
   if (r.status === 429) throw new Error('الحساب مقفل مؤقتًا بسبب محاولات خاطئة كثيرة. حاول بعد 15 دقيقة.');
   if (!r.ok) throw new Error('بيانات الدخول غير صحيحة');
-  if (d.role !== 'ADMIN') throw new Error('هذا الحساب ليس حساب إدارة');
+  if (!['ADMIN', 'CLINICAL_REVIEWER'].includes(d.role)) throw new Error('هذا الحساب غير مصرح له باستخدام اللوحة');
   access = d.accessToken; store.set(d.refreshToken);
 }
 
@@ -47,10 +57,10 @@ function refresh(): Promise<boolean> {
     const rt = store.get();
     if (!rt) return false;
     try {
-      const r = await raw('/v1/auth/refresh', {method: 'POST', body: JSON.stringify({refreshToken: rt})}, '');
+      const r = await raw('/v1/auth/refresh', {method: 'POST', body: JSON.stringify({refreshToken: rt, deviceId})}, '');
       if (!r.ok) return false;
       const d = await r.json();
-      if (d.role !== 'ADMIN') return false;
+      if (!['ADMIN', 'CLINICAL_REVIEWER'].includes(d.role)) return false;
       access = d.accessToken; store.set(d.refreshToken);
       return true;
     } catch { return false; } finally { refreshing = null; }
@@ -78,9 +88,9 @@ export async function getJson(path: string) {
   return r.json();
 }
 export const msgOf = (e: unknown) => e instanceof Error ? e.message : String(e);
-export async function sendJson(method: string, path: string, body?: unknown) {
+export async function sendJson(method: string, path: string, body?: unknown, headers?: HeadersInit) {
   let r: Response;
-  try { r = await api(path, {method, body: body === undefined ? undefined : JSON.stringify(body)}); }
+  try { r = await api(path, {method, headers, body: body === undefined ? undefined : JSON.stringify(body)}); }
   catch (e) { toast.error(msgOf(e)); throw e; }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { const m = errorAr(d, r.status); toast.error(m); throw new Error(m); } // always visible, even if the caller forgets to show it

@@ -34,7 +34,7 @@ export class NurseCalendarService {
       JOIN beneficiaries b ON b.id = cr.beneficiary_id
       LEFT JOIN scheduled_visits sv ON sv.request_id = cr.id
       WHERE ra.nurse_id = $1
-        AND ra.status = 'ACTIVE'
+        AND ra.status IN ('RESERVED','ACTIVE')
         AND cr.status IN ('SCHEDULED', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE', 'COMPLETED')
         AND coalesce(sv.appointment_at, ra.accepted_at) >= $2::timestamptz
         AND coalesce(sv.appointment_at, ra.accepted_at) <= $3::timestamptz
@@ -69,22 +69,13 @@ export class NurseCalendarService {
     }
 
     return this.db.transaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [nurseId]);
       // Check if nurse already has a confirmed visit during this block
       const conflict = await client.query(`
-        SELECT 1 FROM request_assignments ra
-        JOIN care_requests cr ON cr.id = ra.request_id
-        JOIN scheduled_visits sv ON sv.request_id = cr.id
-        WHERE ra.nurse_id = $1 AND ra.status = 'ACTIVE'
-          AND cr.status IN ('SCHEDULED', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
-          AND tstzrange(
-                sv.appointment_at - interval '30 minutes',
-                sv.appointment_at + (coalesce((cr.pricing->>'expectedMinutes')::int, 30) + 30) * interval '1 minute',
-                '[)'
-              ) && tstzrange($2::timestamptz, $3::timestamptz, '[)')
-        LIMIT 1
+        SELECT nurse_has_schedule_conflict($1,$2::timestamptz,$3::timestamptz,NULL) AS conflict
       `, [nurseId, start.toISOString(), end.toISOString()]);
 
-      if (conflict.rowCount) {
+      if (conflict.rows[0]?.conflict) {
         throw new ConflictException({ code: 'CONFIRMED_VISIT_CONFLICTS_WITH_BLOCK' });
       }
 

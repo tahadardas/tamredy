@@ -2,7 +2,7 @@ import { lockAccountAdministration, removeAccount } from './account-removal.js';
 import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { IsDateString, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
-import { defaultPasswordFor, generatePassword, hashPassword } from '../auth/auth.service.js';
+import { generatePassword, hashPassword } from '../auth/auth.service.js';
 import { issueManualRecoveryPassword } from '../auth/manual-password-recovery.js';
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
@@ -29,13 +29,12 @@ export class AdminUsersController {
   @Post() async create(@Request() r: AuthRequest, @Body() dto: CreateUserDto) {
     requireRole(r.user!, 'ADMIN');
     if (dto.role === 'NURSE' && !!dto.licenseRef !== !!dto.licenseExpiresAt) throw new BadRequestException({ code: 'LICENSE_FIELDS_TOGETHER' });
-    const staff = dto.role === 'ADMIN' || dto.role === 'CLINICAL_REVIEWER';
-    const password = dto.password ?? (staff ? generatePassword() : await defaultPasswordFor(this.db)); // staff accounts never get a guessable default
+    const password = dto.password ?? generatePassword(20);
     return this.db.transaction(async c => {
       const exists = await c.query('SELECT 1 FROM users WHERE phone_e164=$1', [dto.phone]);
       if (exists.rowCount) conflict('PHONE_ALREADY_REGISTERED');
-      const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash,must_change_password,created_by)
-        VALUES($1,$2,$3,$4,true,$5) RETURNING id`, [dto.phone, dto.role, dto.displayName, hashPassword(password), r.user!.id])).rows[0];
+      const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash,must_change_password,created_by,temporary_password_expires_at)
+        VALUES($1,$2,$3,$4,true,$5,statement_timestamp()+interval '30 minutes') RETURNING id`, [dto.phone, dto.role, dto.displayName, hashPassword(password), r.user!.id])).rows[0];
       if (dto.role === 'PATIENT' && dto.beneficiaryName)
         await c.query(`INSERT INTO beneficiaries(owner_user_id,display_name,consent_status) VALUES($1,$2,'GRANTED')`, [u.id, dto.beneficiaryName]);
       if (dto.role === 'NURSE') {

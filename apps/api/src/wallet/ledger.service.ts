@@ -1,181 +1,183 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { DbService } from '../db/db.service.js';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import type { PoolClient } from 'pg';
+
+export type MoneyInput = string | number;
 
 export interface LedgerLegInput {
   accountId: string;
-  debitAmount: number;
-  creditAmount: number;
+  debitAmount: MoneyInput;
+  creditAmount: MoneyInput;
   currency?: string;
+}
+
+interface PostTransactionInput {
+  legs: LedgerLegInput[];
+  transactionType: string;
+  referenceType: string;
+  referenceId?: string;
+  idempotencyKey: string;
+  currencyCode: string;
+  actorUserId?: string;
+  reversalOfTransactionId?: string;
+}
+
+export function toMinor(value: MoneyInput): bigint {
+  const raw = String(value).trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) {
+    throw new BadRequestException({ code: 'INVALID_MONEY_AMOUNT' });
+  }
+  const [whole = '0', fraction = ''] = raw.split('.');
+  return BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
+}
+
+export function fromMinor(value: bigint): string {
+  const whole = value / 100n;
+  const fraction = (value % 100n).toString().padStart(2, '0');
+  return `${whole}.${fraction}`;
+}
+
+function canonicalPayload(input: PostTransactionInput, normalizedLegs: Array<LedgerLegInput & { debit: string; credit: string }>) {
+  return JSON.stringify({
+    transactionType: input.transactionType,
+    referenceType: input.referenceType,
+    referenceId: input.referenceId ?? null,
+    currencyCode: input.currencyCode,
+    reversalOfTransactionId: input.reversalOfTransactionId ?? null,
+    legs: normalizedLegs.map(leg => ({ accountId: leg.accountId, debit: leg.debit, credit: leg.credit })),
+  });
 }
 
 @Injectable()
 export class LedgerService {
-  constructor(private readonly db: DbService) {}
-
-  /**
-   * Posts a strictly balanced double-entry transaction.
-   * Invariant: SUM(debits) === SUM(credits)
-   */
-  async postTransaction(
-    client: { query: (s: string, p?: unknown[]) => Promise<any> },
-    legs: LedgerLegInput[],
-    referenceType: string,
-    referenceId?: string,
-    idempotencyKey?: string,
-  ): Promise<{ transactionId: string; entriesCount: number }> {
-    if (!Array.isArray(legs) || legs.length < 2) {
-      throw new BadRequestException({ code: 'LEDGER_REQUIRES_AT_LEAST_TWO_LEGS' });
+  async postTransaction(client: PoolClient, input: PostTransactionInput): Promise<{
+    transactionId: string;
+    entriesCount: number;
+    replayed: boolean;
+  }> {
+    if (input.legs.length < 2 || !input.idempotencyKey.trim()) {
+      throw new BadRequestException({ code: 'INVALID_LEDGER_TRANSACTION' });
     }
 
-    // Check idempotency
-    if (idempotencyKey) {
-      const existing = await client.query(
-        `SELECT transaction_id FROM financial_ledger_entries WHERE idempotency_key = $1 LIMIT 1`,
-        [idempotencyKey],
-      );
-      if (existing.rowCount) {
-        return { transactionId: existing.rows[0].transaction_id, entriesCount: 0 };
-      }
-    }
-
-    // Validate debit and credit balance
-    let totalDebit = 0;
-    let totalCredit = 0;
-
-    for (const leg of legs) {
-      const debit = Math.round((leg.debitAmount || 0) * 100) / 100;
-      const credit = Math.round((leg.creditAmount || 0) * 100) / 100;
-
-      if (debit < 0 || credit < 0) {
-        throw new BadRequestException({ code: 'NEGATIVE_AMOUNTS_PROHIBITED' });
-      }
-      if ((debit > 0 && credit > 0) || (debit === 0 && credit === 0)) {
+    let debitTotal = 0n;
+    let creditTotal = 0n;
+    const normalized = input.legs.map(leg => {
+      const debitMinor = toMinor(leg.debitAmount);
+      const creditMinor = toMinor(leg.creditAmount);
+      if ((debitMinor > 0n) === (creditMinor > 0n)) {
         throw new BadRequestException({ code: 'LEG_MUST_BE_EXCLUSIVELY_DEBIT_OR_CREDIT' });
       }
-
-      totalDebit += debit;
-      totalCredit += credit;
-    }
-
-    // Exact balance check in integer cents
-    const diff = Math.abs(Math.round(totalDebit * 100) - Math.round(totalCredit * 100));
-    if (diff !== 0) {
+      if (leg.currency && leg.currency !== input.currencyCode) {
+        throw new BadRequestException({ code: 'MIXED_CURRENCY_TRANSACTION' });
+      }
+      debitTotal += debitMinor;
+      creditTotal += creditMinor;
+      return { ...leg, debit: fromMinor(debitMinor), credit: fromMinor(creditMinor) };
+    });
+    if (debitTotal !== creditTotal) {
       throw new BadRequestException({
         code: 'LEDGER_TRANSACTION_UNBALANCED',
-        totalDebit,
-        totalCredit,
-        difference: diff / 100,
+        totalDebit: fromMinor(debitTotal),
+        totalCredit: fromMinor(creditTotal),
       });
     }
 
+    const digest = createHash('sha256').update(canonicalPayload(input, normalized)).digest('hex');
     const transactionId = randomUUID();
+    const inserted = await client.query<{ id: string }>(`
+      INSERT INTO financial_transactions(
+        id,transaction_type,reference_type,reference_id,currency_code,
+        idempotency_key,payload_digest,reversal_of_transaction_id,created_by
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT(idempotency_key) DO NOTHING RETURNING id
+    `, [transactionId,input.transactionType,input.referenceType,input.referenceId ?? null,
+      input.currencyCode,input.idempotencyKey,digest,input.reversalOfTransactionId ?? null,input.actorUserId ?? null]);
 
-    for (const leg of legs) {
-      await client.query(`
-        INSERT INTO financial_ledger_entries(
-          transaction_id, reference_type, reference_id, account_id,
-          debit_amount, credit_amount, currency, idempotency_key
-        )
-        VALUES($1, $2, $3, $4, $5, $6, coalesce($7, 'SYP_NEW'), $8)
-      `, [
-        transactionId,
-        referenceType,
-        referenceId ?? null,
-        leg.accountId,
-        leg.debitAmount || 0,
-        leg.creditAmount || 0,
-        leg.currency ?? 'SYP_NEW',
-        idempotencyKey ?? null,
-      ]);
+    if (!inserted.rowCount) {
+      const existing = (await client.query<{ id: string; payload_digest: string }>(
+        'SELECT id,payload_digest FROM financial_transactions WHERE idempotency_key=$1',
+        [input.idempotencyKey],
+      )).rows[0];
+      if (!existing || existing.payload_digest !== digest) {
+        throw new ConflictException({ code: 'FINANCIAL_IDEMPOTENCY_KEY_REUSED' });
+      }
+      return { transactionId: existing.id, entriesCount: 0, replayed: true };
     }
 
-    return { transactionId, entriesCount: legs.length };
+    for (const leg of normalized) {
+      await client.query(`INSERT INTO financial_ledger_entries(
+        transaction_id,reference_type,reference_id,account_id,debit_amount,credit_amount,currency
+      ) VALUES($1,$2,$3,$4,$5,$6,$7)`, [transactionId,input.referenceType,input.referenceId ?? null,
+        leg.accountId,leg.debit,leg.credit,input.currencyCode]);
+    }
+    return { transactionId, entriesCount: normalized.length, replayed: false };
   }
 
-  /** Holds an amount in reservation (e.g. pre-paid commission model) */
   async createReservation(
-    client: { query: (s: string, p?: unknown[]) => Promise<any> },
+    client: PoolClient,
     accountId: string,
-    amount: number,
+    amount: MoneyInput,
     referenceId: string,
   ) {
-    if (amount <= 0) throw new BadRequestException({ code: 'INVALID_RESERVATION_AMOUNT' });
-
-    const res = await client.query(`
-      INSERT INTO financial_reservations(account_id, amount, reference_id, status)
-      VALUES($1, $2, $3, 'HELD')
-      RETURNING *
-    `, [accountId, amount, referenceId]);
-
-    return res.rows[0];
+    const normalized = fromMinor(toMinor(amount));
+    if (toMinor(normalized) <= 0n) throw new BadRequestException({ code: 'INVALID_RESERVATION_AMOUNT' });
+    const inserted = await client.query(`INSERT INTO financial_reservations(account_id,amount,reference_id,status)
+      VALUES($1,$2,$3,'HELD') ON CONFLICT(account_id,reference_id) DO NOTHING RETURNING *`,
+    [accountId,normalized,referenceId]);
+    if (inserted.rowCount) return inserted.rows[0];
+    const existing = (await client.query(
+      'SELECT * FROM financial_reservations WHERE account_id=$1 AND reference_id=$2',
+      [accountId,referenceId],
+    )).rows[0];
+    if (!existing || fromMinor(toMinor(existing.amount)) !== normalized) {
+      throw new ConflictException({ code: 'RESERVATION_IDEMPOTENCY_CONFLICT' });
+    }
+    return existing;
   }
 
-  /** Commits a held reservation upon successful visit completion */
-  async commitReservation(
-    client: { query: (s: string, p?: unknown[]) => Promise<any> },
-    reservationId: string,
-  ) {
-    const res = await client.query(`
-      UPDATE financial_reservations
-      SET status = 'COMMITTED', resolved_at = now()
-      WHERE id = $1 AND status = 'HELD'
-      RETURNING *
-    `, [reservationId]);
-
-    if (!res.rowCount) throw new NotFoundException({ code: 'RESERVATION_NOT_FOUND_OR_RESOLVED' });
-    return res.rows[0];
+  async resolveReservation(client: PoolClient, reservationId: string, status: 'COMMITTED' | 'RELEASED') {
+    const result = await client.query(`UPDATE financial_reservations
+      SET status=$2,resolved_at=statement_timestamp() WHERE id=$1 AND status='HELD' RETURNING *`,
+    [reservationId,status]);
+    if (!result.rowCount) throw new NotFoundException({ code: 'RESERVATION_NOT_FOUND_OR_RESOLVED' });
+    return result.rows[0];
   }
 
-  /** Releases a held reservation upon cancellation */
-  async releaseReservation(
-    client: { query: (s: string, p?: unknown[]) => Promise<any> },
-    reservationId: string,
-  ) {
-    const res = await client.query(`
-      UPDATE financial_reservations
-      SET status = 'RELEASED', resolved_at = now()
-      WHERE id = $1 AND status = 'HELD'
-      RETURNING *
-    `, [reservationId]);
-
-    if (!res.rowCount) throw new NotFoundException({ code: 'RESERVATION_NOT_FOUND_OR_RESOLVED' });
-    return res.rows[0];
-  }
-
-  /** Records completion of a visit in the double-entry ledger */
-  async recordVisitCompletion(
-    client: { query: (s: string, p?: unknown[]) => Promise<any> },
+  recordCommission(
+    client: PoolClient,
     requestId: string,
     nurseId: string,
-    totalGross: number,
-    platformCommission: number,
+    commission: MoneyInput,
+    currencyCode: string,
   ) {
-    const nurseShare = totalGross - platformCommission;
-    const idempotencyKey = `visit_completion_${requestId}`;
+    return this.postTransaction(client, {
+      transactionType: 'COMMISSION_RECOGNITION',
+      referenceType: 'CARE_REQUEST',
+      referenceId: requestId,
+      idempotencyKey: `commission:${requestId}`,
+      currencyCode,
+      legs: [
+        { accountId: `NURSE_RECEIVABLE:${nurseId}`, debitAmount: commission, creditAmount: 0 },
+        { accountId: 'COMMISSION_REVENUE', debitAmount: 0, creditAmount: commission },
+      ],
+    });
+  }
 
-    // Legs:
-    // 1. Debit NURSE_RECEIVABLE for the commission collected in cash
-    // 2. Credit COMPANY_COMMISSIONS revenue for the commission earned
-    const legs: LedgerLegInput[] = [
-      {
-        accountId: `NURSE_RECEIVABLE:${nurseId}`,
-        debitAmount: platformCommission,
-        creditAmount: 0,
-      },
-      {
-        accountId: 'COMPANY_COMMISSIONS',
-        debitAmount: 0,
-        creditAmount: platformCommission,
-      },
-    ];
-
-    return this.postTransaction(
-      client,
-      legs,
-      'PLATFORM_COMMISSION',
-      requestId,
-      idempotencyKey,
-    );
+  async reverseTransaction(client: PoolClient, transactionId: string, idempotencyKey: string, actorUserId: string) {
+    const original = await client.query(`SELECT t.*,e.account_id,e.debit_amount,e.credit_amount
+      FROM financial_transactions t JOIN financial_ledger_entries e ON e.transaction_id=t.id
+      WHERE t.id=$1 ORDER BY e.id`, [transactionId]);
+    if (!original.rowCount) throw new NotFoundException({ code: 'FINANCIAL_TRANSACTION_NOT_FOUND' });
+    const first = original.rows[0];
+    return this.postTransaction(client, {
+      transactionType: 'REVERSAL', referenceType: first.reference_type,
+      referenceId: first.reference_id, idempotencyKey, currencyCode: first.currency_code,
+      reversalOfTransactionId: transactionId, actorUserId,
+      legs: original.rows.map(row => ({
+        accountId: row.account_id,
+        debitAmount: row.credit_amount,
+        creditAmount: row.debit_amount,
+      })),
+    });
   }
 }

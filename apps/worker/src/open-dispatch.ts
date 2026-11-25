@@ -43,7 +43,9 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
       JOIN users u ON u.id=n.user_id AND u.status='ACTIVE'
       JOIN nurse_skills k ON k.nurse_id=n.id AND k.service_id=r.service_id AND k.approved
       LEFT JOIN pricing_settings ps ON ps.id=1
-      WHERE r.id=$1 AND r.status='OFFERING' AND r.search_expires_at > statement_timestamp()
+      WHERE r.id=$1 AND r.status='OFFERING'
+        AND r.clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
+        AND r.search_expires_at > statement_timestamp()
         AND NOT EXISTS (
           SELECT 1 FROM care_request_items cri
           WHERE cri.request_id = r.id

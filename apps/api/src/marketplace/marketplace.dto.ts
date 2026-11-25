@@ -68,6 +68,10 @@ export class SwitchBookingModeDto {
   @IsOptional()
   @IsISO8601({ strict: true })
   scheduledAt?: string;
+
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  scheduledEndAt?: string;
 }
 
 export class ExtendOpenRequestDto {

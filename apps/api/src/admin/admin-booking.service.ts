@@ -93,7 +93,7 @@ export class AdminBookingService {
              cr.price_amount, cr.currency_code, cr.created_at, cr.open_expires_at,
              cr.latest_acceptable_arrival_at, cr.published_at,
              s.title_ar AS service_title, s.code AS service_code,
-             u.display_name AS requester_name, u.phone_e164 AS requester_phone,
+             u.display_name AS requester_name, '***'||right(u.phone_e164,4) AS requester_phone,
              (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id) AS total_proposals_count,
              (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING') AS active_proposals_count
       FROM care_requests cr
@@ -125,7 +125,7 @@ export class AdminBookingService {
       SELECT mp.*,
              cr.booking_mode, cr.status AS request_status, cr.price_amount, cr.currency_code,
              s.title_ar AS service_title,
-             nu.display_name AS nurse_name, nu.phone_e164 AS nurse_phone,
+             nu.display_name AS nurse_name, '***'||right(nu.phone_e164,4) AS nurse_phone,
              pu.display_name AS patient_name
       FROM marketplace_proposals mp
       JOIN care_requests cr ON cr.id = mp.request_id

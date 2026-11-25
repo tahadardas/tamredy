@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Request, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Request, UseGuards } from '@nestjs/common';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
 import { missing } from '../common/errors.js';
 import { DuesService } from '../pricing/fees.service.js';
+import { LedgerService } from '../wallet/ledger.service.js';
 
 const HHMM = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 class SettingsDto {
@@ -51,7 +52,7 @@ class SettleDto { @IsIn(['FROM_NURSE', 'TO_NURSE']) direction!: 'FROM_NURSE' | '
 /** Administrator controls for fees, tax, holidays, commission tiers, nurse dues and promo-abuse review. */
 @Controller('v1/admin') @UseGuards(AuthGuard)
 export class AdminFeesController {
-  constructor(private readonly db: DbService, private readonly dues: DuesService = new DuesService()) {}
+  constructor(private readonly db: DbService, private readonly dues: DuesService, private readonly ledger: LedgerService) {}
 
   @Get('pricing-settings') async settings(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
@@ -110,23 +111,47 @@ export class AdminFeesController {
   @Get('dues') async allDues(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
     const limit = Number((await this.db.query('SELECT nurse_debt_limit FROM pricing_settings WHERE id=1')).rows[0].nurse_debt_limit);
-    const rows = (await this.db.query(`SELECT n.id AS nurse_id,coalesce(u.display_name,u.phone_e164) AS name,coalesce(o.owed,0) AS owed,coalesce(o.cnt,0) AS visits,
-        coalesce(f.s,0) AS settled_from_nurse,coalesce(t.s,0) AS paid_to_nurse,coalesce(o.owed,0)-coalesce(f.s,0)+coalesce(t.s,0) AS balance
+    const rows = (await this.db.query(`WITH positions AS (
+        SELECT split_part(e.account_id,':',2)::uuid AS nurse_id,
+          sum(CASE WHEN e.account_id LIKE 'CASH_HELD_BY_NURSE:%' THEN e.debit_amount-e.credit_amount ELSE 0 END) AS cash_held,
+          sum(CASE WHEN e.account_id LIKE 'NURSE_PAYABLE:%' THEN e.credit_amount-e.debit_amount ELSE 0 END) AS nurse_payable,
+          sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_FROM_NURSE' AND e.account_id LIKE 'CASH_HELD_BY_NURSE:%' THEN e.credit_amount ELSE 0 END) AS settled_from_nurse,
+          sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_TO_NURSE' AND e.account_id LIKE 'NURSE_PAYABLE:%' THEN e.debit_amount ELSE 0 END) AS paid_to_nurse
+        FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
+        WHERE e.account_id LIKE 'CASH_HELD_BY_NURSE:%' OR e.account_id LIKE 'NURSE_PAYABLE:%'
+        GROUP BY split_part(e.account_id,':',2)::uuid
+      ) SELECT n.id AS nurse_id,coalesce(u.display_name,u.phone_e164) AS name,
+        greatest(coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0),0) AS owed,coalesce(o.cnt,0) AS visits,
+        coalesce(p.settled_from_nurse,0) AS settled_from_nurse,coalesce(p.paid_to_nurse,0) AS paid_to_nurse,
+        coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0) AS balance
       FROM nurses n JOIN users u ON u.id=n.user_id
-      LEFT JOIN (SELECT a.nurse_id,sum(cr.owed_to_company) AS owed,count(*)::int AS cnt FROM care_requests cr JOIN request_assignments a ON a.request_id=cr.id
-         JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL WHERE cr.payment_status='PAID' GROUP BY a.nurse_id) o ON o.nurse_id=n.id
-      LEFT JOIN (SELECT nurse_id,sum(amount) AS s FROM nurse_settlements WHERE direction='FROM_NURSE' GROUP BY nurse_id) f ON f.nurse_id=n.id
-      LEFT JOIN (SELECT nurse_id,sum(amount) AS s FROM nurse_settlements WHERE direction='TO_NURSE' GROUP BY nurse_id) t ON t.nurse_id=n.id
-      WHERE o.owed IS NOT NULL OR f.s IS NOT NULL OR t.s IS NOT NULL ORDER BY balance DESC`)).rows;
+      LEFT JOIN positions p ON p.nurse_id=n.id
+      LEFT JOIN (SELECT a.nurse_id,count(*)::int AS cnt FROM request_assignments a
+        JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL GROUP BY a.nurse_id) o ON o.nurse_id=n.id
+      WHERE p.nurse_id IS NOT NULL ORDER BY balance DESC`)).rows;
     return { limit, totalOwedToCompany: rows.reduce((a, x) => a + Math.max(0, Number(x.balance)), 0), items: rows.map(x => ({ ...x, blocked: limit > 0 && Number(x.balance) > limit })) };
   }
 
-  @Post('dues/:nurseId/settle') async settle(@Request() r: AuthRequest, @Param('nurseId') nurseId: string, @Body() d: SettleDto) {
+  @Post('dues/:nurseId/settle') async settle(@Request() r: AuthRequest, @Param('nurseId') nurseId: string,
+    @Body() d: SettleDto, @Headers('idempotency-key') idempotencyKey: string) {
     requireRole(r.user!, 'ADMIN');
+    if (!idempotencyKey || idempotencyKey.length > 128) throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
     return this.db.transaction(async c => {
       if (!(await c.query('SELECT 1 FROM nurses WHERE id=$1', [nurseId])).rowCount) missing();
-      await c.query('INSERT INTO nurse_settlements(nurse_id,direction,amount,note,created_by) VALUES($1,$2,$3,$4,$5)', [nurseId, d.direction, d.amount, d.note ?? null, r.user!.id]);
-      await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,'dues.settled','nurse',$2,$3::jsonb)`, [r.user!.id, nurseId, JSON.stringify({ direction: d.direction, amount: d.amount })]);
+      const transaction = await this.ledger.postTransaction(c, {
+        transactionType:d.direction==='FROM_NURSE'?'NURSE_SETTLEMENT_FROM_NURSE':'NURSE_SETTLEMENT_TO_NURSE',
+        referenceType:'NURSE',referenceId:nurseId,currencyCode:'SYP_NEW',
+        idempotencyKey:`nurse-settlement:${r.user!.id}:${idempotencyKey}`,actorUserId:r.user!.id,
+        legs:d.direction==='FROM_NURSE'
+          ? [{accountId:'CASH_CLEARING',debitAmount:d.amount,creditAmount:0},{accountId:`CASH_HELD_BY_NURSE:${nurseId}`,debitAmount:0,creditAmount:d.amount}]
+          : [{accountId:`NURSE_PAYABLE:${nurseId}`,debitAmount:d.amount,creditAmount:0},{accountId:'CASH_CLEARING',debitAmount:0,creditAmount:d.amount}],
+      });
+      await c.query(`INSERT INTO nurse_settlements(nurse_id,direction,amount,note,created_by,transaction_id)
+        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(transaction_id) DO NOTHING`,
+      [nurseId,d.direction,d.amount,d.note ?? null,r.user!.id,transaction.transactionId]);
+      if (!transaction.replayed) {
+        await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,'dues.settled','nurse',$2,$3::jsonb)`, [r.user!.id, nurseId, JSON.stringify({ direction: d.direction, amount: d.amount, transactionId: transaction.transactionId })]);
+      }
       return this.dues.balance(c, nurseId);
     });
   }

@@ -4,18 +4,22 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+import { configureBilling,migrateBillingFixtures,recordExecution } from './helpers/billing-fixture.mjs';
 
 process.env.JWT_SECRET = 'test-secret-test-secret-test-secret-123';
 const root = resolve(import.meta.dirname, '../../..');
 const { PricingController } = await import('../dist/pricing/pricing.controller.js');
 const { PromoService } = await import('../dist/pricing/promo.service.js');
+const { AutoDiscountService } = await import('../dist/pricing/auto-discounts.service.js');
 const { AdminBusinessController } = await import('../dist/admin/admin-business.controller.js');
 const { finalBill, ruleFromRow } = await import('../dist/pricing/pricing.js');
 
-const pg = new PGlite();
+const pg = new PGlite({extensions:{pgcrypto}});
 const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(Point,4326\)/g, 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
 for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '008_marketing', '009_nurse_admin_documents_settings', '010_self_registration', '011_regions', '012_area_coordinates', '013_default_password', '014_applications_doc_kinds'])
   await pg.exec(strip(readFileSync(resolve(root, `infra/db/migrations/${f}.sql`), 'utf8')));
+await migrateBillingFixtures(pg);
 let chain = Promise.resolve();
 const db = {
   query: (s, p = []) => pg.query(s, p),
@@ -30,7 +34,8 @@ const db = {
   },
 };
 const promos = new PromoService();
-const pricing = new PricingController(db, promos);
+const {billing,dispatch,fees}=configureBilling(db);
+const pricing = new PricingController(db,promos,fees,billing,new AutoDiscountService());
 const admin = new AdminBusinessController(db, { invalidate: async () => {} });
 const code = c => e => e.getResponse?.().code === c;
 
@@ -60,7 +65,7 @@ test('price edit is applied to new quotes immediately; deactivating hides the se
   assert.equal((await pricing.quote(P, { serviceId: svc })).min, 1500);
   await admin.updateService(A, svc, { price: 1200 });
   const list = (await admin.services(A)).items;
-  assert.equal(list.length, 1);
+  assert.equal(list.filter(item=>item.code==='DRESSING').length,1);
 });
 
 let welcome;
@@ -94,27 +99,28 @@ test('bill is computed from time at the patient + promo snapshot, and shown to b
   const b = finalBill(ruleFromRow(rule), 47 * 60, promo);
   assert.deepEqual(b, { minutes: 47, gross: 2000, discount: 400, due: 1600 });
   await pg.query(`UPDATE care_requests SET service_minutes=$2,gross_amount=$3,discount_amount=$4,amount_due=$5,payment_status='DUE',billed_at=now() WHERE id=$1`, [req, b.minutes, b.gross, b.discount, b.due]);
+  await recordExecution(db,{requestId:req,beneficiaryId:benef,nurseUserId:nurseU,serviceId:svc,minutes:47});
+  await db.transaction(c=>billing.issueInvoice(c,req,visit,nurseId,'SYP_NEW',
+    {...b,timeGross:b.gross,surcharge:0,distanceFee:0,tax:0,commission:400,nurseEarning:1600},rule));
   const bp = await pricing.patientBill(P, req), bn = await pricing.nurseBill(N, req);
   assert.deepEqual([bp.due, bp.remaining, bp.paymentStatus, bp.promoCode], [1600, 1600, 'DUE', 'WELCOME20']);
   assert.deepEqual([bn.due, bn.minutes, bn.discount], [1600, 47, 400]);
 });
 
 test('short payment is flagged and keeps the bill open; the remainder completes it; change is reported', async () => {
-  const a = await pricing.collect(N, req, { amount: 1000 });
-  assert.deepEqual([a.status, a.remaining, a.change], ['PARTIAL', 600, 0]);
-  assert.match(a.message, /ناقص/);
+  const a = await pricing.collect(N, req, { amount: 1000 },'short');
+  assert.deepEqual([a.status, a.remaining, a.change], ['PARTIALLY_PAID', 600, 0]);
   assert.equal((await pricing.patientBill(P, req)).paymentStatus, 'PARTIAL');
-  const b = await pricing.collect(N, req, { amount: 1000 }); // pays more than the remaining 600
-  assert.deepEqual([b.status, b.applied, b.change], ['PAID', 600, 400]);
-  assert.match(b.message, /فكة/);
-  await assert.rejects(pricing.collect(N, req, { amount: 100 }), code('ALREADY_PAID'));
+  const b = await pricing.collect(N, req, { amount: 1000 },'remainder');
+  assert.deepEqual([b.status, Number(b.applied_amount), b.change], ['PAID', 600, 400]);
+  await assert.rejects(pricing.collect(N, req, { amount: 100 },'paid'), code('ALREADY_PAID'));
   assert.equal(Number((await pg.query(`SELECT sum(amount) s FROM cash_collections WHERE visit_id=$1`, [visit])).rows[0].s), 1600); // books match the bill
 });
 
 test('only the nurse of the visit can collect; invalid amounts rejected', async () => {
   const other = await id(`INSERT INTO users(phone_e164,role) VALUES('+4','NURSE') RETURNING id`);
   await pg.query(`INSERT INTO nurses(user_id,verified) VALUES($1,true)`, [other]);
-  await assert.rejects(pricing.collect({ user: { id: other, role: 'NURSE' } }, req, { amount: 100 }), e => e.getStatus() === 403);
+  await assert.rejects(pricing.collect({ user: { id: other, role: 'NURSE' } }, req, { amount: 100 },'unauthorized'), code('INVOICE_NOT_COLLECTIBLE'));
   await assert.rejects(pricing.patientBill({ user: { id: other, role: 'PATIENT' } }, req), e => e.getStatus() === 403 || e.getStatus() === 404);
 });
 
@@ -143,18 +149,15 @@ test('non-admins cannot touch prices, promos or rewards', async () => {
 });
 
 // ---- the real dispatch state machine: complete() must produce the bill ----
-test('dispatch.complete bills from arrival->end using the request snapshot, and the nurse is then released', async () => {
-  const { DispatchService } = await import('../dist/dispatch/dispatch.service.js');
-  const dispatch = new DispatchService(db);
+test('dispatch.complete uses the recorded service start and releases the nurse', async () => {
   const rule = { basePrice: 1200, includedMinutes: 30, blockMinutes: 15, blockPrice: 400, expectedMinutes: 40, roundingStep: 50 };
   const r2 = await id(`INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,status,price_amount,currency_code,commission_bps,pricing,promo_snapshot)
-    VALUES($1,$2,$3,'x','MANUAL_PIN','a','EN_ROUTE',1200,'SYP_NEW',2000,$4::jsonb,$5::jsonb) RETURNING id`,
+    VALUES($1,$2,$3,'x','MANUAL_PIN','a','IN_SERVICE',1200,'SYP_NEW',2000,$4::jsonb,$5::jsonb) RETURNING id`,
     [patient, benef, svc, JSON.stringify(rule), JSON.stringify({ code: 'X', type: 'FIXED', value: 200 })]);
   await pg.query(`UPDATE nurses SET work_status='EN_ROUTE',availability_intent='AVAILABLE' WHERE id=$1`, [nurseId]);
   const a2 = await id(`INSERT INTO request_assignments(request_id,nurse_id,status) VALUES($1,$2,'ACTIVE') RETURNING id`, [r2, nurseId]);
-  await dispatch.transition(nurseU, a2, 'arrive');
-  await pg.query(`UPDATE visits SET arrived_at=now()-interval '50 minutes' WHERE assignment_id=$1`, [a2]); // simulate 50 minutes at the patient
-  await dispatch.transition(nurseU, a2, 'start');
+  await pg.query('INSERT INTO visits(assignment_id) VALUES($1)',[a2]);
+  await recordExecution(db,{requestId:r2,beneficiaryId:benef,nurseUserId:nurseU,serviceId:svc,minutes:50});
   const done = await dispatch.transition(nurseU, a2, 'complete');
   assert.equal(done.status, 'COMPLETED');
   const row = (await pg.query(`SELECT service_minutes,gross_amount,discount_amount,amount_due,payment_status FROM care_requests WHERE id=$1`, [r2])).rows[0];

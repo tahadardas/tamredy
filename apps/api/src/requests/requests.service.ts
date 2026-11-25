@@ -28,6 +28,13 @@ export class RequestsService {
       if (k.rows[0].request_hash !== digest) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
       if (k.rows[0].request_id) return this.findOne(userId, k.rows[0].request_id);
       const appointment = validateAppointment(dto.scheduledAt);
+      if (dto.bookingMode === 'SCHEDULED' && !appointment) invalid('SCHEDULED_TIME_REQUIRED');
+      if (dto.bookingMode !== undefined && dto.bookingMode !== 'SCHEDULED' && appointment) {
+        invalid('SCHEDULED_TIME_REQUIRES_SCHEDULED_MODE');
+      }
+      if (dto.bookingMode !== 'OPEN' && (dto.openDurationMinutes !== undefined || dto.latestAcceptableArrivalAt)) {
+        invalid('OPEN_MARKETPLACE_FIELDS_REQUIRE_OPEN_MODE');
+      }
       const orders = (await client.query(`SELECT value FROM app_settings WHERE key='orders'`)).rows[0]?.value;
       if (orders && orders.accepting === false) throw new ServiceUnavailableException({ code: 'ORDERS_PAUSED', message: orders.pausedMessage ?? '' });
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
@@ -48,6 +55,14 @@ export class RequestsService {
       }
 
       if (rawItems.length === 0) invalid('At least one service must be selected');
+      const mergedItems = new Map<string, number>();
+      for (const item of rawItems) {
+        const quantity = (mergedItems.get(item.serviceId) ?? 0) + item.quantity;
+        if (quantity > 10) invalid('SERVICE_QUANTITY_LIMIT_EXCEEDED');
+        mergedItems.set(item.serviceId,quantity);
+      }
+      rawItems.splice(0,rawItems.length,...[...mergedItems].map(([serviceId,quantity]) => ({serviceId,quantity})));
+      if (rawItems.length > 10) invalid('REQUEST_ITEM_LIMIT_EXCEEDED');
 
       const serviceIds = [...new Set(rawItems.map(i => i.serviceId))];
       const servicesRes = await client.query(
@@ -57,12 +72,14 @@ export class RequestsService {
       if (servicesRes.rowCount !== serviceIds.length) {
         invalid('One or more selected services are unavailable or not clinically approved');
       }
+      if (new Set(servicesRes.rows.map(row=>row.currency_code)).size!==1) {
+        invalid('REQUEST_ITEMS_REQUIRE_SINGLE_CURRENCY');
+      }
 
       const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
       const anyRequiresPrescription = servicesRes.rows.some(r => r.requires_prescription);
-      if (anyRequiresPrescription && !dto.prescriptionConfirmed) {
-        invalid('PRESCRIPTION_CONFIRMATION_REQUIRED: Medical prescription verification is mandatory for this service');
-      }
+      const anyRequiresClinicalReview = servicesRes.rows.some(r => r.requires_clinical_review);
+      const needsClinicalApproval = anyRequiresPrescription || anyRequiresClinicalReview;
 
       if (appointment) {
         for (const sid of serviceIds) {
@@ -72,15 +89,16 @@ export class RequestsService {
 
       let totalBasePrice = 0;
       let totalExpectedMinutes = 0;
-      let maxCommissionBps = 0;
+      let weightedCommission = 0;
 
       for (const it of rawItems) {
         const s = serviceMap.get(it.serviceId)!;
         const unitPrice = Number(s.price_amount);
         totalBasePrice += unitPrice * it.quantity;
         totalExpectedMinutes += (Number(s.expected_minutes) || 30) * it.quantity;
-        maxCommissionBps = Math.max(maxCommissionBps, Number(s.commission_bps) || 2000);
+        weightedCommission += unitPrice * it.quantity * Number(s.commission_bps ?? 2000);
       }
+      const combinedCommissionBps = totalBasePrice > 0 ? Math.round(weightedCommission/totalBasePrice) : 0;
 
       // Pick primary service (highest price)
       const primaryService = servicesRes.rows.reduce((prev, curr) =>
@@ -92,6 +110,8 @@ export class RequestsService {
       const combinedRule = {
         ...baseRule,
         basePrice: totalBasePrice,
+        includedMinutes: rawItems.reduce((total,item)=>total
+          + ruleFromRow(serviceMap.get(item.serviceId)!).includedMinutes*item.quantity,0),
         expectedMinutes: totalExpectedMinutes,
       };
 
@@ -112,17 +132,25 @@ export class RequestsService {
         ? (dto.latestAcceptableArrivalAt ? new Date(dto.latestAcceptableArrivalAt) : new Date(openExpiresAt!.getTime() + 60 * 60000))
         : null;
 
+      const areaId = (await client.query(`SELECT a.id FROM areas a
+        WHERE a.active AND a.lat IS NOT NULL AND a.lng IS NOT NULL
+        ORDER BY ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
+          <-> ST_SetSRID(ST_MakePoint(a.lng,a.lat),4326)::geography
+        LIMIT 1`, [dto.longitude, dto.latitude])).rows[0]?.id ?? null;
+
       const r = await client.query(`INSERT INTO care_requests(
         requester_user_id, beneficiary_id, service_id, location, location_source, address_text,
         status, price_amount, currency_code, commission_bps, pricing, promo_id, promo_snapshot,
-        booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at
+        booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at,
+        latest_acceptable_arrival_at, area_id, clinical_approval_status
       )
-      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19)
+      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21)
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
-        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,maxCommissionBps,
+        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,combinedCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
         bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'SCHEDULED' : 'SEARCHING'),
-        isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null, latestArrivalAt?.toISOString() ?? null
+        isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
+        latestArrivalAt?.toISOString() ?? null, areaId, needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED'
       ]);
       const request = r.rows[0];
 
@@ -140,7 +168,7 @@ export class RequestsService {
           it.serviceId,
           it.quantity,
           s.price_amount,
-          s.expected_minutes || 30,
+          (Number(s.expected_minutes) || 30) * it.quantity,
           JSON.stringify({
             basePrice: s.price_amount,
             currency: s.currency_code,
@@ -158,14 +186,21 @@ export class RequestsService {
       }
       await client.query('UPDATE request_create_keys SET request_id=$1 WHERE user_id=$2 AND key=$3',[request.id,userId,key]);
 
-      if (isOpenMode) {
+      if (needsClinicalApproval) {
+        await client.query(`INSERT INTO request_clinical_reviews(
+          request_id,required_prescription,required_clinical_review
+        ) VALUES($1,$2,$3)`, [request.id,anyRequiresPrescription,anyRequiresClinicalReview]);
+        if (appointment) await saveSchedule(client,request.id,appointment);
+      }
+
+      if (isOpenMode && !needsClinicalApproval) {
         await client.query(
           `INSERT INTO outbox_events(event_type, aggregate_id, payload)
            VALUES('marketplace.request.published', $1, $2::jsonb)`,
           [request.id, JSON.stringify({ requestId: request.id, recipientUserId: userId, openExpiresAt })],
         );
         await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'marketplace.request.published']);
-      } else {
+      } else if (!needsClinicalApproval) {
         const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
         if (!appointment && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
           const search = await client.query(`UPDATE care_requests SET
@@ -184,12 +219,14 @@ export class RequestsService {
         await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
         await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
       }
-      return {...request, ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
+      return {...request,clinicalApprovalStatus:needsClinicalApproval?'PENDING':'NOT_REQUIRED',
+        ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),
+        estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
     });
   }
   async findOne(userId: string, requestId: string) {
     const found = await this.db.query(`SELECT id,requester_user_id,beneficiary_id,service_id,status,version,price_amount,currency_code,created_at,
-       booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at,
+       booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at,clinical_approval_status,
        (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = care_requests.id AND mp.status = 'PENDING') AS active_proposals_count
        FROM care_requests WHERE id=$1 AND requester_user_id=$2`,[requestId,userId]);
     if(!found.rowCount) missing();
@@ -200,13 +237,13 @@ export class RequestsService {
       JOIN services s ON s.id=cri.service_id
       WHERE cri.request_id=$1
       ORDER BY cri.created_at ASC
-    `, [requestId]).catch(() => ({ rows: [] }));
+    `, [requestId]);
     return { ...found.rows[0], items: items.rows };
   }
   async list(userId: string, page: PageArgs) {
     // One joined query for request + service + beneficiary + winning assignment.
     // A correlated lookup per row would be a N+1 anti-pattern.
-    const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,
+    const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,cr.clinical_approval_status,
       cr.created_at,cr.version,
       cr.booking_mode, cr.marketplace_status, cr.open_expires_at, cr.latest_acceptable_arrival_at,
       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING') AS active_proposals_count,
@@ -251,7 +288,7 @@ export class RequestsService {
     return this.db.transaction(client => cancelRequest(client, userId, requestId, dto));
   }
   async track(userId:string, requestId:string) {
-    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
+    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.clinical_approval_status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_Y(nl.location::geometry) END AS nurse_lat,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_X(nl.location::geometry) END AS nurse_lng,
       CASE WHEN cr.status='EN_ROUTE' THEN nl.recorded_at END AS location_at

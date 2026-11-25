@@ -20,7 +20,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     await this.subscriber.subscribe('tamreedy:events');
     this.subscriber.on('message',(_channel,data)=>{
       try {
-        const evt=JSON.parse(data) as {type:string;payload:{recipientUserId?:string;recipientUserIds?:string[];requestId?:string;namespace?:string}};
+        const evt=JSON.parse(data) as {eventId?:string;type:string;payload:{recipientUserId?:string;recipientUserIds?:string[];requestId?:string;namespace?:string}};
         // Retryable outbox invalidation is received on all API replicas.
         if(evt.type==='cache.invalidate' && evt.payload.namespace==='services:public') {
           // Catalogue/prices changed: every connected app reloads its service list (REST stays the source of truth).
@@ -28,7 +28,9 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         }
         const users=[...(evt.payload.recipientUserIds??[]),...(evt.payload.recipientUserId?[evt.payload.recipientUserId]:[])];
         // Never rely on a client-selected room or broadcast private patient data publicly.
-        for (const userId of new Set(users)) void this.deliverPrivateEvent(userId, evt.type, evt.payload);
+        for (const userId of new Set(users)) {
+          void this.deliverPrivateEvent(userId,evt.type,{...evt.payload,eventId:evt.eventId});
+        }
       }catch { /* malformed worker message ignored and logged upstream */ }
     });
   }

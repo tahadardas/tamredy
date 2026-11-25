@@ -1,6 +1,6 @@
 import {msgOf} from './session';
 import {sendJson} from './session';
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import type {Live} from './pages';
 import {Notice, Panel, Table} from './ui';
 
@@ -101,12 +101,28 @@ export function Dues({live}: {live: Live}) {
   const {data, err, load} = useApi(live, '/v1/admin/dues');
   const [amount, setAmount] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');
+  const attempts = useRef(new Map<string,string>());
+  const inFlight = useRef(new Set<string>());
   if (!live) return <NeedLogin title="مستحقات الشركة"/>;
   const items: any[] = data?.items ?? [];
   async function settle(nurseId: string, direction: 'FROM_NURSE' | 'TO_NURSE') {
+    const value=Number(amount[nurseId]);
+    if (!Number.isSafeInteger(value) || value<1 || inFlight.current.has(nurseId)) return;
+    const attempt=JSON.stringify([nurseId,direction,value]);
+    const key=attempts.current.get(attempt) ?? crypto.randomUUID();
+    attempts.current.set(attempt,key);
+    inFlight.current.add(nurseId);
     setMsg('');
-    try { await send(live!, 'POST', `/v1/admin/dues/${nurseId}/settle`, {direction, amount: Number(amount[nurseId]), note: direction === 'FROM_NURSE' ? 'استلام من الممرض' : 'دفع للممرض'}); setAmount({...amount, [nurseId]: ''}); await load(); }
+    try {
+      await sendJson('POST', `/v1/admin/dues/${nurseId}/settle`,
+        {direction,amount:value,note:direction === 'FROM_NURSE' ? 'استلام من الممرض' : 'دفع للممرض'},
+        {'Idempotency-Key':key});
+      attempts.current.delete(attempt);
+      setAmount(current=>({...current,[nurseId]:''}));
+      await load();
+    }
     catch (e) { setMsg(`تعذر التسجيل: ${msgOf(e)}`); }
+    finally { inFlight.current.delete(nurseId); }
   }
   return <>
     <div className="stats three">

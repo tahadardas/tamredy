@@ -357,18 +357,53 @@ class _LocationScreenState extends State<LocationScreen> {
                   TextButton(onPressed: () => update(() => appointment = null), child: const Text('طلب الزيارة الآن')),
               ],
               KeyValueRow('الخدمة', service.title),
+              if (!kDemoMode) ...[
+                for (final selected in c.services.where((item) => c.selectedServiceQuantities.containsKey(item.id)))
+                  Row(children: [
+                    Expanded(child: Text(selected.title)),
+                    IconButton(
+                      tooltip: 'تقليل الكمية',
+                      onPressed: selected.id == service.id && c.selectedServiceQuantities[selected.id] == 1
+                        ? null : () => update(() => c.setServiceQuantity(selected,c.selectedServiceQuantities[selected.id]!-1)),
+                      icon: const Icon(Icons.remove),
+                    ),
+                    Text('${c.selectedServiceQuantities[selected.id]}'),
+                    IconButton(
+                      tooltip: 'زيادة الكمية',
+                      onPressed: c.selectedServiceQuantities[selected.id] == 10
+                        ? null : () => update(() => c.setServiceQuantity(selected,c.selectedServiceQuantities[selected.id]!+1)),
+                      icon: const Icon(Icons.add),
+                    ),
+                  ]),
+                if (c.selectedServiceQuantities.length < 10)
+                  DropdownButton<ServiceItem>(
+                    isExpanded: true,
+                    hint: const Text('إضافة خدمة للزيارة'),
+                    items: [for (final item in c.services.where((s)=> !c.selectedServiceQuantities.containsKey(s.id)))
+                      DropdownMenuItem(value:item,child:Text(item.title,overflow:TextOverflow.ellipsis))],
+                    onChanged: (item) { if (item != null) update(() => c.setServiceQuantity(item,1)); },
+                  ),
+              ],
               KeyValueRow('المستفيد', c.beneficiary.isEmpty ? 'غير محدد' : c.beneficiary),
               KeyValueRow('عنوان الزيارة', c.visitAddress),
-              KeyValueRow('السعر الأساسي', formatMoney(service.rule.basePrice)),
-              KeyValueRow('الإجمالي التقديري', formatMoney(estimate.expected)),
-              KeyValueRow('مدة الزيارة التقديرية', '${service.expectedMinutes} دقيقة'),
+              if (c.selectedServiceQuantities.length<=1 && (c.selectedServiceQuantities[service.id]??1)==1) ...[
+                KeyValueRow('السعر الأساسي', formatMoney(service.rule.basePrice)),
+                KeyValueRow('الإجمالي التقديري', formatMoney(estimate.expected)),
+                KeyValueRow('مدة الزيارة التقديرية', '${service.expectedMinutes} دقيقة'),
+              ] else ...[
+                KeyValueRow('السعر الأساسي للخدمات',formatMoney(c.services.fold<int>(0,
+                  (total,item)=>total+item.rule.basePrice*(c.selectedServiceQuantities[item.id]??0)))),
+                KeyValueRow('مدة الخدمات التقديرية', '${c.services.fold<int>(0,
+                  (total,item)=>total+item.expectedMinutes*(c.selectedServiceQuantities[item.id]??0))} دقيقة'),
+              ],
               if ((num.tryParse('${c.quoteInfo['surchargePercent']}') ?? 0) > 0)
                 KeyValueRow('رسم الوقت', '+${c.quoteInfo['surchargePercent']}%'),
               if ((num.tryParse('${c.quoteInfo['taxPercent']}') ?? 0) > 0)
                 KeyValueRow('الضريبة', '${c.quoteInfo['taxPercent']}%'),
               if (c.promoCode.isNotEmpty) KeyValueRow('كود الخصم', c.promoCode),
               KeyValueRow('طريقة الدفع', !kDemoMode || c.payMethod == 'cash' ? 'نقدًا للممرض' : 'المحفظة التجريبية'),
-              if (service.requiresPrescription) const NoticeBox('تتطلب الخدمة وصفة طبية.'),
+              if (service.requiresPrescription || c.services.any((item)=>item.requiresPrescription
+                && c.selectedServiceQuantities.containsKey(item.id))) const NoticeBox('تتطلب إحدى الخدمات وصفة طبية.'),
               const NoticeBox('يُحسب المبلغ النهائي وفق مدة الزيارة والرسوم المطبقة.'),
               PrimaryButton('تأكيد وإرسال الطلب', onPressed: () => Navigator.pop(context, true)),
             ],

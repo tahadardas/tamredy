@@ -1,5 +1,6 @@
 import 'cancellation_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../controller.dart';
 import 'payment.dart';
@@ -137,6 +138,42 @@ class TrackScreen extends StatelessWidget {
   final TamBottomNav nav;
   const TrackScreen({super.key, required this.c, required this.nav});
 
+  Future<void> _attachEvidence(BuildContext context, String requestId, String type) async {
+    final messages = ScaffoldMessenger.of(context);
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const ['jpg', 'jpeg', 'png', 'pdf'],
+      );
+      if (file == null) return;
+      const maxBytes = 8 * 1024 * 1024;
+      final length = await file.length();
+      if (length == null || length == 0 || length > maxBytes) {
+        messages.showSnackBar(
+          const SnackBar(content: Text('اختر ملفًا صالحًا بحجم لا يتجاوز 8 ميغابايت')),
+        );
+        return;
+      }
+      await c.api.uploadClinicalEvidence(
+        requestId,
+        type,
+        await file.readAsBytes(),
+        file.name,
+      );
+      if (context.mounted) {
+        messages.showSnackBar(
+          const SnackBar(content: Text('استلم الخادم المستند للمراجعة')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        messages.showSnackBar(
+          const SnackBar(content: Text('تعذر رفع المستند. أعد المحاولة.')),
+        );
+      }
+    }
+  }
+
   Future<void> _runRecoveryAction(
     BuildContext context,
     Future<bool> Function() action,
@@ -157,6 +194,28 @@ class TrackScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = c.service;
+    final requestId = c.requestId;
+    if (requestId != null && ['PENDING', 'REJECTED'].contains(c.clinicalApprovalStatus)) {
+      final pending = c.clinicalApprovalStatus == 'PENDING';
+      return TamScaffold(
+        title: 'المراجعة السريرية',
+        subtitle: pending ? 'بانتظار اعتماد المستندات' : 'تعذر اعتماد الطلب سريريًا',
+        nav: nav,
+        children: [
+          if (pending) ...[
+            PrimaryButton(
+              'رفع وصفة طبية',
+              onPressed: () => _attachEvidence(context, requestId, 'PRESCRIPTION'),
+            ),
+            SoftButton(
+              'رفع تقرير طبي',
+              onPressed: () => _attachEvidence(context, requestId, 'CLINICAL_REPORT'),
+            ),
+          ],
+          SoftButton('تحديث حالة الطلب', onPressed: c.resync),
+        ],
+      );
+    }
 
     // 1. Open Marketplace State
     if (c.stage == VisitStage.openMarketplace) {

@@ -5,6 +5,7 @@ import { DuesService } from '../pricing/fees.service.js';
 import type { CancelRequestDto } from './cancel-request.dto.js';
 
 import { closeOpenOffers } from '../dispatch/offer-outbox.js';
+import { transitionRequest } from './request-lifecycle.js';
 
 type Evidence = {
   status: string;
@@ -14,7 +15,9 @@ type Evidence = {
 };
 
 export function cancellationClassification(evidence: Evidence, legacy: boolean) {
-  if (['SCHEDULED', 'OFFERING'].includes(evidence.status)) return 'BEFORE_ASSIGNMENT';
+  if (['SCHEDULED', 'OFFERING', 'OPEN_FOR_PROPOSALS', 'AWAITING_RECOVERY_CHOICE', 'UNFULFILLED'].includes(evidence.status)) {
+    return 'BEFORE_ASSIGNMENT';
+  }
   if (evidence.status === 'ASSIGNED') return 'BEFORE_DEPARTURE';
   if (evidence.status !== 'EN_ROUTE') return 'LEGACY_UNCLASSIFIED';
   if (!evidence.departed || !evidence.etaAvailable) return 'ETA_UNAVAILABLE';
@@ -66,16 +69,7 @@ export async function cancelRequest(
   }
   if (request.status === 'ARRIVED') conflict('ARRIVAL_REVIEW_REQUIRED');
   if (request.status === 'IN_SERVICE') conflict('EARLY_TERMINATION_REQUIRED');
-  if (![
-    'REQUESTED',
-    'SCHEDULED',
-    'OFFERING',
-    'AWAITING_RECOVERY_CHOICE',
-    'OPEN_FOR_PROPOSALS',
-    'ASSIGNED',
-    'EN_ROUTE',
-    'UNFULFILLED',
-  ].includes(request.status)) {
+  if (!['SCHEDULED', 'OFFERING', 'OPEN_FOR_PROPOSALS', 'AWAITING_RECOVERY_CHOICE', 'ASSIGNED', 'EN_ROUTE', 'UNFULFILLED'].includes(request.status)) {
     conflict('REQUEST_CANNOT_BE_CANCELLED');
   }
   if (dto.expectedVersion !== undefined && dto.expectedVersion !== request.version) {
@@ -83,7 +77,7 @@ export async function cancelRequest(
   }
 
   const assignment = (await client.query(`SELECT id,nurse_id FROM request_assignments
-    WHERE request_id=$1 AND status='ACTIVE'`, [requestId])).rows[0];
+    WHERE request_id=$1 AND status IN ('RESERVED','ACTIVE')`, [requestId])).rows[0];
   let nurseUserId: string | undefined;
   if (assignment) {
     const nurse = await client.query('SELECT user_id FROM nurses WHERE id=$1 FOR UPDATE', [assignment.nurse_id]);
@@ -123,7 +117,7 @@ export async function cancelRequest(
 
   if (assignment) {
     await client.query(`UPDATE request_assignments SET status='RELEASED',released_at=$2,reason='PATIENT_CANCELLED'
-      WHERE id=$1`, [assignment.id, snapshot.cancelled_at]);
+      WHERE id=$1 AND status IN ('RESERVED','ACTIVE')`, [assignment.id, snapshot.cancelled_at]);
     const dues = await new DuesService().balance(client, assignment.nurse_id);
     const pause = request.status === 'EN_ROUTE' && (await client.query(
       "SELECT value->>'pauseAfterTravelCancellation' = 'true' AS enabled FROM app_settings WHERE key='dispatch'",
@@ -147,14 +141,28 @@ export async function cancelRequest(
       VALUES($1,$2,'MEDIUM','Patient reported a system or location problem during cancellation')`, [requestId,userId]);
   }
   await closeOpenOffers(client, requestId, 'CANCELLED');
-  await client.query(
-    `UPDATE marketplace_proposals
-     SET status = 'EXPIRED', updated_at = $2
-     WHERE request_id = $1 AND status = 'PENDING'`,
-    [requestId, snapshot.cancelled_at],
-  );
-  await client.query(`DELETE FROM dispatch_jobs WHERE request_id = $1`, [requestId]);
-  await client.query(`UPDATE care_requests SET status='CANCELLED',version=version+1,updated_at=$2,
+  await client.query(`UPDATE marketplace_proposals
+    SET status='INVALIDATED',invalidated_at=$2,updated_at=$2,invalidation_reason='REQUEST_CANCELLED'
+    WHERE request_id=$1 AND status='PENDING'`, [requestId, snapshot.cancelled_at]);
+  await client.query(`WITH released AS (
+      UPDATE financial_reservations SET status='RELEASED',resolved_at=$2
+      WHERE reference_id=$1 AND status='HELD' RETURNING nurse_id,amount
+    ), totals AS (SELECT nurse_id,sum(amount) AS amount FROM released WHERE nurse_id IS NOT NULL GROUP BY nurse_id)
+    UPDATE nurse_financial_accounts a SET reserved_balance=greatest(0,a.reserved_balance-totals.amount),
+      updated_at=$2 FROM totals WHERE a.nurse_id=totals.nurse_id`, [requestId, snapshot.cancelled_at]);
+  await client.query(`UPDATE scheduled_visits SET released_at=coalesce(released_at,$2)
+    WHERE request_id=$1`, [requestId, snapshot.cancelled_at]);
+  await transitionRequest(client, {
+    requestId,
+    fromStatus: request.status,
+    toStatus: 'CANCELLED',
+    currentVersion: request.version,
+    actor: 'PATIENT',
+    actorUserId: userId,
+    reason: 'PATIENT_CANCELLED',
+    metadata: { reasonCode: recordedReason, classification },
+  });
+  await client.query(`UPDATE care_requests SET marketplace_status='CANCELLED',
     closed_at=coalesce(closed_at,$2),close_reason=coalesce(close_reason,'CANCELLED') WHERE id=$1`,
   [requestId, snapshot.cancelled_at]);
   await client.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [requestId]);

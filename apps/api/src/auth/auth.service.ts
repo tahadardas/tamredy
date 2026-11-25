@@ -87,7 +87,8 @@ export class AuthService {
       `, [userId, deviceId, deviceName ?? null, platform ?? 'android', appKind ?? null]);
       return res.rows[0]?.id;
     } catch {
-      // Graceful fallback if migrations are pending in dev test runner
+      if (process.env.NODE_ENV === 'production') throw new Error('DEVICE_SESSION_PERSISTENCE_FAILED');
+      // Development-only compatibility while a local migration is pending.
       return undefined;
     }
   }
@@ -184,7 +185,7 @@ export class AuthService {
       // Check if associated device session was revoked
       if (r.device_session_id) {
         const ds = (await c.query('SELECT revoked_at, device_id FROM device_sessions WHERE id=$1 AND user_id=$2', [r.device_session_id, r.user_id])).rows[0];
-        if (!ds || ds.revoked_at || (deviceId && deviceId !== ds.device_id)) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+        if (!ds || ds.revoked_at || !deviceId || deviceId !== ds.device_id) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
       }
 
       if (r.used_at || r.revoked_at) {

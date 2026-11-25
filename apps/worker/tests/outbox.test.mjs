@@ -8,8 +8,9 @@ test('outbox leases prevent overlapping delivery and permit recovery after a wor
   const db = new PGlite();
   t.after(() => db.close());
   const migrations = new URL('../../../infra/db/migrations/', import.meta.url);
-  for (const name of ['001_core','018_dispatch_diagnostics_and_deliveries','023_outbox_delivery_leases']) {
+  for (const name of ['001_core','018_dispatch_diagnostics_and_deliveries','023_outbox_delivery_leases','058_delivery_retries_and_marketplace_paging']) {
     await db.exec(readFileSync(new URL(`${name}.sql`,migrations),'utf8')
+      .replace(/CREATE INDEX idx_marketplace_approved_created[^;]*;/s,'')
       .replace(/CREATE EXTENSION[^;]*;/g,'')
       .replaceAll('geography(Point,4326)','text')
       .replace(/CREATE INDEX[^;]*GIST[^;]*;/g,''));
@@ -21,6 +22,8 @@ test('outbox leases prevent overlapping delivery and permit recovery after a wor
     throw new Error('worker stopped');
   }), /worker stopped/);
   assert.equal((await db.query('SELECT push_published_at FROM outbox_events')).rows[0].push_published_at,null);
+  assert.equal((await db.query('SELECT push_attempts FROM outbox_events')).rows[0].push_attempts,1);
+  assert.equal(await deliverOutbox(db,'push',async () => assert.fail('retried before backoff')),false);
   assert.equal(await deliverOutbox(db,'realtime',async events => assert.equal(events.length,1)),true);
   await db.exec("UPDATE outbox_events SET push_lease_until=now()-interval '1 second'");
   assert.equal(await deliverOutbox(db,'push',async events => assert.equal(events[0].event_type,'offer.closed')),true);

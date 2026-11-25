@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LedgerService } from '../dist/wallet/ledger.service.js';
+const input = legs => ({
+  legs, transactionType:'TEST',referenceType:'TEST',referenceId:'reference',
+  idempotencyKey:'test-entry',currencyCode:'SYP_NEW',
+});
 
 test('Double-entry ledger rejects unbalanced transactions', async () => {
   const service = new LedgerService(null);
@@ -10,10 +14,11 @@ test('Double-entry ledger rejects unbalanced transactions', async () => {
   ];
 
   await assert.rejects(
-    async () => service.postTransaction(null, unbalancedLegs, 'PLATFORM_COMMISSION'),
+    async () => service.postTransaction(null, input(unbalancedLegs)),
     err => {
       assert.equal(err.getResponse().code, 'LEDGER_TRANSACTION_UNBALANCED');
-      assert.equal(err.getResponse().difference, 1000);
+      assert.equal(err.getResponse().totalDebit, '5000.00');
+      assert.equal(err.getResponse().totalCredit, '4000.00');
       return true;
     }
   );
@@ -24,19 +29,19 @@ test('Double-entry ledger rejects negative amounts and dual debit/credit on sing
 
   // Negative amount
   await assert.rejects(
-    async () => service.postTransaction(null, [
+    async () => service.postTransaction(null, input([
       { accountId: 'ACC_1', debitAmount: -500, creditAmount: 0 },
       { accountId: 'ACC_2', debitAmount: 0, creditAmount: -500 },
-    ], 'TEST'),
-    err => err.getResponse().code === 'NEGATIVE_AMOUNTS_PROHIBITED'
+    ])),
+    err => err.getResponse().code === 'INVALID_MONEY_AMOUNT'
   );
 
   // Both debit and credit on single leg
   await assert.rejects(
-    async () => service.postTransaction(null, [
+    async () => service.postTransaction(null, input([
       { accountId: 'ACC_1', debitAmount: 500, creditAmount: 500 },
       { accountId: 'ACC_2', debitAmount: 500, creditAmount: 500 },
-    ], 'TEST'),
+    ])),
     err => err.getResponse().code === 'LEG_MUST_BE_EXCLUSIVELY_DEBIT_OR_CREDIT'
   );
 });
@@ -45,7 +50,7 @@ test('Double-entry ledger accepts balanced transaction and generates entries', a
   const inserted = [];
   const mockClient = {
     query: async (sql, params) => {
-      if (sql.includes('SELECT transaction_id')) return { rowCount: 0, rows: [] };
+      if (sql.includes('INSERT INTO financial_transactions')) return {rowCount:1,rows:[{id:params[0]}]};
       if (sql.includes('INSERT INTO financial_ledger_entries')) {
         inserted.push(params);
         return { rowCount: 1 };
@@ -60,7 +65,7 @@ test('Double-entry ledger accepts balanced transaction and generates entries', a
     { accountId: 'COMPANY_COMMISSIONS', debitAmount: 0, creditAmount: 7000 },
   ];
 
-  const result = await service.postTransaction(mockClient, balancedLegs, 'PLATFORM_COMMISSION', 'req-999');
+  const result = await service.postTransaction(mockClient, input(balancedLegs));
   assert.equal(result.entriesCount, 2);
   assert.equal(inserted.length, 2);
   // Both legs share the exact same transaction ID

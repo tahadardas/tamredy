@@ -112,7 +112,7 @@ export class ChatService {
              ) AS last_message,
              (
                SELECT jsonb_agg(jsonb_build_object(
-                 'userId', u.id, 'role', m2.role, 'phone', u.phone_e164
+                 'userId', u.id, 'role', m2.role, 'displayName', u.display_name
                ))
                FROM conversation_members m2
                JOIN users u ON u.id = m2.user_id

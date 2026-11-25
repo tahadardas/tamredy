@@ -64,7 +64,11 @@ export class NursesService {
       JOIN care_requests cr ON cr.id=a.request_id JOIN services s ON s.id=cr.service_id
       WHERE a.id=$1 AND n.user_id=$2 AND a.status='ACTIVE'`,[assignmentId,userId]);
     if(!result.rowCount) missing();
-    return result.rows[0];
+    const items = await this.db.query(`SELECT cri.id,cri.service_id,cri.quantity,cri.expected_minutes,
+      cri.item_status,cri.performed_quantity,cri.actual_minutes,s.title_ar AS service_title
+      FROM care_request_items cri JOIN services s ON s.id=cri.service_id
+      WHERE cri.request_id=$1 ORDER BY cri.created_at,cri.id`, [result.rows[0].request_id]);
+    return {...result.rows[0],items:items.rows};
   }
 
 }

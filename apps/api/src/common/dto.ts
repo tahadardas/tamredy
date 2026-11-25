@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsISO8601, Matches, IsIn, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsISO8601, Matches, IsIn, IsInt, IsLatitude, IsLongitude, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class LocationDto {
@@ -9,7 +9,7 @@ export class LocationDto {
 
 export class RequestItemInputDto {
   @IsUUID() serviceId!: string;
-  @IsOptional() @IsNumber() @Min(1) @Max(10) quantity?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(10) quantity?: number;
 }
 
 export class CreateRequestDto extends LocationDto {
@@ -19,8 +19,8 @@ export class CreateRequestDto extends LocationDto {
   @IsOptional() @IsNumber() @Min(15) @Max(1440) openDurationMinutes?: number;
   @IsUUID() beneficiaryId!: string;
   @IsOptional() @IsUUID() serviceId?: string;
-  @IsOptional() @IsArray() serviceIds?: string[];
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => RequestItemInputDto) items?: RequestItemInputDto[];
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsUUID('4', { each: true }) serviceIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => RequestItemInputDto) items?: RequestItemInputDto[];
   @IsIn(['GPS_CONFIRMED','MANUAL_PIN']) locationSource!: string;
   @IsString() @MaxLength(400) addressText!: string;
   @IsBoolean() nonEmergencyConfirmed!: boolean;

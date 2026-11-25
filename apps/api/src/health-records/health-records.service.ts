@@ -10,7 +10,7 @@ export interface ObservationInputDto {
 }
 
 export interface VisitNoteInputDto {
-  servicesPerformed: Array<{ serviceId: string; titleAr: string; status: 'COMPLETED' | 'SKIPPED'; skipReason?: string }>;
+  servicesPerformed?: Array<{ serviceId: string; titleAr: string; status: 'COMPLETED' | 'SKIPPED'; skipReason?: string }>;
   clinicalNotes: string;
   materialsUsed?: Array<{ name: string; quantity: number }>;
   patientResponse?: string;
@@ -40,18 +40,26 @@ export class HealthRecordsService {
     beneficiaryId: string,
     action: string,
     requestId?: string,
-  ): Promise<{ isOwner: boolean; isAssignedNurse: boolean; isAdmin: boolean }> {
+  ): Promise<{ isOwner: boolean; isAssignedNurse: boolean; isClinicalReviewer: boolean; actorRole: string }> {
     const actor = (await this.db.query(`SELECT id, role FROM users WHERE id = $1`, [actorUserId])).rows[0];
     if (!actor) throw new ForbiddenException({ code: 'USER_NOT_FOUND' });
 
-    const ben = (await this.db.query(`SELECT owner_user_id FROM beneficiaries WHERE id = $1`, [beneficiaryId])).rows[0];
+    const ben = (await this.db.query(`SELECT owner_user_id,consent_status FROM beneficiaries WHERE id = $1`, [beneficiaryId])).rows[0];
     if (!ben) throw new NotFoundException({ code: 'BENEFICIARY_NOT_FOUND' });
 
     const isOwner = ben.owner_user_id === actorUserId;
-    const isAdmin = ['ADMIN', 'CLINICAL_REVIEWER'].includes(actor.role);
+    if (!isOwner && ben.consent_status !== 'GRANTED') {
+      throw new ForbiddenException({ code: 'BENEFICIARY_CONSENT_REQUIRED' });
+    }
+    if (requestId) {
+      const context = await this.db.query('SELECT 1 FROM care_requests WHERE id=$1 AND beneficiary_id=$2', [requestId,beneficiaryId]);
+      if (!context.rowCount) throw new ForbiddenException({ code: 'VISIT_CONTEXT_INVALID' });
+    }
+    let isClinicalReviewer = false;
 
     let isAssignedNurse = false;
     if (actor.role === 'NURSE') {
+      if (!requestId) throw new ForbiddenException({ code: 'VISIT_CONTEXT_REQUIRED' });
       const activeVisit = await this.db.query(`
         SELECT cr.id FROM care_requests cr
         JOIN request_assignments ra ON ra.request_id = cr.id
@@ -67,7 +75,14 @@ export class HealthRecordsService {
       isAssignedNurse = (activeVisit.rowCount ?? 0) > 0;
     }
 
-    if (!isOwner && !isAssignedNurse && !isAdmin) {
+    if (actor.role === 'CLINICAL_REVIEWER' && requestId) {
+      const review = await this.db.query(`SELECT 1 FROM request_clinical_reviews r
+        JOIN care_requests cr ON cr.id=r.request_id
+        WHERE r.request_id=$1 AND cr.beneficiary_id=$2 AND r.status='PENDING'`, [requestId,beneficiaryId]);
+      isClinicalReviewer = !!review.rowCount;
+    }
+
+    if (!isOwner && !isAssignedNurse && !isClinicalReviewer) {
       throw new ForbiddenException({ code: 'HEALTH_RECORD_ACCESS_DENIED' });
     }
 
@@ -75,9 +90,9 @@ export class HealthRecordsService {
     await this.db.query(`
       INSERT INTO health_record_access_audit(actor_user_id, beneficiary_id, request_id, action)
       VALUES($1, $2, $3, $4)
-    `, [actorUserId, beneficiaryId, requestId ?? null, action]).catch(() => {});
+    `, [actorUserId, beneficiaryId, requestId ?? null, action]);
 
-    return { isOwner, isAssignedNurse, isAdmin };
+    return { isOwner, isAssignedNurse, isClinicalReviewer, actorRole: actor.role };
   }
 
   /** Gets health profile of beneficiary */
@@ -145,11 +160,16 @@ export class HealthRecordsService {
   /** Records clinical measurements/observations */
   async recordObservations(
     actorUserId: string,
-    beneficiaryId: string,
+    beneficiaryId: string | undefined,
     requestId: string | undefined,
     observations: ObservationInputDto[],
   ) {
-    await this.assertBeneficiaryAccess(actorUserId, beneficiaryId, 'RECORD_OBSERVATIONS', requestId);
+    if (!beneficiaryId && requestId) {
+      beneficiaryId = (await this.db.query('SELECT beneficiary_id FROM care_requests WHERE id=$1', [requestId])).rows[0]?.beneficiary_id;
+    }
+    if (!beneficiaryId) throw new BadRequestException({ code: 'BENEFICIARY_REQUIRED' });
+    const access = await this.assertBeneficiaryAccess(actorUserId, beneficiaryId, 'RECORD_OBSERVATIONS', requestId);
+    if (access.isClinicalReviewer) throw new ForbiddenException({ code: 'CLINICAL_REVIEW_READ_ONLY' });
 
     if (!Array.isArray(observations) || observations.length === 0) {
       throw new BadRequestException({ code: 'EMPTY_OBSERVATIONS' });
@@ -177,6 +197,12 @@ export class HealthRecordsService {
           detail: `${obs.observationType} must be between ${min} and ${max} ${typeDef.unit}`,
         });
       }
+      if (access.actorRole === 'PATIENT' && obs.source && obs.source !== 'PATIENT_SELF_REPORT') {
+        throw new ForbiddenException({ code: 'OBSERVATION_SOURCE_NOT_ALLOWED' });
+      }
+      if (access.actorRole === 'NURSE' && obs.source === 'CLINICAL_VERIFIED') {
+        throw new ForbiddenException({ code: 'OBSERVATION_SOURCE_NOT_ALLOWED' });
+      }
     }
 
     return this.db.transaction(async client => {
@@ -198,7 +224,7 @@ export class HealthRecordsService {
           obs.observationType,
           obs.numericValue,
           typeDef.unit,
-          obs.source ?? 'NURSE_VISIT',
+          obs.source ?? (access.actorRole === 'PATIENT' ? 'PATIENT_SELF_REPORT' : 'NURSE_VISIT'),
           obs.notes ?? null,
           measuredAt,
         ]);
@@ -209,8 +235,8 @@ export class HealthRecordsService {
   }
 
   /** Time-series trends for charts */
-  async getObservationTimeline(actorUserId: string, beneficiaryId: string, type?: string, limit = 50) {
-    await this.assertBeneficiaryAccess(actorUserId, beneficiaryId, 'VIEW_OBSERVATIONS');
+  async getObservationTimeline(actorUserId: string, beneficiaryId: string, type?: string, limit = 50, requestId?: string) {
+    await this.assertBeneficiaryAccess(actorUserId, beneficiaryId, 'VIEW_OBSERVATIONS', requestId);
     const clampedLimit = Math.min(Math.max(1, limit), 100);
 
     let query = `
@@ -239,8 +265,10 @@ export class HealthRecordsService {
       SELECT cr.id, cr.beneficiary_id, cr.service_id, s.code AS primary_code, s.title_ar AS primary_title
       FROM care_requests cr
       JOIN services s ON s.id = cr.service_id
-      WHERE cr.id = $1
-    `, [requestId]);
+      JOIN request_assignments ra ON ra.request_id=cr.id AND ra.status='ACTIVE'
+      JOIN nurses n ON n.id=ra.nurse_id
+      WHERE cr.id = $1 AND n.user_id=$2 AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
+    `, [requestId,nurseUserId]);
 
     if (!reqRes.rowCount) throw new NotFoundException({ code: 'REQUEST_NOT_FOUND' });
     const req = reqRes.rows[0];
@@ -295,8 +323,9 @@ export class HealthRecordsService {
       FROM care_requests cr
       JOIN request_assignments ra ON ra.request_id = cr.id AND ra.status = 'ACTIVE'
       JOIN nurses n ON n.id = ra.nurse_id
-      WHERE cr.id = $1
-    `, [requestId]);
+      JOIN beneficiaries b ON b.id=cr.beneficiary_id AND b.consent_status='GRANTED'
+      WHERE cr.id=$1 AND n.user_id=$2 AND cr.status IN ('ARRIVED','IN_SERVICE')
+    `, [requestId,nurseUserId]);
 
     if (!reqRes.rowCount) throw new NotFoundException({ code: 'ACTIVE_ASSIGNMENT_NOT_FOUND' });
     if (reqRes.rows[0].nurse_user_id !== nurseUserId) throw new ForbiddenException({ code: 'NOT_ASSIGNED_NURSE' });
@@ -332,6 +361,9 @@ export class HealthRecordsService {
           isDraft ? null : new Date().toISOString(),
           isDraft ? null : new Date().toISOString(),
         ]);
+        await client.query(`INSERT INTO health_record_access_audit(
+          actor_user_id,beneficiary_id,request_id,action,context_reason
+        ) VALUES($1,$2,$3,'SUBMIT_VISIT_NOTE','ASSIGNED_VISIT')`, [nurseUserId,beneficiaryId,requestId]);
         return res.rows[0];
       }
 
@@ -387,6 +419,10 @@ export class HealthRecordsService {
         nextStatus,
       ]);
 
+      await client.query(`INSERT INTO health_record_access_audit(
+        actor_user_id,beneficiary_id,request_id,action,context_reason
+      ) VALUES($1,$2,$3,'AMEND_VISIT_NOTE',$4)`, [nurseUserId,beneficiaryId,requestId,dto.amendmentReason ?? 'DRAFT_UPDATED']);
+
       return res.rows[0];
     });
   }
@@ -394,9 +430,8 @@ export class HealthRecordsService {
   /** Gets visit clinical note and its version history */
   async getVisitNote(actorUserId: string, requestId: string) {
     const noteRes = await this.db.query(`
-      SELECT n.*, u.phone_e164 AS nurse_phone
+      SELECT n.*
       FROM clinical_visit_notes n
-      JOIN users u ON u.id = n.nurse_user_id
       WHERE n.request_id = $1
     `, [requestId]);
 

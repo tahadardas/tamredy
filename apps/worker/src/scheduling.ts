@@ -7,6 +7,7 @@ export async function releaseScheduledVisit(pool: pg.Pool): Promise<boolean> {
     const visit = (await client.query(`SELECT r.id,r.requester_user_id,s.appointment_at<=now() AS expired
       FROM scheduled_visits s JOIN care_requests r ON r.id=s.request_id
       WHERE s.released_at IS NULL AND s.release_at<=now() AND r.status='SCHEDULED'
+        AND r.clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
       ${process.env.GUARDIAN_NIGHT_POLICY_ENABLED === 'true' ? `AND (s.appointment_at<=now() OR (
         guardian_schedule_denial(r.service_id,s.appointment_at) IS NULL
         AND guardian_schedule_denial(r.service_id,statement_timestamp()) IS NULL

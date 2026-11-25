@@ -438,6 +438,21 @@ class TamreedyApi {
     return const [];
   }
 
+  Future<void> uploadClinicalEvidence(
+    String requestId,
+    String type,
+    List<int> bytes,
+    String filename,
+  ) async {
+    await dio.post(
+      '/v1/requests/$requestId/clinical-evidence',
+      data: FormData.fromMap({
+        'evidenceType': type,
+        'file': MultipartFile.fromBytes(bytes, filename: filename),
+      }),
+    );
+  }
+
   Future<Map<String, dynamic>> getMarketplaceRequest(String requestId) =>
       getMap('/v1/marketplace/requests/$requestId');
 
@@ -490,8 +505,8 @@ class TamreedyApi {
   }) =>
       post('/v1/requests/$requestId/booking-mode', {
         'bookingMode': 'SCHEDULED',
-        'scheduledAt': scheduledStartAt.toIso8601String(),
-        if (scheduledEndAt != null) 'latestAcceptableArrivalAt': scheduledEndAt.toIso8601String(),
+        'scheduledAt': scheduledStartAt.toUtc().toIso8601String(),
+        if (scheduledEndAt != null) 'scheduledEndAt': scheduledEndAt.toUtc().toIso8601String(),
       });
 
   Future<Map<String, dynamic>> extendWaitWindow(

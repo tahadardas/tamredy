@@ -175,6 +175,7 @@ class PatientController extends ChangeNotifier {
   int balance = kDemoMode ? 5000 : 0;
 
   ServiceItem? service;
+  final Map<String, int> selectedServiceQuantities = {};
   String beneficiary = kDemoMode ? 'والدي - أحمد' : '';
   String address = '';
   String extraAddress = '';
@@ -216,6 +217,7 @@ class PatientController extends ChangeNotifier {
   // Smart Booking & Open Marketplace
   String bookingMode = 'INSTANT';
   String? marketplaceStatus;
+  String? clinicalApprovalStatus;
   int activeProposalsCount = 0;
   DateTime? openExpiresAt;
 
@@ -265,6 +267,7 @@ class PatientController extends ChangeNotifier {
       if (service != null && !services.any((s) => s.id == service!.id)) {
         service = null; // removed by admin
       }
+      selectedServiceQuantities.removeWhere((id, _) => !services.any((s) => s.id == id));
       serviceState = services.isEmpty ? ServiceLoadState.empty : ServiceLoadState.loaded;
       notifyListeners();
     } on DioException catch (e) {
@@ -453,7 +456,10 @@ class PatientController extends ChangeNotifier {
       );
     } else {
       try {
-        await api.post('/v1/requests/$requestId/tip', {'amount': amount});
+        final key = 'tip:$requestId:$amount';
+        await api.post('/v1/requests/$requestId/tip', {'amount': amount}, {
+          'Idempotency-Key': key,
+        });
         await loadBill();
       } on DioException catch (e) {
         promoMsg = ((e.response?.data as Map?)?['code']) == 'ALREADY_PAID'
@@ -580,6 +586,9 @@ class PatientController extends ChangeNotifier {
 
   void pick(ServiceItem s) {
     service = s;
+    selectedServiceQuantities
+      ..clear()
+      ..[s.id] = 1;
     quoteInfo = {};
     promo = null;
     promoCode = '';
@@ -587,6 +596,27 @@ class PatientController extends ChangeNotifier {
     _recalc();
     if (!kDemoMode) _quote();
     Analytics.log('service_selected', {'service_id': s.id});
+    notifyListeners();
+  }
+
+  /// Logic-only multi-service selection API used by the booking UI without coupling
+  /// the controller to a particular visual design.
+  void setServiceQuantity(ServiceItem item, int quantity) {
+    if (quantity < 0 || quantity > 10) return;
+    if (quantity == 0) {
+      selectedServiceQuantities.remove(item.id);
+      if (service?.id == item.id) {
+        service = selectedServiceQuantities.isEmpty
+            ? null
+            : services.where((candidate) => candidate.id == selectedServiceQuantities.keys.first).firstOrNull;
+      }
+    } else {
+      if (!selectedServiceQuantities.containsKey(item.id) && selectedServiceQuantities.length >= 10) return;
+      selectedServiceQuantities[item.id] = quantity;
+      service ??= item;
+    }
+    promo = null;
+    promoMsg = null;
     notifyListeners();
   }
 
@@ -742,7 +772,11 @@ class PatientController extends ChangeNotifier {
         {
           'beneficiaryId': beneficiaryId,
           if (appointment != null) 'scheduledAt': appointment.toUtc().toIso8601String(),
-          'serviceId': service!.id,
+          if (selectedServiceQuantities.isEmpty) 'serviceId': service!.id
+          else 'items': [
+            for (final entry in selectedServiceQuantities.entries)
+              {'serviceId': entry.key, 'quantity': entry.value},
+          ],
           'latitude': visitPoint.latitude,
           'longitude': visitPoint.longitude,
           'accuracyMeters': accuracyMeters,
@@ -751,12 +785,13 @@ class PatientController extends ChangeNotifier {
           'nonEmergencyConfirmed': true,
           if (service!.requiresPrescription) 'prescriptionConfirmed': true,
           if (promoCode.isNotEmpty) 'promoCode': promoCode,
-          'bookingMode': bookingMode,
-          if (bookingMode == 'OPEN') 'openDurationMinutes': 60,
+          'bookingMode': appointment != null ? 'SCHEDULED' : bookingMode,
+          if (appointment == null && bookingMode == 'OPEN') 'openDurationMinutes': 60,
         },
         {'Idempotency-Key': _idemKey!},
       );
       requestId = r['id'] as String?;
+      clinicalApprovalStatus = (r['clinicalApprovalStatus'] ?? r['clinical_approval_status']) as String?;
       position = visitPoint;
       address = confirmedAddress;
       accuracy = accuracyMeters.toDouble();
@@ -789,8 +824,9 @@ class PatientController extends ChangeNotifier {
       if (res['hasActive'] == true && res['request'] != null) {
         final req = Map<String, dynamic>.from(res['request'] as Map);
         requestId = req['id']?.toString();
+        clinicalApprovalStatus = req['clinical_approval_status'] as String?;
         final status = '${req['status']}';
-        scheduledAt = DateTime.tryParse('${req['scheduledAt']}')?.toLocal();
+        scheduledAt = DateTime.tryParse('${req['scheduled_at'] ?? req['scheduledAt']}')?.toLocal();
         address = req['address_text']?.toString() ?? 'الموقع المحدد على الخريطة';
         extraAddress = '';
         if (req['patient_lat'] != null && req['patient_lng'] != null) {
@@ -828,6 +864,7 @@ class PatientController extends ChangeNotifier {
 
         stage = switch (status) {
           'SCHEDULED' => VisitStage.scheduled,
+          'OPEN_FOR_PROPOSALS' => VisitStage.openMarketplace,
           'REQUESTED' || 'OFFERING' => (marketplaceStatus == 'OPEN_FOR_PROPOSALS' || bookingMode == 'OPEN')
               ? VisitStage.openMarketplace
               : VisitStage.searching,
@@ -836,7 +873,7 @@ class PatientController extends ChangeNotifier {
           'ARRIVED' => VisitStage.arrived,
           'IN_SERVICE' => VisitStage.inService,
           'COMPLETED' => VisitStage.completed,
-          'UNFULFILLED' => VisitStage.unfulfilled,
+          'UNFULFILLED' || 'AWAITING_RECOVERY_CHOICE' => VisitStage.unfulfilled,
           _ => VisitStage.none,
         };
 
@@ -851,6 +888,17 @@ class PatientController extends ChangeNotifier {
           }
         }
       } else {
+        final unpaid = res['unpaidInvoices'] as List?;
+        if (unpaid != null && unpaid.isNotEmpty) {
+          requestId = (unpaid.first as Map)['id'] as String?;
+          if (requestId != null) {
+            clinicalApprovalStatus = null;
+            stage = VisitStage.completed;
+            await loadBill();
+            notifyListeners();
+            return;
+          }
+        }
         if (stage != VisitStage.none) {
           stage = VisitStage.none;
           requestId = null;
@@ -954,6 +1002,7 @@ class PatientController extends ChangeNotifier {
   Future<String?> _fetchTracking(String id) async {
     try {
       final d = await api.getMap('/v1/requests/$id/tracking');
+      if (requestId == id) clinicalApprovalStatus = d['clinical_approval_status'] as String?;
       if (id != requestId) return null;
       final status = '${d['status']}';
       bookingMode = d['booking_mode']?.toString() ?? bookingMode;
@@ -968,7 +1017,7 @@ class PatientController extends ChangeNotifier {
         'ARRIVED' => VisitStage.arrived,
         'IN_SERVICE' => VisitStage.inService,
         'COMPLETED' => VisitStage.completed,
-        'UNFULFILLED' => VisitStage.unfulfilled,
+        'UNFULFILLED' || 'AWAITING_RECOVERY_CHOICE' => VisitStage.unfulfilled,
         'ESCALATED' => VisitStage.interrupted,
         'CANCELLED' => VisitStage.none,
         _ => (marketplaceStatus == 'OPEN_FOR_PROPOSALS' || bookingMode == 'OPEN')
@@ -1256,6 +1305,8 @@ class PatientController extends ChangeNotifier {
     stage = VisitStage.none;
     requestId = null;
     service = null;
+    selectedServiceQuantities.clear();
+    clinicalApprovalStatus = null;
     tab = 0;
     notifyListeners();
   }

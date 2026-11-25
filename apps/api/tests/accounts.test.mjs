@@ -44,7 +44,7 @@ test('password hashing round-trips and rejects wrong passwords', () => {
 
 test('admin creates a nurse (pending licence) who can then log in', async () => {
   const made = await users.create(asAdmin, { phone: '+963911000001', role: 'NURSE', displayName: 'ممرض تجريبي', licenseRef: 'LIC-1', licenseExpiresAt: '2030-01-01' });
-  assert.equal(made.temporaryPassword, '123456');
+  assert.equal(made.temporaryPassword.length,20);
   const t = await auth.login('+963911000001', made.temporaryPassword);
   assert.equal(t.role, 'NURSE');
   const cred = (await pg.query(`SELECT review_status,approved FROM nurse_credentials`)).rows[0];

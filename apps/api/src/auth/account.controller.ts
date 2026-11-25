@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpException, Param, ParseUUIDPipe, P
 import { IsString, MaxLength } from 'class-validator';
 import { randomUUID } from 'node:crypto';
 import { AuthGuard, AuthRequest } from './auth.guard.js';
+import { permissionsFor } from './permissions.js';
 import { AuthService, defaultPasswordFor, hashPassword, verifyPassword } from './auth.service.js';
 import { DbService } from '../db/db.service.js';
 
@@ -14,7 +15,7 @@ export class AccountController {
 
   @Get('me') async me(@Request() r: AuthRequest) {
     const u = (await this.db.query('SELECT id,role,display_name,phone_e164,must_change_password FROM users WHERE id=$1', [r.user!.id])).rows[0];
-    return { ...u, mustChangePassword: u.must_change_password };
+    return { ...u, mustChangePassword: u.must_change_password, permissions: permissionsFor(u.role) };
   }
 
   @Get('sessions') async sessions(@Request() r: AuthRequest) {
@@ -51,7 +52,7 @@ export class AccountController {
       await c.query('UPDATE users SET password_hash=$2,must_change_password=false,auth_version=gen_random_uuid(),temporary_password_expires_at=NULL,failed_logins=0,locked_until=NULL WHERE id=$1', [u.id, hashPassword(d.newPassword)]);
       await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [u.id]); // every other session ends
       await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id) VALUES($1,'user.password_changed','user',$1)`, [u.id]);
-      return this.auth.issue(c, u.id, u.role, randomUUID());
+      return this.auth.issue(c, u.id, u.role, randomUUID(), r.user!.deviceSessionId);
     });
   }
 }

@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Get, HttpCode, HttpException, Pa
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { IsDateString, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from './auth.guard.js';
-import { defaultPasswordFor, hashPassword } from './auth.service.js';
+import { generatePassword, hashPassword } from './auth.service.js';
 import { DbService } from '../db/db.service.js';
 import { DocStore, MAX_FILE_BYTES, KIND_LABEL, docFileName, type DocKind } from '../admin/doc-store.js';
 import { checkRegion } from '../admin/regions.controller.js';
@@ -133,14 +133,15 @@ export class AdminApplicationsController {
   /** Approval = the licence is accepted: the login account is created now (initial password, must be changed at first login). */
   @Post('applications/:id/approve') async approve(@Request() r: AuthRequest, @Param('id') id: string) {
     requireRole(r.user!, 'ADMIN');
-    const password = await defaultPasswordFor(this.db);
+    const password = generatePassword(20);
     return this.db.transaction(async c => {
       const a = (await c.query('SELECT * FROM nurse_applications WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!a) missing();
       if (!['PENDING', 'INTERVIEW'].includes(a.status)) conflict('APPLICATION_ALREADY_DECIDED');
       if (new Date(a.expires_at) <= new Date()) conflict('LICENSE_EXPIRED');
       if ((await c.query('SELECT 1 FROM users WHERE phone_e164=$1', [a.phone_e164])).rowCount) conflict('PHONE_ALREADY_REGISTERED');
-      const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash,must_change_password,created_by) VALUES($1,'NURSE',$2,$3,true,$4) RETURNING id`,
+      const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash,must_change_password,created_by,temporary_password_expires_at)
+        VALUES($1,'NURSE',$2,$3,true,$4,statement_timestamp()+interval '30 minutes') RETURNING id`,
         [a.phone_e164, a.display_name, hashPassword(password), r.user!.id])).rows[0];
       const n = (await c.query(`INSERT INTO nurses(user_id,verified,governorate_id,area_id,specialty,national_id_enc) VALUES($1,true,$2,$3,$4,$5) RETURNING id,nurse_no`,
         [u.id, a.governorate_id, a.area_id, a.specialty, a.national_id_enc])).rows[0];
