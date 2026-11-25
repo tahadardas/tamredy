@@ -90,18 +90,32 @@ class NurseHomeScreen extends StatelessWidget {
               style: tamText(size: 12.5, color: TamreedyColors.danger),
             ),
           ),
-        Row(
-          children: [
-            Expanded(child: StatCard('طلبات اليوم', twoDigits(c.todayRequests))),
-            const SizedBox(width: 12),
-            Expanded(
-              child: StatCard('زيارات مكتملة', twoDigits(c.completedVisits)),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stackVertically = constraints.maxWidth < 340 ||
+                MediaQuery.textScalerOf(context).scale(1.0) >= 1.5;
+            if (stackVertically) {
+              return Column(
+                children: [
+                  StatCard('طلبات اليوم', twoDigits(c.todayRequests)),
+                  StatCard('زيارات مكتملة', twoDigits(c.completedVisits)),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: StatCard('طلبات اليوم', twoDigits(c.todayRequests))),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: StatCard('زيارات مكتملة', twoDigits(c.completedVisits)),
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 8),
         SoftButton(
-          'جدول المواعيد والزيارات المجدولة (Smart Scheduling)',
+          'جدول المواعيد والزيارات المجدولة',
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => NurseCalendarScreen(c: c)),
           ),
@@ -184,13 +198,14 @@ class _ReadinessCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Expanded(
-                          child: Text(
-                            state.label,
-                            style: tamText(size: 15, weight: FontWeight.w800, color: color),
-                          ),
+                        Text(
+                          state.label,
+                          style: tamText(size: 15, weight: FontWeight.w800, color: color),
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
@@ -199,7 +214,7 @@ class _ReadinessCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(
-                            state == NurseReadinessState.ready ? 'جاهز 100%' : 'تنبيه',
+                            state == NurseReadinessState.ready ? 'متاح ومؤهل' : 'يحتاج إجراء',
                             style: tamText(size: 11, weight: FontWeight.w800, color: color),
                           ),
                         ),
@@ -251,26 +266,18 @@ class _ReadinessCard extends StatelessWidget {
             const SizedBox(height: 10),
             Row(
               children: [
-                Icon(Icons.sensors, size: 13, color: TamreedyColors.subtext),
-                const SizedBox(width: 4),
+                Icon(Icons.check_circle_outline, size: 14, color: color),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    telemetryText,
-                    style: tamText(size: 11, color: TamreedyColors.subtext),
+                    'الاتصال والموقع متزامنان مع غرفة العمليات',
+                    style: tamText(size: 11.5, color: TamreedyColors.subtext),
                   ),
                 ),
-                InkWell(
-                  onTap: () => c.availabilityManager.syncNow(),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.refresh, size: 13, color: Color(0xFF2563EB)),
-                      const SizedBox(width: 3),
-                      Text(
-                        'مزامنة فورية',
-                        style: tamText(size: 11, weight: FontWeight.w700, color: const Color(0xFF2563EB)),
-                      ),
-                    ],
-                  ),
+                TextButton.icon(
+                  onPressed: () => c.availabilityManager.syncNow(),
+                  icon: const Icon(Icons.refresh, size: 15),
+                  label: const Text('تحديث الموقع'),
                 ),
               ],
             ),

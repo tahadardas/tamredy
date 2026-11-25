@@ -72,8 +72,10 @@ class TamreedyNurseApp extends StatelessWidget {
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      builder: (context, child) =>
-          Directionality(textDirection: TextDirection.rtl, child: child!),
+      builder: (context, child) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: TamScaledTextScope(child: child!),
+      ),
       home: AuthGate(
       api: controller.api,
       role: 'NURSE',
@@ -208,16 +210,14 @@ class _NurseShellState extends State<NurseShell> {
       final nav = TamBottomNav(items: nurseNav, index: c.tab, onTap: c.setTab);
       switch (c.tab) {
         case 1:
-          return c.stage == NurseStage.idle
-              ? NurseMarketplaceScreen(c: c, nav: nav)
-              : VisitFlowScreen(c: c, nav: nav);
+          return NurseMarketplaceScreen(c: c, nav: nav);
         case 2:
           return EarningsScreen(c: c, nav: nav);
         case 3:
           return ProfileScreen(c: c, nav: nav);
         default:
-          return c.stage != NurseStage.idle && c.stage != NurseStage.offer
-              ? VisitFlowScreen(c: c, nav: nav)
+          return c.stage == NurseStage.offer
+              ? OfferScreen(c: c, nav: nav)
               : NurseHomeScreen(c: c, nav: nav);
       }
     },
