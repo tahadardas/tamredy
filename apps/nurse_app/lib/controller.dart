@@ -3,6 +3,7 @@ import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
+import 'package:uuid/uuid.dart';
 import 'alarm.dart';
 import 'availability_manager.dart';
 
@@ -55,6 +56,8 @@ class NurseController extends ChangeNotifier {
   BillInfo? bill;
   String? collectMsg;
   bool collectShort = false;
+  String? _collectionIdempotencyKey;
+  int? _collectionAttemptAmount;
 
   // Profile and verified clinical skills
   List<String> skills = [];
@@ -720,11 +723,17 @@ class NurseController extends ChangeNotifier {
           taxLabel: b.taxLabel,
         );
       } else {
+        if (_collectionAttemptAmount != amount || _collectionIdempotencyKey == null) {
+          _collectionAttemptAmount = amount;
+          _collectionIdempotencyKey = const Uuid().v4();
+        }
         final r = await api.post('/v1/nurse/requests/$requestId/collect', {
           'amount': amount,
-        });
+        }, {'Idempotency-Key': _collectionIdempotencyKey!});
         collectMsg = '${r['message']}';
         collectShort = r['status'] != 'PAID';
+        _collectionIdempotencyKey = null;
+        _collectionAttemptAmount = null;
         await loadBill();
         if (!collectShort) await loadDues();
       }

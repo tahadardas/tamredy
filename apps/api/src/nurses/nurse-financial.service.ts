@@ -18,13 +18,13 @@ export class NurseFinancialService {
     // 1. Earnings aggregations across time horizons
     const statsRes = await this.db.query(`
       SELECT
-        coalesce(sum(cr.price_amount - coalesce(cr.owed_to_company, 0)), 0)::numeric(18,2) AS lifetime_net_earnings,
-        coalesce(sum(cr.price_amount), 0)::numeric(18,2) AS lifetime_gross,
-        coalesce(sum(coalesce(cr.owed_to_company, 0)), 0)::numeric(18,2) AS lifetime_commission,
+        coalesce(sum(cr.nurse_earning), 0)::numeric(18,2) AS lifetime_net_earnings,
+        coalesce(sum(cr.gross_amount), 0)::numeric(18,2) AS lifetime_gross,
+        coalesce(sum(cr.commission_amount), 0)::numeric(18,2) AS lifetime_commission,
         count(*)::int AS completed_visits_count,
-        coalesce(sum(CASE WHEN v.completed_at >= current_date THEN (cr.price_amount - coalesce(cr.owed_to_company, 0)) ELSE 0 END), 0)::numeric(18,2) AS today_net_earnings,
-        coalesce(sum(CASE WHEN v.completed_at >= date_trunc('week', now()) THEN (cr.price_amount - coalesce(cr.owed_to_company, 0)) ELSE 0 END), 0)::numeric(18,2) AS this_week_net_earnings,
-        coalesce(sum(CASE WHEN v.completed_at >= date_trunc('month', now()) THEN (cr.price_amount - coalesce(cr.owed_to_company, 0)) ELSE 0 END), 0)::numeric(18,2) AS this_month_net_earnings
+        coalesce(sum(CASE WHEN v.completed_at >= current_date THEN cr.nurse_earning ELSE 0 END), 0)::numeric(18,2) AS today_net_earnings,
+        coalesce(sum(CASE WHEN v.completed_at >= date_trunc('week', now()) THEN cr.nurse_earning ELSE 0 END), 0)::numeric(18,2) AS this_week_net_earnings,
+        coalesce(sum(CASE WHEN v.completed_at >= date_trunc('month', now()) THEN cr.nurse_earning ELSE 0 END), 0)::numeric(18,2) AS this_month_net_earnings
       FROM request_assignments ra
       JOIN visits v ON v.assignment_id = ra.id AND v.completed_at IS NOT NULL
       JOIN care_requests cr ON cr.id = ra.request_id AND cr.payment_status = 'PAID'
@@ -33,26 +33,23 @@ export class NurseFinancialService {
 
     const stats = statsRes.rows[0];
 
-    // 2. Receivables and settlements calculation
+    // 2. Authoritative settlement position from immutable double-entry accounts.
     const duesRes = await this.db.query(`
       SELECT
-        coalesce((
-          SELECT sum(cr.owed_to_company)
-          FROM request_assignments a
-          JOIN visits v ON v.assignment_id = a.id AND v.completed_at IS NOT NULL
-          JOIN care_requests cr ON cr.id = a.request_id AND cr.payment_status = 'PAID'
-          WHERE a.nurse_id = $1
-        ), 0)::numeric(18,2) AS total_commission_accrued,
-        coalesce((
-          SELECT sum(amount)
-          FROM nurse_settlements
-          WHERE nurse_id = $1 AND direction = 'FROM_NURSE'
-        ), 0)::numeric(18,2) AS total_settled_amount
+        coalesce(sum(CASE WHEN e.account_id='CASH_HELD_BY_NURSE:'||$1::text
+          THEN e.debit_amount-e.credit_amount ELSE 0 END),0)::numeric(18,2) AS cash_held,
+        coalesce(sum(CASE WHEN e.account_id='NURSE_PAYABLE:'||$1::text
+          THEN e.credit_amount-e.debit_amount ELSE 0 END),0)::numeric(18,2) AS nurse_payable,
+        coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_FROM_NURSE'
+          AND e.account_id='CASH_HELD_BY_NURSE:'||$1::text THEN e.credit_amount ELSE 0 END),0)::numeric(18,2) AS total_settled_amount
+      FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
     `, [nurseId]);
 
-    const totalAccrued = Number(duesRes.rows[0].total_commission_accrued);
+    const cashHeld = Number(duesRes.rows[0].cash_held);
+    const nursePayable = Number(duesRes.rows[0].nurse_payable);
+    const totalAccrued = Math.max(0,cashHeld-nursePayable+Number(duesRes.rows[0].total_settled_amount));
     const totalSettled = Number(duesRes.rows[0].total_settled_amount);
-    const outstandingDues = Math.max(0, totalAccrued - totalSettled);
+    const outstandingDues = Math.max(0,cashHeld-nursePayable);
 
     // 3. Nurse financial account & credit limit
     const accRes = await this.db.query(`
@@ -74,8 +71,8 @@ export class NurseFinancialService {
     // 4. Recent visits breakdown
     const recentVisits = await this.db.query(`
       SELECT cr.id AS request_id, v.completed_at, cr.address_text, s.title_ar AS service_title,
-             cr.price_amount AS gross_amount, cr.owed_to_company AS commission_amount,
-             (cr.price_amount - coalesce(cr.owed_to_company, 0)) AS net_amount,
+             cr.gross_amount, cr.commission_amount,
+             cr.nurse_earning AS net_amount,
              cr.currency_code
       FROM request_assignments ra
       JOIN visits v ON v.assignment_id = ra.id AND v.completed_at IS NOT NULL
@@ -123,10 +120,10 @@ export class NurseFinancialService {
       SELECT le.id, le.transaction_id, le.reference_type, le.reference_id,
              le.debit_amount, le.credit_amount, le.currency, le.created_at
       FROM financial_ledger_entries le
-      WHERE le.account_id = $1
+      WHERE le.account_id IN ($1,$2)
       ORDER BY le.created_at DESC
-      LIMIT $2
-    `, [`NURSE_RECEIVABLE:${nurseId}`, clampedLimit]);
+      LIMIT $3
+    `, [`NURSE_PAYABLE:${nurseId}`,`CASH_HELD_BY_NURSE:${nurseId}`,clampedLimit]);
 
     return res.rows;
   }

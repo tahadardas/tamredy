@@ -38,16 +38,23 @@ export class FeesService {
 /** What each nurse owes the company (or the company owes her) from cash she collected. */
 @Injectable()
 export class DuesService {
-  /** balance > 0: the nurse must hand money to the company; balance < 0: the company owes the nurse. Only fully paid visits count. */
+  /** Net settlement position from immutable double-entry accounts. */
   async balance(q: Q, nurseId: string) {
     const r = (await q.query(`SELECT
-      (SELECT coalesce(sum(cr.owed_to_company),0) FROM care_requests cr JOIN request_assignments a ON a.request_id=cr.id
-         JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL WHERE a.nurse_id=$1 AND cr.payment_status='PAID') AS owed,
-      (SELECT coalesce(sum(amount),0) FROM nurse_settlements WHERE nurse_id=$1 AND direction='FROM_NURSE') AS from_nurse,
-      (SELECT coalesce(sum(amount),0) FROM nurse_settlements WHERE nurse_id=$1 AND direction='TO_NURSE') AS to_nurse,
-      (SELECT debt FROM (SELECT nurse_debt_limit AS debt FROM pricing_settings WHERE id=1) x) AS debt_limit`, [nurseId])).rows[0];
-    const owed = Number(r.owed), fromNurse = Number(r.from_nurse), toNurse = Number(r.to_nurse), limit = Number(r.debt_limit);
-    const balance = owed - fromNurse + toNurse;
+      coalesce(sum(CASE WHEN e.account_id='CASH_HELD_BY_NURSE:'||$1::text
+        THEN e.debit_amount-e.credit_amount ELSE 0 END),0) AS cash_held,
+      coalesce(sum(CASE WHEN e.account_id='NURSE_PAYABLE:'||$1::text
+        THEN e.credit_amount-e.debit_amount ELSE 0 END),0) AS nurse_payable,
+      coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_FROM_NURSE'
+        AND e.account_id='CASH_HELD_BY_NURSE:'||$1::text THEN e.credit_amount ELSE 0 END),0) AS from_nurse,
+      coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_TO_NURSE'
+        AND e.account_id='NURSE_PAYABLE:'||$1::text THEN e.debit_amount ELSE 0 END),0) AS to_nurse,
+      (SELECT nurse_debt_limit FROM pricing_settings WHERE id=1) AS debt_limit
+      FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id`, [nurseId])).rows[0];
+    const cashHeld = Number(r.cash_held), nursePayable = Number(r.nurse_payable);
+    const fromNurse = Number(r.from_nurse), toNurse = Number(r.to_nurse), limit = Number(r.debt_limit);
+    const balance = cashHeld - nursePayable;
+    const owed = Math.max(0,balance);
     return { owed, settledFromNurse: fromNurse, paidToNurse: toNurse, balance, limit, blocked: limit > 0 && balance > limit };
   }
 

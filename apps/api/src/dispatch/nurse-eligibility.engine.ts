@@ -51,7 +51,7 @@ export class NurseEligibilityEngine {
       SELECT n.id AS nurse_id, n.user_id AS nurse_user_id, n.verified,
         n.work_status, n.availability_intent, n.last_heartbeat_at,
         u.status AS account_status, cr.id AS request_id, cr.requester_user_id,
-        cr.status AS request_status, cr.booking_mode, cr.open_expires_at,
+        cr.status AS request_status, cr.booking_mode, cr.clinical_approval_status, cr.open_expires_at,
         cr.latest_acceptable_arrival_at, cr.search_max_heartbeat_seconds,
         cr.search_max_location_seconds, cr.search_max_accuracy_meters,
         cr.search_radius_meters, nl.recorded_at AS location_recorded_at,
@@ -72,7 +72,11 @@ export class NurseEligibilityEngine {
             AND active_request.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
             AND active_request.id<>cr.id) AS has_active_execution,
         coalesce(n.dues_ceiling_amount, 0) AS dues_ceiling_amount,
-        coalesce(n.current_dues_amount, 0) AS current_dues_amount,
+        greatest(coalesce((SELECT sum(CASE
+          WHEN e.account_id='CASH_HELD_BY_NURSE:'||n.id::text THEN e.debit_amount-e.credit_amount
+          WHEN e.account_id='NURSE_PAYABLE:'||n.id::text THEN e.debit_amount-e.credit_amount
+          ELSE 0 END) FROM financial_ledger_entries e
+          WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||n.id::text,'NURSE_PAYABLE:'||n.id::text)),0),0) AS current_dues_amount,
         nfa.financial_model, nfa.credit_limit, nfa.prepaid_balance, nfa.reserved_balance
       FROM nurses n
       JOIN users u ON u.id=n.user_id
@@ -90,6 +94,9 @@ export class NurseEligibilityEngine {
     if (!facts.has_valid_credential) reasons.push(reason('LICENSE_MISSING_OR_EXPIRED'));
     if (!facts.has_all_skills) reasons.push(reason('MISSING_REQUIRED_SKILLS'));
     if (facts.mutually_blocked) reasons.push(reason('USER_BLOCKED'));
+    if (!['NOT_REQUIRED','APPROVED'].includes(facts.clinical_approval_status)) {
+      reasons.push(reason('CLINICAL_APPROVAL_REQUIRED'));
+    }
 
     const expectedStatuses: Record<EligibilityContext, string[]> = {
       BROWSE: ['OPEN_FOR_PROPOSALS'], OFFER: ['OFFERING'], PROPOSAL: ['OPEN_FOR_PROPOSALS'],

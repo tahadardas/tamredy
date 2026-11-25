@@ -29,7 +29,7 @@ export class AssignmentService {
     const outcome = await this.db.transaction(async client => {
       // 1. Lock Care Request
       const reqRes = await client.query(
-        `SELECT id, requester_user_id, status, version, price_amount, commission_bps,
+        `SELECT id, requester_user_id, status, version, price_amount, currency_code, commission_bps,
                 open_expires_at, latest_acceptable_arrival_at, booking_mode
          FROM care_requests
          WHERE id = $1

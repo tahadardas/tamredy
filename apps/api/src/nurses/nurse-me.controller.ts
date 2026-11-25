@@ -39,16 +39,16 @@ export class NurseMeController {
     if (!n.rowCount) missing();
     const nurseId = n.rows[0].id;
     const totals = await this.db.query(`SELECT count(*)::int AS visits,
-        coalesce(sum(cr.price_amount),0) AS gross,
-        coalesce(sum(cr.price_amount*cr.commission_bps/10000),0) AS commission,
-        coalesce(sum(cr.price_amount-cr.price_amount*cr.commission_bps/10000),0) AS net_due,
+        coalesce(sum(cr.gross_amount),0) AS gross,
+        coalesce(sum(cr.commission_amount),0) AS commission,
+        coalesce(sum(cr.nurse_earning),0) AS net_due,
         cr.currency_code
       FROM request_assignments a JOIN visits v ON v.assignment_id=a.id
       JOIN care_requests cr ON cr.id=a.request_id
       WHERE a.nurse_id=$1 AND v.completed_at>=date_trunc('month',now()) AND cr.status='COMPLETED'
       GROUP BY cr.currency_code`, [nurseId]);
     const recent = await this.db.query(`SELECT s.title_ar AS title,v.completed_at,
-        (cr.price_amount-cr.price_amount*cr.commission_bps/10000) AS nurse_share,cc.status AS cash_status
+        cr.nurse_earning AS nurse_share,cc.status AS cash_status
       FROM request_assignments a JOIN visits v ON v.assignment_id=a.id
       JOIN care_requests cr ON cr.id=a.request_id JOIN services s ON s.id=cr.service_id
       LEFT JOIN cash_collections cc ON cc.visit_id=v.id

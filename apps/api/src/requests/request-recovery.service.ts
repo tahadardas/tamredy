@@ -42,7 +42,7 @@ export class RequestRecoveryService {
       JOIN services s ON s.id=cr.service_id
       JOIN beneficiaries b ON b.id=cr.beneficiary_id
       LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
-      LEFT JOIN request_assignments a ON a.request_id=cr.id AND a.status='ACTIVE'
+      LEFT JOIN request_assignments a ON a.request_id=cr.id AND a.status IN ('RESERVED','ACTIVE')
       LEFT JOIN nurses n ON n.id=a.nurse_id
       LEFT JOIN users u ON u.id=n.user_id
       LEFT JOIN nurse_locations nl ON nl.nurse_id=a.nurse_id
@@ -105,7 +105,7 @@ export class RequestRecoveryService {
       JOIN beneficiaries b ON b.id=cr.beneficiary_id
       JOIN users u ON u.id=cr.requester_user_id
       LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
-      WHERE a.nurse_id=$1 AND a.status='ACTIVE'
+      WHERE a.nurse_id=$1 AND a.status IN ('RESERVED','ACTIVE')
         AND cr.status IN ('SCHEDULED','ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')
       ORDER BY coalesce(sv.appointment_at,cr.scheduled_start_at,a.accepted_at),a.id
     `, [nurse.id]);

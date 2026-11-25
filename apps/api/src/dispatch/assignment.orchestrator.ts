@@ -9,6 +9,9 @@ interface AssignmentRequestSnapshot {
   id: string;
   status: RequestStatus;
   version: number;
+  price_amount: string | number;
+  commission_bps: number;
+  currency_code: string;
 }
 
 interface AssignInput {
@@ -43,16 +46,58 @@ export class AssignmentOrchestrator {
     }, client);
     if (!eligibility.eligible) conflict(eligibility.reasons[0]?.code ?? 'NURSE_NOT_ELIGIBLE');
 
+    const estimatedCommission = Math.round(Number(input.request.price_amount)
+      * Number(input.request.commission_bps) / 10_000);
+    const account = (await client.query(`SELECT * FROM nurse_financial_accounts
+      WHERE nurse_id=$1 FOR UPDATE`, [input.nurseId])).rows[0];
+    if (account && account.financial_model !== 'RECEIVABLES' && estimatedCommission > 0) {
+      const held = (await client.query(`SELECT coalesce(sum(prepaid_amount),0) AS prepaid,
+        coalesce(sum(credit_amount),0) AS credit FROM financial_reservations
+        WHERE nurse_id=$1 AND status='HELD'`, [input.nurseId])).rows[0];
+      const position = (await client.query(`SELECT greatest(coalesce(sum(CASE
+        WHEN account_id=$1 THEN debit_amount-credit_amount
+        WHEN account_id=$2 THEN debit_amount-credit_amount ELSE 0 END),0),0) AS dues
+        FROM financial_ledger_entries WHERE account_id IN ($1,$2)`,
+      [`CASH_HELD_BY_NURSE:${input.nurseId}`,`NURSE_PAYABLE:${input.nurseId}`])).rows[0];
+      const prepaidAvailable = Math.max(0,Number(account.prepaid_balance)-Number(held.prepaid));
+      const prepaidAmount = Math.min(estimatedCommission,prepaidAvailable);
+      const creditAmount = estimatedCommission-prepaidAmount;
+      if (account.financial_model === 'PREPAID' && creditAmount > 0) conflict('INSUFFICIENT_PREPAID_BALANCE');
+      const creditAvailable = Math.max(0,Number(account.credit_limit)-Number(position.dues)-Number(held.credit));
+      if (account.financial_model === 'HYBRID' && creditAmount > creditAvailable) {
+        conflict('FINANCIAL_LIMIT_REACHED');
+      }
+      const reservation = await client.query(`INSERT INTO financial_reservations(
+        account_id,amount,reference_id,status,nurse_id,prepaid_amount,credit_amount,currency_code
+      ) VALUES($1,$2,$3,'HELD',$4,$5,$6,$7)
+      ON CONFLICT(account_id,reference_id) DO NOTHING RETURNING id`, [
+        `NURSE_FINANCIAL:${input.nurseId}`,estimatedCommission,input.request.id,input.nurseId,
+        prepaidAmount,creditAmount,input.request.currency_code,
+      ]);
+      if (reservation.rowCount) {
+        await client.query(`UPDATE nurse_financial_accounts
+          SET reserved_balance=reserved_balance+$2,updated_at=statement_timestamp() WHERE id=$1`,
+        [account.id,estimatedCommission]);
+      }
+    }
+
     let assignmentId: string;
     try {
+      const durationMinutes = input.plannedStart && input.plannedEnd
+        ? Math.max(1, Math.ceil((input.plannedEnd.getTime() - input.plannedStart.getTime()) / 60_000))
+        : null;
       assignmentId = (await client.query<{ id: string }>(`
-        INSERT INTO request_assignments(request_id,nurse_id,accepted_at,departure_due_at)
-        SELECT $1,$2,statement_timestamp(),
+        INSERT INTO request_assignments(
+          request_id,nurse_id,status,accepted_at,departure_due_at,
+          planned_start_at,planned_end_at,service_duration_minutes
+        )
+        SELECT $1,$2,CASE WHEN $3::boolean THEN 'ACTIVE' ELSE 'RESERVED' END,statement_timestamp(),
           CASE WHEN $3::boolean THEN statement_timestamp()+nullif(coalesce(
             (SELECT (value->>'departureReminderSeconds')::integer FROM app_settings WHERE key='dispatch'),0),0)
-            * interval '1 second' END
+            * interval '1 second' END,$4,$5,$6
         RETURNING id
-      `, [input.request.id, input.nurseId, input.reserveImmediately])).rows[0].id;
+      `, [input.request.id,input.nurseId,input.reserveImmediately,
+        input.plannedStart?.toISOString() ?? null,input.plannedEnd?.toISOString() ?? null,durationMinutes])).rows[0].id;
     } catch (error) {
       if ((error as { code?: string }).code === '23505') conflict('ASSIGNMENT_CONFLICT');
       throw error;

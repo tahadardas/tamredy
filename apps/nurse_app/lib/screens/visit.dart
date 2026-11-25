@@ -7,6 +7,7 @@ import '../controller.dart';
 import '../main.dart';
 import 'chat.dart';
 import 'clinical_notes.dart';
+import 'service_outcomes.dart';
 
 /// Routes N02..N05 by the current stage.
 class VisitFlowScreen extends StatelessWidget {
@@ -187,7 +188,12 @@ class VisitFlowScreen extends StatelessWidget {
         ),
       ),
       const SectionTitle('بعد انتهاء الزيارة'),
-      PrimaryButton('إنهاء الزيارة والعودة متاحًا', onPressed: c.complete),
+      PrimaryButton(
+        'توثيق نتائج الخدمات وإنهاء الزيارة',
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ServiceOutcomesScreen(c: c)),
+        ),
+      ),
       SoftButton(
         'الإبلاغ عن مشكلة',
         onPressed: () => Navigator.of(

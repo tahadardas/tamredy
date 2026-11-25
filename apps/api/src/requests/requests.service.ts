@@ -54,6 +54,14 @@ export class RequestsService {
       }
 
       if (rawItems.length === 0) invalid('At least one service must be selected');
+      const mergedItems = new Map<string, number>();
+      for (const item of rawItems) {
+        const quantity = (mergedItems.get(item.serviceId) ?? 0) + item.quantity;
+        if (quantity > 10) invalid('SERVICE_QUANTITY_LIMIT_EXCEEDED');
+        mergedItems.set(item.serviceId,quantity);
+      }
+      rawItems.splice(0,rawItems.length,...[...mergedItems].map(([serviceId,quantity]) => ({serviceId,quantity})));
+      if (rawItems.length > 10) invalid('REQUEST_ITEM_LIMIT_EXCEEDED');
 
       const serviceIds = [...new Set(rawItems.map(i => i.serviceId))];
       const servicesRes = await client.query(
@@ -66,9 +74,8 @@ export class RequestsService {
 
       const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
       const anyRequiresPrescription = servicesRes.rows.some(r => r.requires_prescription);
-      if (anyRequiresPrescription && !dto.prescriptionConfirmed) {
-        invalid('PRESCRIPTION_CONFIRMATION_REQUIRED: Medical prescription verification is mandatory for this service');
-      }
+      const anyRequiresClinicalReview = servicesRes.rows.some(r => r.requires_clinical_review);
+      const needsClinicalApproval = anyRequiresPrescription || anyRequiresClinicalReview;
 
       if (appointment) {
         for (const sid of serviceIds) {
@@ -78,15 +85,16 @@ export class RequestsService {
 
       let totalBasePrice = 0;
       let totalExpectedMinutes = 0;
-      let maxCommissionBps = 0;
+      let weightedCommission = 0;
 
       for (const it of rawItems) {
         const s = serviceMap.get(it.serviceId)!;
         const unitPrice = Number(s.price_amount);
         totalBasePrice += unitPrice * it.quantity;
         totalExpectedMinutes += (Number(s.expected_minutes) || 30) * it.quantity;
-        maxCommissionBps = Math.max(maxCommissionBps, Number(s.commission_bps) || 2000);
+        weightedCommission += unitPrice * it.quantity * (Number(s.commission_bps) || 2000);
       }
+      const combinedCommissionBps = totalBasePrice > 0 ? Math.round(weightedCommission/totalBasePrice) : 0;
 
       // Pick primary service (highest price)
       const primaryService = servicesRes.rows.reduce((prev, curr) =>
@@ -128,15 +136,15 @@ export class RequestsService {
         requester_user_id, beneficiary_id, service_id, location, location_source, address_text,
         status, price_amount, currency_code, commission_bps, pricing, promo_id, promo_snapshot,
         booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at,
-        latest_acceptable_arrival_at, area_id
+        latest_acceptable_arrival_at, area_id, clinical_approval_status
       )
-      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20)
+      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21)
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
-        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,maxCommissionBps,
+        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,combinedCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
         bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'SCHEDULED' : 'SEARCHING'),
         isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
-        latestArrivalAt?.toISOString() ?? null, areaId
+        latestArrivalAt?.toISOString() ?? null, areaId, needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED'
       ]);
       const request = r.rows[0];
 
@@ -172,14 +180,21 @@ export class RequestsService {
       }
       await client.query('UPDATE request_create_keys SET request_id=$1 WHERE user_id=$2 AND key=$3',[request.id,userId,key]);
 
-      if (isOpenMode) {
+      if (needsClinicalApproval) {
+        await client.query(`INSERT INTO request_clinical_reviews(
+          request_id,required_prescription,required_clinical_review
+        ) VALUES($1,$2,$3)`, [request.id,anyRequiresPrescription,anyRequiresClinicalReview]);
+        if (appointment) await saveSchedule(client,request.id,appointment);
+      }
+
+      if (isOpenMode && !needsClinicalApproval) {
         await client.query(
           `INSERT INTO outbox_events(event_type, aggregate_id, payload)
            VALUES('marketplace.request.published', $1, $2::jsonb)`,
           [request.id, JSON.stringify({ requestId: request.id, recipientUserId: userId, openExpiresAt })],
         );
         await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'marketplace.request.published']);
-      } else {
+      } else if (!needsClinicalApproval) {
         const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
         if (!appointment && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true) {
           const search = await client.query(`UPDATE care_requests SET
@@ -198,7 +213,9 @@ export class RequestsService {
         await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
         await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
       }
-      return {...request, ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
+      return {...request,clinicalApprovalStatus:needsClinicalApproval?'PENDING':'NOT_REQUIRED',
+        ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),
+        estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
     });
   }
   async findOne(userId: string, requestId: string) {

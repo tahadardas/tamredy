@@ -52,7 +52,9 @@ export async function runSmartRecoveryJob(pool: pg.Pool): Promise<{
     const openReqsRes = await client.query(
       `SELECT id, service_id, location, requester_user_id
        FROM care_requests
-       WHERE status = 'OPEN_FOR_PROPOSALS' AND open_expires_at > now()`,
+       WHERE status = 'OPEN_FOR_PROPOSALS'
+         AND clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
+         AND open_expires_at > now()`,
     );
     if (!openReqsRes.rowCount || openReqsRes.rowCount === 0) {
       return { expiredProposals, expiredRequests, alertsSent: 0 };

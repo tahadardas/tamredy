@@ -173,6 +173,7 @@ class PatientController extends ChangeNotifier {
   int balance = kDemoMode ? 5000 : 0;
 
   ServiceItem? service;
+  final Map<String, int> selectedServiceQuantities = {};
   String beneficiary = kDemoMode ? 'والدي - أحمد' : '';
   String address = '';
   String extraAddress = '';
@@ -262,6 +263,7 @@ class PatientController extends ChangeNotifier {
       if (service != null && !services.any((s) => s.id == service!.id)) {
         service = null; // removed by admin
       }
+      selectedServiceQuantities.removeWhere((id, _) => !services.any((s) => s.id == id));
       serviceState = services.isEmpty ? ServiceLoadState.empty : ServiceLoadState.loaded;
       notifyListeners();
     } on DioException catch (e) {
@@ -448,7 +450,10 @@ class PatientController extends ChangeNotifier {
       );
     } else {
       try {
-        await api.post('/v1/requests/$requestId/tip', {'amount': amount});
+        final key = 'tip:$requestId:$amount';
+        await api.post('/v1/requests/$requestId/tip', {'amount': amount}, {
+          'Idempotency-Key': key,
+        });
         await loadBill();
       } on DioException catch (e) {
         promoMsg = ((e.response?.data as Map?)?['code']) == 'ALREADY_PAID'
@@ -575,6 +580,9 @@ class PatientController extends ChangeNotifier {
 
   void pick(ServiceItem s) {
     service = s;
+    selectedServiceQuantities
+      ..clear()
+      ..[s.id] = 1;
     quoteInfo = {};
     promo = null;
     promoCode = '';
@@ -582,6 +590,27 @@ class PatientController extends ChangeNotifier {
     _recalc();
     if (!kDemoMode) _quote();
     Analytics.log('service_selected', {'service_id': s.id});
+    notifyListeners();
+  }
+
+  /// Logic-only multi-service selection API used by the booking UI without coupling
+  /// the controller to a particular visual design.
+  void setServiceQuantity(ServiceItem item, int quantity) {
+    if (quantity < 0 || quantity > 10) return;
+    if (quantity == 0) {
+      selectedServiceQuantities.remove(item.id);
+      if (service?.id == item.id) {
+        service = selectedServiceQuantities.isEmpty
+            ? null
+            : services.where((candidate) => candidate.id == selectedServiceQuantities.keys.first).firstOrNull;
+      }
+    } else {
+      if (!selectedServiceQuantities.containsKey(item.id) && selectedServiceQuantities.length >= 10) return;
+      selectedServiceQuantities[item.id] = quantity;
+      service ??= item;
+    }
+    promo = null;
+    promoMsg = null;
     notifyListeners();
   }
 
@@ -675,7 +704,7 @@ class PatientController extends ChangeNotifier {
 
   /// Creates the request, then follows its lifecycle.
   Future<bool> submit({DateTime? appointment}) async {
-    if (service == null || busy) return false;
+    if (service == null || selectedServiceQuantities.isEmpty || busy) return false;
     _searchStart = DateTime.now();
     Analytics.log('request_submitted', {
       'service_id': service!.id,
@@ -737,7 +766,10 @@ class PatientController extends ChangeNotifier {
         {
           'beneficiaryId': beneficiaryId,
           if (appointment != null) 'scheduledAt': appointment.toUtc().toIso8601String(),
-          'serviceId': service!.id,
+          'items': [
+            for (final entry in selectedServiceQuantities.entries)
+              {'serviceId': entry.key, 'quantity': entry.value},
+          ],
           'latitude': visitPoint.latitude,
           'longitude': visitPoint.longitude,
           'accuracyMeters': accuracyMeters,
@@ -1232,6 +1264,7 @@ class PatientController extends ChangeNotifier {
     stage = VisitStage.none;
     requestId = null;
     service = null;
+    selectedServiceQuantities.clear();
     tab = 0;
     notifyListeners();
   }

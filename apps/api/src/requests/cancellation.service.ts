@@ -77,7 +77,7 @@ export async function cancelRequest(
   }
 
   const assignment = (await client.query(`SELECT id,nurse_id FROM request_assignments
-    WHERE request_id=$1 AND status='ACTIVE'`, [requestId])).rows[0];
+    WHERE request_id=$1 AND status IN ('RESERVED','ACTIVE')`, [requestId])).rows[0];
   let nurseUserId: string | undefined;
   if (assignment) {
     const nurse = await client.query('SELECT user_id FROM nurses WHERE id=$1 FOR UPDATE', [assignment.nurse_id]);
@@ -117,7 +117,7 @@ export async function cancelRequest(
 
   if (assignment) {
     await client.query(`UPDATE request_assignments SET status='RELEASED',released_at=$2,reason='PATIENT_CANCELLED'
-      WHERE id=$1`, [assignment.id, snapshot.cancelled_at]);
+      WHERE id=$1 AND status IN ('RESERVED','ACTIVE')`, [assignment.id, snapshot.cancelled_at]);
     const dues = await new DuesService().balance(client, assignment.nurse_id);
     const pause = request.status === 'EN_ROUTE' && (await client.query(
       "SELECT value->>'pauseAfterTravelCancellation' = 'true' AS enabled FROM app_settings WHERE key='dispatch'",
@@ -144,9 +144,12 @@ export async function cancelRequest(
   await client.query(`UPDATE marketplace_proposals
     SET status='INVALIDATED',invalidated_at=$2,updated_at=$2,invalidation_reason='REQUEST_CANCELLED'
     WHERE request_id=$1 AND status='PENDING'`, [requestId, snapshot.cancelled_at]);
-  await client.query(`UPDATE financial_reservations
-    SET status='RELEASED',resolved_at=$2
-    WHERE reference_id=$1 AND status='HELD'`, [requestId, snapshot.cancelled_at]);
+  await client.query(`WITH released AS (
+      UPDATE financial_reservations SET status='RELEASED',resolved_at=$2
+      WHERE reference_id=$1 AND status='HELD' RETURNING nurse_id,amount
+    ), totals AS (SELECT nurse_id,sum(amount) AS amount FROM released WHERE nurse_id IS NOT NULL GROUP BY nurse_id)
+    UPDATE nurse_financial_accounts a SET reserved_balance=greatest(0,a.reserved_balance-totals.amount),
+      updated_at=$2 FROM totals WHERE a.nurse_id=totals.nurse_id`, [requestId, snapshot.cancelled_at]);
   await client.query(`UPDATE scheduled_visits SET released_at=coalesce(released_at,$2)
     WHERE request_id=$1`, [requestId, snapshot.cancelled_at]);
   await transitionRequest(client, {

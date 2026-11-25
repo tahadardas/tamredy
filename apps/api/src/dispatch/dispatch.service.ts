@@ -7,6 +7,7 @@ import { RoutesService } from '../maps/routes.service.js';
 import { NurseEligibilityEngine } from './nurse-eligibility.engine.js';
 import { transitionRequest } from '../requests/request-lifecycle.js';
 import { AssignmentOrchestrator } from './assignment.orchestrator.js';
+import { BillingService } from '../pricing/billing.service.js';
 
 @Injectable()
 export class DispatchService {
@@ -14,6 +15,7 @@ export class DispatchService {
     private readonly db: DbService,
     private readonly eligibility: NurseEligibilityEngine,
     private readonly assignments: AssignmentOrchestrator,
+    private readonly billing: BillingService,
     private readonly fees: FeesService,
     private readonly routes: RoutesService,
   ) {}
@@ -122,7 +124,8 @@ export class DispatchService {
     }
   }
 
-  async transition(userId: string, assignmentId: string, action: 'depart'|'arrive'|'start'|'complete') {
+  async transition(userId: string, assignmentId: string, action: 'depart'|'arrive'|'start'|'complete',
+    options?: { geofenceOverrideReason?: string }) {
     const specs={
       depart:{from:'ASSIGNED',to:'EN_ROUTE',nurse:'EN_ROUTE'},
       arrive:{from:'EN_ROUTE',to:'ARRIVED',nurse:'EN_ROUTE'},
@@ -136,13 +139,41 @@ export class DispatchService {
         JOIN nurses n ON n.id=a.nurse_id WHERE a.id=$1 AND n.user_id=$2`,[assignmentId,userId]);
       if(!assignmentLookup.rowCount) missing();
       const {request_id:requestId,nurse_id:nurseId}=assignmentLookup.rows[0];
-      const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
+      const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,currency_code,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
       const request=rr.rows[0];
       await c.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
       const assignment=await c.query(`SELECT id,status FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
       if(request?.status===target.to && assignment.rowCount) return {requestId,assignmentId,status:target.to,replayed:true};
-      if(!assignment.rowCount || assignment.rows[0].status!=='ACTIVE') conflict('ASSIGNMENT_INACTIVE');
+      const assignmentStatus = assignment.rows[0]?.status;
+      if(!assignment.rowCount || (assignmentStatus!=='ACTIVE' && !(action==='depart' && assignmentStatus==='RESERVED'))) {
+        conflict('ASSIGNMENT_INACTIVE');
+      }
       if(request?.status!==target.from) conflict('INVALID_STATE_TRANSITION');
+      if (action === 'depart' && assignmentStatus === 'RESERVED') {
+        try {
+          await c.query(`UPDATE request_assignments SET status='ACTIVE' WHERE id=$1 AND status='RESERVED'`, [assignmentId]);
+        } catch (error) {
+          if ((error as { code?: string }).code === '23505') conflict('NURSE_HAS_ACTIVE_EXECUTION');
+          throw error;
+        }
+      }
+      if (action === 'arrive') {
+        const location = (await c.query(`SELECT nl.recorded_at,nl.accuracy_m,
+          round(ST_Distance(nl.location,r.location))::int AS distance_m
+          FROM nurse_locations nl JOIN care_requests r ON r.id=$2
+          WHERE nl.nurse_id=$1`, [nurseId,requestId])).rows[0];
+        const valid = location && new Date(location.recorded_at).getTime() > Date.now()-120_000
+          && Number(location.accuracy_m)<=150 && Number(location.distance_m)<=250;
+        if (!valid) {
+          const overrideReason=options?.geofenceOverrideReason?.trim();
+          if (!overrideReason || overrideReason.length<5) conflict('ARRIVAL_GEOFENCE_FAILED');
+          await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
+            VALUES($1,$2,'visit.arrival.geofence_override',$3::jsonb)`, [requestId,userId,JSON.stringify({
+            reason:overrideReason,distanceMeters:location?.distance_m ?? null,
+            accuracyMeters:location?.accuracy_m ?? null,recordedAt:location?.recorded_at ?? null,
+          })]);
+        }
+      }
       if (action === 'start') {
         const eligibility = await this.eligibility.evaluate(nurseId, requestId, { context: 'START' }, c);
         if (!eligibility.eligible) conflict(eligibility.reasons[0]?.code ?? 'NURSE_NOT_ELIGIBLE');
@@ -171,20 +202,27 @@ export class DispatchService {
         if(r.rowCount!==1) conflict('VISIT_NOT_ARRIVED');
       }
       if(action==='complete') {
+        const notes = await c.query(`SELECT 1 FROM clinical_visit_notes
+          WHERE request_id=$1 AND status IN ('SUBMITTED','FINALIZED','AMENDED')`, [requestId]);
+        if (!notes.rowCount) conflict('CLINICAL_VISIT_NOTE_REQUIRED');
         const r=await c.query(`UPDATE visits SET completed_at=now(),outcome='COMPLETED' WHERE assignment_id=$1 AND started_at IS NOT NULL AND completed_at IS NULL`,[assignmentId]);
         if(r.rowCount!==1) conflict('VISIT_NOT_STARTED');
         await c.query(`UPDATE request_assignments SET status='RELEASED',released_at=now(),reason='COMPLETED' WHERE id=$1`,[assignmentId]);
         // Full bill from the real time at the patient, using the pricing snapshot taken when the order was placed.
-        const t=await c.query(`SELECT EXTRACT(EPOCH FROM (completed_at-arrived_at)) AS secs,arrived_at FROM visits WHERE assignment_id=$1`,[assignmentId]);
+        const t=await c.query(`SELECT id,EXTRACT(EPOCH FROM (completed_at-started_at)) AS secs,started_at
+          FROM visits WHERE assignment_id=$1`,[assignmentId]);
         const pricing=request.pricing&&Object.keys(request.pricing).length?request.pricing:{basePrice:request.price_amount};
         const rep=await this.fees.reputation(c,nurseId);
         const bps=commissionFor(Number(request.commission_bps??2000),await this.fees.tiers(c),rep.reputation,rep.reviews); // top-rated nurses keep more
         const bill=computeBill(ruleFromRow(pricing),Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
-          arrivedAt:new Date(t.rows[0]?.arrived_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
+          arrivedAt:new Date(t.rows[0]?.started_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
         await c.query(`UPDATE care_requests SET service_minutes=$2,gross_amount=$3,discount_amount=$4,surcharge_amount=$5,distance_fee=$6,tax_amount=$7,
           amount_due=$8::numeric,commission_bps_applied=$9,commission_amount=$10,nurse_earning=$11,owed_to_company=$12,
           payment_status=CASE WHEN $8::numeric=0 THEN 'PAID' ELSE 'DUE' END,billed_at=now() WHERE id=$1`,
           [requestId,bill.minutes,bill.gross,bill.discount,bill.surcharge,bill.distanceFee,bill.tax,bill.due,bill.commissionBps,bill.commission,bill.nurseEarning,bill.owedToCompany]);
+        await this.billing.issueInvoice(
+          c,requestId,t.rows[0].id,nurseId,request.currency_code ?? 'SYP_NEW',bill,pricing,
+        );
       }
       await transitionRequest(c, {
         requestId,

@@ -70,6 +70,7 @@ export class MarketplaceService {
       LEFT JOIN areas a ON a.id=cr.area_id
       LEFT JOIN current_nurse cn ON true
       WHERE cr.status = 'OPEN_FOR_PROPOSALS'
+        AND cr.clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
         AND cr.open_expires_at > now()
         -- Exclude requests where patient or nurse is mutually blocked
         AND NOT EXISTS (
