@@ -65,8 +65,11 @@ export class AdminNursesController {
         (SELECT round(avg(vr.stars)::numeric,1) FROM visit_reviews vr JOIN visits v ON v.id=vr.visit_id JOIN request_assignments a ON a.id=v.assignment_id WHERE a.nurse_id=n.id AND vr.reviewer_role='PATIENT') AS rating
       FROM nurses n JOIN users u ON u.id=n.user_id LEFT JOIN governorates g ON g.id=n.governorate_id LEFT JOIN areas a ON a.id=n.area_id
       WHERE u.status<>'DELETED' AND ($1::text IS NULL OR u.status=$1) AND ($3::uuid IS NULL OR n.governorate_id=$3) AND ($4::uuid IS NULL OR n.area_id=$4)
-        AND ($2::text IS NULL OR coalesce(u.display_name,'') ILIKE '%'||$2||'%' OR u.phone_e164 ILIKE '%'||$2||'%' OR n.nurse_no::text=$2)
-      ORDER BY n.nurse_no DESC LIMIT 200`, [status && ['ACTIVE', 'SUSPENDED'].includes(status) ? status : null, q?.trim() || null, UUID_RE.test(gov ?? '') ? gov : null, UUID_RE.test(area ?? '') ? area : null])).rows;
+        AND ($2::text IS NULL OR tamreedy_ar_normalize(u.display_name) % tamreedy_ar_normalize($2)
+          OR tamreedy_ar_normalize(u.display_name) LIKE tamreedy_ar_normalize($2)||'%'
+          OR u.phone_e164=$2 OR n.nurse_no::text=$2)
+      ORDER BY CASE WHEN $2::text IS NULL THEN 0 ELSE similarity(tamreedy_ar_normalize(u.display_name),tamreedy_ar_normalize($2)) END DESC,
+        n.nurse_no DESC LIMIT 200`, [status && ['ACTIVE', 'SUSPENDED'].includes(status) ? status : null, q?.trim().slice(0,80) || null, UUID_RE.test(gov ?? '') ? gov : null, UUID_RE.test(area ?? '') ? area : null])).rows;
     return { items: rows };
   }
 

@@ -48,119 +48,75 @@ export async function runSmartRecoveryJob(pool: pg.Pool): Promise<{
     const cooldownMinutes = Number(policy.recoveryCooldownMinutes) || 15;
     const maxDaily = Number(policy.recoveryMaxDaily) || 8;
 
-    // 4. Find open requests
-    const openReqsRes = await client.query(
-      `SELECT id, service_id, location, requester_user_id
-       FROM care_requests
-       WHERE status = 'OPEN_FOR_PROPOSALS'
-         AND clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
-         AND open_expires_at > now()`,
-    );
-    if (!openReqsRes.rowCount || openReqsRes.rowCount === 0) {
-      return { expiredProposals, expiredRequests, alertsSent: 0 };
-    }
-
-    const openRequestIds = openReqsRes.rows.map(r => r.id);
-
-    // 5. Find candidate idle nurses not in cooldown
-    const nursesRes = await client.query(
-      `SELECT n.id, n.user_id
-       FROM nurses n
-       JOIN users u ON u.id = n.user_id
-       WHERE n.verified = true
-         AND u.status = 'ACTIVE'
-         -- Not in active assignment
-         AND NOT EXISTS (
-           SELECT 1 FROM request_assignments ra
-           JOIN care_requests cr ON cr.id = ra.request_id
-           WHERE ra.nurse_id = n.id
-             AND ra.status = 'ACTIVE'
-             AND cr.status IN ('ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE')
-         )
-         -- Not in active cooldown
-         AND NOT EXISTS (
-           SELECT 1 FROM smart_recovery_deliveries srd
-           WHERE srd.nurse_id = n.id
-             AND srd.cooldown_until > now()
-         )
-         -- Has not exceeded daily limit
-         AND (
-           SELECT count(*) FROM smart_recovery_deliveries srd2
-           WHERE srd2.nurse_id = n.id
-             AND srd2.delivered_at >= date_trunc('day', now())
-         ) < $1
-       LIMIT 50`,
-      [maxDaily],
-    );
-
+    // Candidate discovery, skill/block checks, delivery recording, and outbox
+    // publication are intentionally set-based. This keeps query count constant
+    // and lets PostgreSQL use the spatial, skill, and active-state indexes.
     let alertsSent = 0;
-
-    for (const nurse of nursesRes.rows) {
-      // Find matching open requests for this nurse (skills approved & no mutual block)
-      const matchingRes = await client.query(
-        `SELECT cr.id
-         FROM care_requests cr
-         WHERE cr.id = ANY($1::uuid[])
-           AND NOT EXISTS (
-             SELECT 1 FROM user_blocks ub
-             WHERE ((ub.blocker_user_id = $2 AND ub.blocked_user_id = cr.requester_user_id)
-                OR (ub.blocker_user_id = cr.requester_user_id AND ub.blocked_user_id = $2))
-               AND ub.revoked_at IS NULL
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM care_request_items cri
-             WHERE cri.request_id = cr.id
-               AND NOT EXISTS (
-                 SELECT 1 FROM nurse_skills ns
-                 WHERE ns.nurse_id = $3
-                   AND ns.service_id = cri.service_id
-                   AND ns.approved = true
-               )
-           )
-           -- Do not re-alert if nurse already has a pending proposal
-           AND NOT EXISTS (
-             SELECT 1 FROM marketplace_proposals mp
-             WHERE mp.request_id = cr.id AND mp.nurse_id = $3 AND mp.status = 'PENDING'
-           )`,
-        [openRequestIds, nurse.user_id, nurse.id],
-      );
-
-      const matchingCount = matchingRes.rowCount ?? 0;
-      if (matchingCount > 0) {
-        const matchingIds = matchingRes.rows.map(r => r.id);
-
-        await client.query('BEGIN');
-        try {
-          // Record delivery with cooldown
-          await client.query(
-            `INSERT INTO smart_recovery_deliveries(
-               nurse_id, request_ids, trigger_event, cooldown_until
-             )
-             VALUES($1, $2, 'OPEN_REQUESTS_MATCHED', now() + $3 * interval '1 minute')`,
-            [nurse.id, matchingIds, cooldownMinutes],
-          );
-
-          // Emit outbox event for quiet push notification
-          await client.query(
-            `INSERT INTO outbox_events(event_type, aggregate_id, payload)
-             VALUES('marketplace.recovery.alert', $1, $2::jsonb)`,
-            [
-              nurse.id,
-              JSON.stringify({
-                recipientUserId: nurse.user_id,
-                openRequestsCount: matchingCount,
-                requestIds: matchingIds,
-              }),
-            ],
-          );
-
-          await client.query('COMMIT');
-          alertsSent++;
-        } catch (e) {
-          await client.query('ROLLBACK');
-          console.error(`[SmartRecovery] Failed to alert nurse ${nurse.id}:`, e);
-        }
+    await client.query('BEGIN');
+    try {
+      const lock = await client.query(`SELECT pg_try_advisory_xact_lock(hashtext('tamreedy.smart-recovery')) AS acquired`);
+      if (!lock.rows[0]?.acquired) {
+        await client.query('ROLLBACK');
+        return { expiredProposals, expiredRequests, alertsSent: 0 };
       }
+      const deliveries = await client.query(
+      `WITH candidate_nurses AS MATERIALIZED (
+         SELECT n.id,n.user_id,nl.location
+         FROM nurses n
+         JOIN users u ON u.id=n.user_id AND u.status='ACTIVE'
+         JOIN nurse_locations nl ON nl.nurse_id=n.id
+           AND nl.captured_at > statement_timestamp()-interval '120 seconds'
+           AND nl.accuracy_m <= 150
+         WHERE n.verified AND n.availability_intent='AVAILABLE' AND n.work_status='AVAILABLE'
+           AND n.last_heartbeat_at > statement_timestamp()-interval '120 seconds'
+           AND EXISTS (SELECT 1 FROM nurse_credentials nc
+             WHERE nc.nurse_id=n.id AND nc.approved AND nc.expires_at>statement_timestamp())
+           AND NOT EXISTS (SELECT 1 FROM request_assignments ra
+             WHERE ra.nurse_id=n.id AND ra.status IN ('RESERVED','ACTIVE'))
+           AND NOT EXISTS (SELECT 1 FROM smart_recovery_deliveries d
+             WHERE d.nurse_id=n.id AND d.cooldown_until>statement_timestamp())
+           AND (SELECT count(*) FROM smart_recovery_deliveries d
+             WHERE d.nurse_id=n.id AND d.delivered_at>=date_trunc('day',statement_timestamp())) < $1
+         ORDER BY n.last_heartbeat_at DESC,n.id
+         LIMIT 50
+       ), matched AS MATERIALIZED (
+         SELECT cn.id AS nurse_id,cn.user_id,
+           (array_agg(r.id ORDER BY ST_Distance(cn.location,r.location),r.created_at))[1:20] AS request_ids
+         FROM candidate_nurses cn
+         JOIN care_requests r ON r.status='OPEN_FOR_PROPOSALS'
+           AND r.clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
+           AND r.open_expires_at>statement_timestamp()
+           AND ST_DWithin(cn.location,r.location,LEAST(r.search_radius_meters,25000))
+         WHERE EXISTS (SELECT 1 FROM nurse_skills ns
+             WHERE ns.nurse_id=cn.id AND ns.service_id=r.service_id AND ns.approved)
+           AND NOT EXISTS (SELECT 1 FROM care_request_items ri
+             WHERE ri.request_id=r.id AND NOT EXISTS (SELECT 1 FROM nurse_skills ns
+               WHERE ns.nurse_id=cn.id AND ns.service_id=ri.service_id AND ns.approved))
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.revoked_at IS NULL AND
+             ((b.blocker_user_id=cn.user_id AND b.blocked_user_id=r.requester_user_id)
+              OR (b.blocker_user_id=r.requester_user_id AND b.blocked_user_id=cn.user_id)))
+           AND NOT EXISTS (SELECT 1 FROM marketplace_proposals p
+             WHERE p.request_id=r.id AND p.nurse_id=cn.id AND p.status='PENDING')
+         GROUP BY cn.id,cn.user_id
+       ), inserted AS (
+         INSERT INTO smart_recovery_deliveries(nurse_id,request_ids,trigger_event,cooldown_until)
+         SELECT nurse_id,request_ids,'OPEN_REQUESTS_MATCHED',
+           statement_timestamp()+$2::integer*interval '1 minute' FROM matched
+         RETURNING nurse_id,request_ids
+       ), events AS (
+         INSERT INTO outbox_events(event_type,aggregate_id,payload)
+         SELECT 'marketplace.recovery.alert',i.nurse_id,
+           jsonb_build_object('recipientUserId',m.user_id,'openRequestsCount',cardinality(i.request_ids),'requestIds',i.request_ids)
+         FROM inserted i JOIN matched m ON m.nurse_id=i.nurse_id
+         RETURNING id
+       ) SELECT count(*)::integer AS alerts_sent FROM events`,
+      [maxDaily,cooldownMinutes],
+    );
+      alertsSent = Number(deliveries.rows[0]?.alerts_sent ?? 0);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
     }
 
     return { expiredProposals, expiredRequests, alertsSent };

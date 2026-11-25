@@ -47,14 +47,18 @@ export class AdminUsersController {
     });
   }
 
-  @Get() async list(@Request() r: AuthRequest, @Query('role') role?: string, @Query('page') pageValue = '1') {
+  @Get() async list(@Request() r: AuthRequest, @Query('role') role?: string, @Query('page') pageValue = '1', @Query('q') search?: string) {
     requireRole(r.user!, 'ADMIN');
     if (role && !['PATIENT', 'NURSE', 'ADMIN', 'CLINICAL_REVIEWER'].includes(role)) throw new BadRequestException({ code: 'INVALID_ROLE' });
     const page = Number(pageValue);
     if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new BadRequestException({ code: 'INVALID_PAGINATION' });
+    const normalizedSearch = search?.trim().slice(0, 80) || null;
     const q = await this.db.query(`SELECT id,phone_e164,role,status,display_name,created_at,locked_until FROM users
       WHERE status<>'DELETED' AND ($1::text IS NULL OR role=$1)
-      ORDER BY created_at DESC,id DESC LIMIT 51 OFFSET $2`, [role ?? null,(page - 1)*50]);
+        AND ($3::text IS NULL OR tamreedy_ar_normalize(display_name) % tamreedy_ar_normalize($3)
+          OR tamreedy_ar_normalize(display_name) LIKE tamreedy_ar_normalize($3)||'%' OR phone_e164=$3)
+      ORDER BY CASE WHEN $3::text IS NULL THEN 0 ELSE similarity(tamreedy_ar_normalize(display_name),tamreedy_ar_normalize($3)) END DESC,
+        created_at DESC,id DESC LIMIT 51 OFFSET $2`, [role ?? null,(page - 1)*50,normalizedSearch]);
     return { items: q.rows.slice(0,50), hasMore: q.rows.length > 50 };
   }
 

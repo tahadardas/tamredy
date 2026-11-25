@@ -11,6 +11,9 @@ type Pt = { lat: number; lng: number };
 @Injectable()
 export class RoutesService {
   private cache = new Map<string, { at: number; value: RouteResult }>();
+  private readonly inFlight = new Map<string, Promise<RouteResult>>();
+  private consecutiveFailures = 0;
+  private circuitOpenUntil = 0;
   fetchImpl: FetchLike = (u, i) => fetch(u, i) as any;
   now = () => Date.now();
 
@@ -29,11 +32,35 @@ export class RoutesService {
     const r4 = (n: number) => n.toFixed(4); // ~11 m: near-identical requests share a route
     const ck = `${provider}:${r4(origin.lat)},${r4(origin.lng)}>${r4(dest.lat)},${r4(dest.lng)}`;
     const hit = this.cache.get(ck);
-    if (hit && this.now() - hit.at < 30_000) return hit.value;
-    const value = provider === 'google' ? await this.google(key, origin, dest) : await this.ors(key, origin, dest);
-    if (this.cache.size > 500) this.cache.clear();
-    this.cache.set(ck, { at: this.now(), value });
-    return value;
+    const ttlMs = Number(process.env.ROUTES_CACHE_TTL_SECONDS ?? 30) * 1000;
+    if (hit && this.now() - hit.at < ttlMs) {
+      this.cache.delete(ck);
+      this.cache.set(ck, hit);
+      return hit.value;
+    }
+    if (this.now() < this.circuitOpenUntil) throw new HttpException({ code: 'ROUTES_CIRCUIT_OPEN', provider }, 503);
+    const existing = this.inFlight.get(ck);
+    if (existing) return existing;
+    const request = (async () => {
+      try {
+        const value = provider === 'google' ? await this.google(key, origin, dest) : await this.ors(key, origin, dest);
+        this.consecutiveFailures = 0;
+        this.cache.set(ck, { at: this.now(), value });
+        const limit = Number(process.env.ROUTES_CACHE_MAX_ENTRIES ?? 500);
+        while (this.cache.size > limit) this.cache.delete(this.cache.keys().next().value!);
+        return value;
+      } catch (error) {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= Number(process.env.ROUTES_CIRCUIT_FAILURE_THRESHOLD ?? 5)) {
+          this.circuitOpenUntil = this.now() + Number(process.env.ROUTES_CIRCUIT_OPEN_SECONDS ?? 30) * 1000;
+        }
+        throw error;
+      } finally {
+        this.inFlight.delete(ck);
+      }
+    })();
+    this.inFlight.set(ck, request);
+    return request;
   }
 
   private async ors(key: string, o: Pt, d: Pt): Promise<RouteResult> {
