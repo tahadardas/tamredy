@@ -29,6 +29,7 @@ class TamScaffold extends StatelessWidget {
   final TamBottomNav? nav;
   final Widget? actions;
   final bool showBack;
+  final bool showHeader;
   final Future<void> Function()? onRefresh;
 
   const TamScaffold({
@@ -39,6 +40,7 @@ class TamScaffold extends StatelessWidget {
     this.nav,
     this.actions,
     this.showBack = false,
+    this.showHeader = true,
     this.onRefresh,
   });
 
@@ -73,7 +75,8 @@ class TamScaffold extends StatelessWidget {
           bottom: visibleNav == null,
           child: Column(
             children: [
-              Container(
+              if (showHeader)
+                Container(
                 decoration: BoxDecoration(
                   color: c.surface,
                   border: Border(
@@ -424,10 +427,15 @@ class KeyValueRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: tamText(size: 13, color: c.textSecondary)),
+          Flexible(
+            flex: 3,
+            child: Text(label, style: tamText(size: 13, color: c.textSecondary)),
+          ),
           const SizedBox(width: 12),
           Expanded(
+            flex: 2,
             child: Text(
               value,
               textAlign: TextAlign.end,

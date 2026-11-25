@@ -7,6 +7,7 @@ import 'location.dart';
 import 'care_plans.dart';
 import 'favorite_nurses.dart';
 import 'health_record.dart';
+import 'service_catalog.dart';
 
 const _serviceIcons = [
   Icons.vaccines_outlined,
@@ -40,11 +41,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final tc = context.tamColors;
     final last = c.history.isEmpty ? null : c.history.first;
-    final filteredServices = _query.trim().isEmpty
+    final qNorm = normalizeArabicSearch(_query);
+    final filteredServices = qNorm.isEmpty
         ? c.services
         : c.services.where((s) {
-            final q = _query.trim();
-            return s.title.contains(q) || s.note.contains(q);
+            return normalizeArabicSearch(s.title).contains(qNorm) ||
+                normalizeArabicSearch(s.note).contains(qNorm) ||
+                normalizeArabicSearch(serviceCategoryLabel(s)).contains(qNorm);
           }).toList();
 
     return Scaffold(
@@ -323,11 +326,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                         size: 18,
                                       ),
                                       onPressed: () {
-                                        c.pick(c.services.first);
                                         Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (_) =>
-                                                ServiceScreen(c: c),
+                                                ServiceCatalogScreen(c: c),
                                           ),
                                         );
                                       },
@@ -454,20 +456,20 @@ class _BookingModeStrip extends StatelessWidget {
     final modes = [
       (
         id: 'INSTANT',
-        title: 'طلب فوري',
-        sub: 'أقرب ممرض متاح',
+        title: 'اطلب الآن',
+        sub: 'توزيع الطلب على الممرضين القريبين',
         icon: Icons.bolt_rounded,
       ),
       (
         id: 'OPEN',
-        title: 'سوق العروض',
-        sub: 'قارن العروض',
+        title: 'استقبل عروض الممرضين',
+        sub: 'استقبل عروضاً واختر الأنسب',
         icon: Icons.storefront_rounded,
       ),
       (
         id: 'SCHEDULED',
-        title: 'حجز مسبق',
-        sub: 'حدد التاريخ والوقت',
+        title: 'احجز موعدًا',
+        sub: 'اختيار يوم ووقت مناسبين',
         icon: Icons.event_available_rounded,
       ),
     ];
@@ -1109,10 +1111,10 @@ class _ServiceScreenState extends State<ServiceScreen> {
                             const SizedBox(height: 2),
                             Text(
                               c.bookingMode == 'OPEN'
-                                  ? 'السوق المفتوح (استقبال عروض الجاهزية)'
+                                  ? 'استقبل عروض الممرضين (اختر العرض الأنسب)'
                                   : c.bookingMode == 'SCHEDULED'
-                                      ? 'حجز موعد مسبق'
-                                      : 'طلب فوري (أقرب ممرض متاح)',
+                                      ? 'احجز موعدًا (يوم ووقت محددان)'
+                                      : 'اطلب الآن (أقرب ممرض متاح)',
                               style: tamText(size: 13, weight: FontWeight.w700, color: AeroColors.primaryNavy),
                             ),
                           ],
@@ -1168,6 +1170,19 @@ class _ServiceScreenState extends State<ServiceScreen> {
           ),
         ),
         const SizedBox(height: 12),
+        if (!canProceed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              s.requiresPrescription && !_prescriptionConfirmed
+                  ? 'يرجى تأكيد إقرار السلامة وتوفر الوصفة الطبية للمتابعة.'
+                  : 'يرجى تأكيد إقرار أن الحالة غير إسعافية للمتابعة.',
+              style: TamTypography.supporting(
+                color: context.tamColors.warning,
+                weight: FontWeight.w700,
+              ),
+            ),
+          ),
         PrimaryButton(
           'متابعة إلى تحديد الموقع',
           onPressed: canProceed

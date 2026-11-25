@@ -166,98 +166,114 @@ class _PaymentScreenState extends State<PaymentScreen> {
 }
 
 /// P08 — rate the visit.
-class RatingScreen extends StatelessWidget {
+class RatingScreen extends StatefulWidget {
   final PatientController c;
   const RatingScreen({super.key, required this.c});
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: c,
-    builder: (context, _) => TamScaffold(
-      title: 'تقييم الزيارة',
-      subtitle: 'رأيك يساعدنا في تحسين الجودة',
-      nav: patientNavBar(context, c, 0),
-      children: [
-        TamCard(
-          padding: const EdgeInsets.all(26),
-          child: Column(
-            children: [
-              const Icon(Icons.check, size: 40, color: TamreedyColors.teal),
-              const SizedBox(height: 16),
-              Text(
-                'تم إكمال الزيارة',
-                style: tamText(
-                  size: 22,
-                  weight: FontWeight.w800,
-                  color: TamreedyColors.navy,
+  State<RatingScreen> createState() => _RatingScreenState();
+}
+
+class _RatingScreenState extends State<RatingScreen> {
+  bool _submitting = false;
+  String? _error;
+
+  String _ratingLabel(int stars) => switch (stars) {
+    1 => 'غير راضٍ',
+    2 => 'مقبول',
+    3 => 'جيد',
+    4 => 'جيد جداً',
+    5 => 'ممتاز',
+    _ => 'اختر عدد النجوم لتقييم الزيارة',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.c;
+    final tc = context.tamColors;
+    return ListenableBuilder(
+      listenable: c,
+      builder: (context, _) => TamScaffold(
+        title: 'تقييم الزيارة',
+        subtitle: 'رأيك يساعدنا في تحسين جودة الرعاية',
+        nav: patientNavBar(context, c, 0),
+        children: [
+          TamCard(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              children: [
+                Icon(Icons.verified_outlined, size: 42, color: tc.primary),
+                const SizedBox(height: 14),
+                Text(
+                  'تم إكمال الزيارة',
+                  style: TamTypography.pageTitle(color: tc.textPrimary),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'نشكر ثقتك بتمريضي',
-                style: tamText(size: 12, color: TamreedyColors.subtext),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (var i = 1; i <= 5; i++)
-                    IconButton(
-                      onPressed: () => c.setRating(i),
-                      icon: Icon(
-                        Icons.star,
-                        size: 34,
-                        color: i <= c.rating
-                            ? const Color(0xFFF2B01E)
-                            : TamreedyColors.border,
+                const SizedBox(height: 6),
+                Text(
+                  'نشكر ثقتك بتمريضي',
+                  style: TamTypography.supporting(color: tc.textSecondary),
+                ),
+                const SizedBox(height: 20),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 4,
+                  children: [
+                    for (var i = 1; i <= 5; i++)
+                      Semantics(
+                        button: true,
+                        label: '$i من 5 نجوم',
+                        child: IconButton(
+                          iconSize: 36,
+                          onPressed: _submitting ? null : () => c.setRating(i),
+                          icon: Icon(
+                            i <= c.rating ? Icons.star_rounded : Icons.star_outline_rounded,
+                            color: i <= c.rating
+                                ? const Color(0xFFF59E0B)
+                                : tc.borderStrong,
+                          ),
+                        ),
                       ),
-                    ),
-                ],
-              ),
-              Text(
-                'كيف تقيّم الممرض؟',
-                style: tamText(size: 14, weight: FontWeight.w600),
-              ),
-            ],
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _ratingLabel(c.rating),
+                  style: TamTypography.cardTitle(
+                    color: c.rating > 0 ? tc.primary : tc.textSecondary,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SectionTitle('قيّم جوانب الخدمة'),
-        TamCard(
-          child: Column(
-            children: const [
-              ListRow(
-                icon: Icons.schedule,
-                title: 'الالتزام بالموعد',
-                subtitle: 'الممرض حضر في الوقت المتفق عليه',
-                trailing: StatusChip('ممتاز'),
-              ),
-              ListRow(
-                icon: Icons.check,
-                title: 'الاحترافية',
-                subtitle: 'تم تنفيذ الخدمة بطريقة مهنية',
-                trailing: StatusChip('ممتاز'),
-              ),
-              ListRow(
-                icon: Icons.favorite_border,
-                title: 'حسن التعامل',
-                subtitle: 'احترام ولباقة',
-                trailing: StatusChip('ممتاز'),
-                divider: false,
-              ),
-            ],
+          if (_error != null) NoticeBox(_error!),
+          PrimaryButton(
+            _submitting ? 'جارٍ حفظ التقييم...' : 'إرسال التقييم',
+            onPressed: (_submitting || c.rating <= 0)
+                ? null
+                : () async {
+                    setState(() {
+                      _submitting = true;
+                      _error = null;
+                    });
+                    try {
+                      await c.submitRating();
+                      c.reset();
+                      if (context.mounted) {
+                        Navigator.of(context).popUntil((r) => r.isFirst);
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        setState(() {
+                          _error = explainError(e, fallback: 'تعذر حفظ التقييم، حاول مجدداً.');
+                        });
+                      }
+                    } finally {
+                      if (mounted) setState(() => _submitting = false);
+                    }
+                  },
           ),
-        ),
-        PrimaryButton(
-          'إرسال التقييم',
-          onPressed: () async {
-            await c.submitRating();
-            c.reset();
-            if (context.mounted) {
-              Navigator.of(context).popUntil((r) => r.isFirst);
-            }
-          },
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
