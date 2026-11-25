@@ -19,6 +19,7 @@ const liveEvents = [
   'offer.expired',
   'offer.closed',
   'request.created',
+  'request.clinical_review_changed',
   'request.assigned',
   'request.cancelled',
   'visit.interrupted',
@@ -32,6 +33,9 @@ const liveEvents = [
   'visit.start',
   'visit.complete',
   'payment.updated',
+  'payment.partially_paid',
+  'payment.paid',
+  'payment.tip',
   'tracking.updated',
 ];
 
@@ -45,6 +49,7 @@ class LiveChannel {
   io.Socket? _socket;
   bool _refreshing = false;
   bool connected = false;
+  final Set<String> _seenEvents = {};
 
   LiveChannel({
     required this.api,
@@ -54,6 +59,7 @@ class LiveChannel {
   });
 
   Future<void> start() async {
+    if (_socket != null) return;
     final token = await api.accessToken();
     if (token == null) return;
     final s = io.io(
@@ -74,6 +80,11 @@ class LiveChannel {
     for (final e in liveEvents) {
       s.on(e, (data) {
         if (data is Map) {
+          final eventId = data['eventId'];
+          if (eventId is String) {
+            if (!_seenEvents.add(eventId)) return;
+            if (_seenEvents.length > 512) _seenEvents.remove(_seenEvents.first);
+          }
           onEventData?.call(e, Map<String, dynamic>.from(data));
         }
         onEvent(e);
@@ -107,6 +118,7 @@ class LiveChannel {
   void dispose() {
     _socket?.dispose();
     _socket = null;
+    _seenEvents.clear();
   }
 }
 

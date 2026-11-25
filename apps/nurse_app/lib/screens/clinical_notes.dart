@@ -28,10 +28,12 @@ class _NurseClinicalNotesScreenState extends State<NurseClinicalNotesScreen> {
       final obsList = <Map<String, dynamic>>[];
       if (data.systolic != null && data.diastolic != null) {
         obsList.add({
-          'observationType': 'BLOOD_PRESSURE',
+          'observationType': 'SYSTOLIC_BP',
           'numericValue': data.systolic,
-          'textValue': '${data.systolic}/${data.diastolic}',
-          'unit': 'mmHg',
+        });
+        obsList.add({
+          'observationType': 'DIASTOLIC_BP',
+          'numericValue': data.diastolic,
         });
       }
       if (data.heartRate != null) {
@@ -50,14 +52,14 @@ class _NurseClinicalNotesScreenState extends State<NurseClinicalNotesScreen> {
       }
       if (data.oxygenSaturation != null) {
         obsList.add({
-          'observationType': 'SPO2',
+          'observationType': 'O2_SATURATION',
           'numericValue': data.oxygenSaturation,
           'unit': '%',
         });
       }
       if (data.temperature != null) {
         obsList.add({
-          'observationType': 'BODY_TEMPERATURE',
+          'observationType': 'TEMPERATURE',
           'numericValue': data.temperature,
           'unit': '°C',
         });
@@ -90,9 +92,8 @@ class _NurseClinicalNotesScreenState extends State<NurseClinicalNotesScreen> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم الحفظ المحلي للعلامات الحيوية (وضع عدم الاتصال)')),
+          const SnackBar(content: Text('تعذر حفظ التوثيق على الخادم. أعد المحاولة.')),
         );
-        Navigator.of(context).pop();
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);

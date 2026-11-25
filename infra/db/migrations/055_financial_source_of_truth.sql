@@ -165,7 +165,7 @@ CREATE INDEX idx_cash_collections_visit_time ON cash_collections(visit_id,create
 ALTER TABLE nurse_settlements
   ADD COLUMN transaction_id uuid REFERENCES financial_transactions(id);
 CREATE UNIQUE INDEX uq_nurse_settlement_transaction
-  ON nurse_settlements(transaction_id) WHERE transaction_id IS NOT NULL;
+  ON nurse_settlements(transaction_id);
 
 -- Preserve historical settlements in the authoritative ledger. The deterministic
 -- transaction id makes this expansion restart-safe before the migration is recorded.
@@ -266,7 +266,8 @@ INSERT INTO financial_transactions(
 SELECT i.id,'INVOICE_ISSUED','INVOICE',i.id::text,i.currency_code,'legacy:invoice:'||i.request_id::text,
   encode(digest(i.request_id::text||':'||i.total_amount::text,'sha256'),'hex'),i.issued_at
 FROM invoices i
-WHERE i.total_amount+i.discount_amount>0
+JOIN care_requests cr ON cr.id=i.request_id
+WHERE i.total_amount+i.discount_amount+i.tax_amount+coalesce(cr.commission_amount,0)+coalesce(cr.nurse_earning,0)>0
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO financial_ledger_entries(transaction_id,reference_type,reference_id,account_id,debit_amount,credit_amount,currency)

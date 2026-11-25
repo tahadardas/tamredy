@@ -88,9 +88,9 @@ export async function getJson(path: string) {
   return r.json();
 }
 export const msgOf = (e: unknown) => e instanceof Error ? e.message : String(e);
-export async function sendJson(method: string, path: string, body?: unknown) {
+export async function sendJson(method: string, path: string, body?: unknown, headers?: HeadersInit) {
   let r: Response;
-  try { r = await api(path, {method, body: body === undefined ? undefined : JSON.stringify(body)}); }
+  try { r = await api(path, {method, headers, body: body === undefined ? undefined : JSON.stringify(body)}); }
   catch (e) { toast.error(msgOf(e)); throw e; }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { const m = errorAr(d, r.status); toast.error(m); throw new Error(m); } // always visible, even if the caller forgets to show it

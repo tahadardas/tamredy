@@ -302,10 +302,13 @@ class TamreedyApi {
 
   /// Patient self-registration. Signs the new account in and returns its role.
   Future<String> register(String phone, String name, String password) async {
+    final devId = await getDeviceId();
     final t = await post('/v1/auth/register', {
       'phone': phone,
       'displayName': name,
       'password': password,
+      'deviceId': devId,
+      'platform': defaultTargetPlatform.name,
     });
     await _saveTokens(t);
     final role = (t['role'] as String?) ?? 'PATIENT';
@@ -423,10 +426,19 @@ class TamreedyApi {
   // Smart Booking & Open Marketplace Endpoints
   // =========================================================================
 
-  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm}) =>
-      getList(maxDistanceKm != null
-          ? '/v1/marketplace/requests?maxDistanceKm=$maxDistanceKm'
-          : '/v1/marketplace/requests');
+  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm}) async {
+    final page = await getMap(Uri(path: '/v1/marketplace/requests', queryParameters: {
+      if (maxDistanceKm != null) 'maxDistanceKm': '$maxDistanceKm',
+    }).toString());
+    return List<dynamic>.from(page['requests'] as List);
+  }
+
+  Future<void> uploadClinicalEvidence(String requestId, String type, List<int> bytes, String filename) async {
+    await dio.post('/v1/requests/$requestId/clinical-evidence', data: FormData.fromMap({
+      'evidenceType': type,
+      'file': MultipartFile.fromBytes(bytes, filename: filename),
+    }));
+  }
 
   Future<Map<String, dynamic>> getMarketplaceRequest(String requestId) =>
       getMap('/v1/marketplace/requests/$requestId');
@@ -438,14 +450,14 @@ class TamreedyApi {
     String? note,
   }) =>
       post('/v1/marketplace/requests/$requestId/proposals', {
-        if (estimatedMinutes != null) 'estimatedArrivalMinutes': estimatedMinutes,
-        if (specificTime != null) 'specificArrivalTime': specificTime,
-        if (note != null && note.isNotEmpty) 'nurseNote': note,
+        if (estimatedMinutes != null) 'arrivalMinutes': estimatedMinutes,
+        if (specificTime != null) 'proposedArrivalAt': specificTime,
+        if (note != null && note.isNotEmpty) 'note': note,
       });
 
   Future<Map<String, dynamic>> withdrawProposal(String proposalId, {String? reason}) =>
       post('/v1/marketplace/proposals/$proposalId/withdraw', {
-        if (reason != null) 'withdrawalReason': reason,
+        if (reason != null) 'reason': reason,
       });
 
   Future<List<dynamic>> getMyProposals() => getList('/v1/marketplace/proposals/mine');

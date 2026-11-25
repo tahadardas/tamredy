@@ -31,9 +31,9 @@ CREATE UNIQUE INDEX uq_open_assignment_per_request
 ALTER TABLE request_assignments ADD CONSTRAINT ex_nurse_assignment_planned_overlap
   EXCLUDE USING gist (
     nurse_id WITH =,
-    tstzrange(
-      planned_start_at-travel_buffer_before_minutes*interval '1 minute',
-      planned_end_at+travel_buffer_after_minutes*interval '1 minute','[)'
+    tsrange(
+      (planned_start_at AT TIME ZONE 'UTC')-travel_buffer_before_minutes*interval '1 minute',
+      (planned_end_at AT TIME ZONE 'UTC')+travel_buffer_after_minutes*interval '1 minute','[)'
     ) WITH &&
   ) WHERE (status IN ('RESERVED','ACTIVE') AND planned_start_at IS NOT NULL)
   DEFERRABLE INITIALLY IMMEDIATE;

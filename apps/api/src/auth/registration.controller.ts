@@ -15,6 +15,8 @@ class RegisterDto {
   @Matches(PHONE) phone!: string;
   @IsString() @MinLength(2) @MaxLength(80) displayName!: string;
   @IsString() @MinLength(8) @MaxLength(128) password!: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(100) deviceId?: string;
+  @IsOptional() @IsString() @MaxLength(20) platform?: string;
 }
 class NurseDocDto {
   @IsIn(['LICENSE', 'PRACTICE_CERT', 'ID', 'DEGREE', 'PHOTO']) kind!: 'LICENSE' | 'PRACTICE_CERT' | 'ID' | 'DEGREE' | 'PHOTO';
@@ -47,7 +49,8 @@ export class RegistrationController {
       const u = (await c.query(`INSERT INTO users(phone_e164,role,display_name,password_hash) VALUES($1,'PATIENT',$2,$3) RETURNING id`, [d.phone, d.displayName.trim(), hashPassword(d.password)])).rows[0];
       // The patient is their own first beneficiary and consents for themselves.
       await c.query(`INSERT INTO beneficiaries(owner_user_id,display_name,consent_status) VALUES($1,$2,'GRANTED')`, [u.id, d.displayName.trim()]);
-      return this.auth.issue(c, u.id, 'PATIENT', randomUUID());
+      const session=await this.auth.upsertDeviceSession(c,u.id,d.deviceId,undefined,d.platform,'PATIENT');
+      return this.auth.issue(c, u.id, 'PATIENT', randomUUID(),session);
     });
   }
 }

@@ -55,7 +55,7 @@ export class BillingService {
     const invoice = (await client.query(`INSERT INTO invoices(
       request_id,visit_id,status,currency_code,subtotal,discount_amount,surcharge_amount,
       distance_fee,tax_amount,total_amount,pricing_snapshot
-    ) VALUES($1,$2,'ISSUED',$3,$4,$5,$6,$7,$8,$9,$10::jsonb) RETURNING *`,
+    ) VALUES($1,$2,CASE WHEN $9::numeric=0 THEN 'PAID' ELSE 'ISSUED' END,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) RETURNING *`,
     [requestId,visitId,currencyCode,bill.gross,bill.discount,bill.surcharge,bill.distanceFee,
       bill.tax,bill.due,JSON.stringify(pricingSnapshot)])).rows[0];
 
@@ -92,7 +92,7 @@ export class BillingService {
     const debit = bill.due + bill.discount;
     const credit = bill.commission + bill.tax + bill.nurseEarning;
     add(positiveLeg('ROUNDING_ADJUSTMENTS',Math.max(0,credit-debit),Math.max(0,debit-credit)));
-    await this.ledger.postTransaction(client, {
+    if (legs.length) await this.ledger.postTransaction(client, {
       transactionType: 'INVOICE_ISSUED',referenceType: 'INVOICE',referenceId: invoice.id,
       idempotencyKey: `invoice:${requestId}`,currencyCode,legs,
     });
@@ -123,13 +123,18 @@ export class BillingService {
       throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
     }
     const digest = createHash('sha256').update(JSON.stringify({ requestId, amount })).digest('hex');
-    const existing = await client.query(`SELECT cc.*,i.total_amount,i.tip_amount,i.paid_amount
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [`payment.collection:${nurseUserId}:${idempotencyKey}`]);
+    const existing = await client.query(`SELECT cc.*,i.status AS invoice_status,
+      i.total_amount+i.tip_amount-i.paid_amount AS remaining
       FROM cash_collections cc JOIN invoices i ON i.visit_id=cc.visit_id
       JOIN nurses n ON n.id=cc.collector_nurse_id
       WHERE n.user_id=$1 AND cc.idempotency_key=$2`, [nurseUserId,idempotencyKey]);
     if (existing.rowCount) {
       if (existing.rows[0].payload_digest !== digest) throw new ConflictException({ code: 'FINANCIAL_IDEMPOTENCY_KEY_REUSED' });
-      return { ...existing.rows[0], replayed: true };
+      const previous=existing.rows[0];
+      return { ...previous,status:previous.invoice_status,remaining:Number(previous.remaining),
+        change:Number(previous.change_amount),replayed:true };
     }
 
     const row = (await client.query(`SELECT i.*,cr.requester_user_id,n.id AS nurse_id,v.id AS visit_id

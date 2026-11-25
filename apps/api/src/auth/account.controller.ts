@@ -52,7 +52,7 @@ export class AccountController {
       await c.query('UPDATE users SET password_hash=$2,must_change_password=false,auth_version=gen_random_uuid(),temporary_password_expires_at=NULL,failed_logins=0,locked_until=NULL WHERE id=$1', [u.id, hashPassword(d.newPassword)]);
       await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1', [u.id]); // every other session ends
       await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id) VALUES($1,'user.password_changed','user',$1)`, [u.id]);
-      return this.auth.issue(c, u.id, u.role, randomUUID());
+      return this.auth.issue(c, u.id, u.role, randomUUID(), r.user!.deviceSessionId);
     });
   }
 }

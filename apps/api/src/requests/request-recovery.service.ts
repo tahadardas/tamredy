@@ -4,7 +4,7 @@ import { missing } from '../common/errors.js';
 
 const PATIENT_RECOVERABLE_STATUSES = [
   'SCHEDULED', 'OFFERING', 'OPEN_FOR_PROPOSALS', 'ASSIGNED',
-  'EN_ROUTE', 'ARRIVED', 'IN_SERVICE', 'UNFULFILLED',
+  'EN_ROUTE', 'ARRIVED', 'IN_SERVICE', 'UNFULFILLED', 'AWAITING_RECOVERY_CHOICE',
 ] as const;
 
 @Injectable()
@@ -15,7 +15,7 @@ export class RequestRecoveryService {
     const active = await this.db.query(`
       SELECT cr.id, cr.status, cr.version, cr.price_amount, cr.currency_code,
         cr.created_at, cr.booking_mode, cr.marketplace_status, cr.open_expires_at,
-        cr.latest_acceptable_arrival_at, cr.payment_status, cr.amount_due,
+        cr.latest_acceptable_arrival_at, cr.payment_status, cr.amount_due,cr.clinical_approval_status,
         cr.address_text, ST_Y(cr.location::geometry) AS patient_lat,
         ST_X(cr.location::geometry) AS patient_lng,
         s.id AS service_id, s.title_ar AS service_title, s.code AS service_code,
@@ -110,13 +110,20 @@ export class RequestRecoveryService {
       ORDER BY coalesce(sv.appointment_at,cr.scheduled_start_at,a.accepted_at),a.id
     `, [nurse.id]);
 
+    const unpaidInvoices = await this.db.query(`
+      SELECT a.id AS assignment_id,i.request_id,i.status,i.total_amount+i.tip_amount-i.paid_amount AS remaining
+      FROM invoices i JOIN visits v ON v.id=i.visit_id JOIN request_assignments a ON a.id=v.assignment_id
+      WHERE a.nurse_id=$1 AND i.status IN ('ISSUED','PARTIALLY_PAID')
+      ORDER BY i.issued_at DESC,i.id DESC LIMIT 50`, [nurse.id]);
+    const active = assignments.rows.find(row => row.assignment_status==='ACTIVE') ?? null;
     return {
-      hasActive: assignments.rows.some(row => ['ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE'].includes(row.request_status)),
+      hasActive: active !== null,
       verified: nurse.verified,
       availability: nurse.availability_intent,
       workStatus: nurse.work_status,
-      assignment: assignments.rows.find(row => ['ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE'].includes(row.request_status)) ?? null,
+      assignment: active,
       assignments: assignments.rows,
+      unpaidInvoices: unpaidInvoices.rows,
       serverTime: new Date().toISOString(),
     };
   }

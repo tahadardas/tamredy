@@ -214,6 +214,7 @@ class PatientController extends ChangeNotifier {
   // Smart Booking & Open Marketplace
   String bookingMode = 'INSTANT';
   String? marketplaceStatus;
+  String? clinicalApprovalStatus;
   int activeProposalsCount = 0;
   DateTime? openExpiresAt;
 
@@ -784,6 +785,7 @@ class PatientController extends ChangeNotifier {
         {'Idempotency-Key': _idemKey!},
       );
       requestId = r['id'] as String?;
+      clinicalApprovalStatus = (r['clinicalApprovalStatus'] ?? r['clinical_approval_status']) as String?;
       position = visitPoint;
       address = confirmedAddress;
       accuracy = accuracyMeters.toDouble();
@@ -816,8 +818,9 @@ class PatientController extends ChangeNotifier {
       if (res['hasActive'] == true && res['request'] != null) {
         final req = Map<String, dynamic>.from(res['request'] as Map);
         requestId = req['id']?.toString();
+        clinicalApprovalStatus = req['clinical_approval_status'] as String?;
         final status = '${req['status']}';
-        scheduledAt = DateTime.tryParse('${req['scheduledAt']}')?.toLocal();
+        scheduledAt = DateTime.tryParse('${req['scheduled_at'] ?? req['scheduledAt']}')?.toLocal();
         address = req['address_text']?.toString() ?? 'الموقع المحدد على الخريطة';
         extraAddress = '';
         if (req['patient_lat'] != null && req['patient_lng'] != null) {
@@ -863,7 +866,7 @@ class PatientController extends ChangeNotifier {
           'ARRIVED' => VisitStage.arrived,
           'IN_SERVICE' => VisitStage.inService,
           'COMPLETED' => VisitStage.completed,
-          'UNFULFILLED' => VisitStage.unfulfilled,
+          'UNFULFILLED' || 'AWAITING_RECOVERY_CHOICE' => VisitStage.unfulfilled,
           _ => VisitStage.none,
         };
 
@@ -979,6 +982,7 @@ class PatientController extends ChangeNotifier {
   Future<String?> _fetchTracking(String id) async {
     try {
       final d = await api.getMap('/v1/requests/$id/tracking');
+      if (requestId == id) clinicalApprovalStatus = d['clinical_approval_status'] as String?;
       if (id != requestId) return null;
       final status = '${d['status']}';
       bookingMode = d['booking_mode']?.toString() ?? bookingMode;
@@ -993,7 +997,7 @@ class PatientController extends ChangeNotifier {
         'ARRIVED' => VisitStage.arrived,
         'IN_SERVICE' => VisitStage.inService,
         'COMPLETED' => VisitStage.completed,
-        'UNFULFILLED' => VisitStage.unfulfilled,
+        'UNFULFILLED' || 'AWAITING_RECOVERY_CHOICE' => VisitStage.unfulfilled,
         'ESCALATED' => VisitStage.interrupted,
         'CANCELLED' => VisitStage.none,
         _ => (marketplaceStatus == 'OPEN_FOR_PROPOSALS' || bookingMode == 'OPEN')
@@ -1265,6 +1269,7 @@ class PatientController extends ChangeNotifier {
     requestId = null;
     service = null;
     selectedServiceQuantities.clear();
+    clinicalApprovalStatus = null;
     tab = 0;
     notifyListeners();
   }

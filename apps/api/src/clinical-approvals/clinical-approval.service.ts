@@ -64,6 +64,9 @@ export class ClinicalApprovalService {
       const review = (await this.repository.lock(client,requestId)).rows[0];
       if (!review) missing();
       if (review.status !== 'PENDING') conflict('CLINICAL_REVIEW_ALREADY_DECIDED');
+      if (!['OFFERING','OPEN_FOR_PROPOSALS','SCHEDULED'].includes(review.request_status)) {
+        conflict('REQUEST_NOT_OPEN_FOR_CLINICAL_REVIEW');
+      }
       const evidence = await client.query(`SELECT evidence_type FROM request_clinical_evidence
         WHERE request_id=$1 AND deleted_at IS NULL`, [requestId]);
       if (dto.decision === 'APPROVE' && review.required_prescription
@@ -97,6 +100,9 @@ export class ClinicalApprovalService {
           await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1) ON CONFLICT(request_id) DO NOTHING`, [requestId]);
         }
       }
+      await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
+        VALUES('request.clinical_review_changed',$1,jsonb_build_object('requestId',$1::uuid,'recipientUserId',$2::uuid))`,
+      [requestId,review.requester_user_id]);
       return {requestId,status};
     });
   }

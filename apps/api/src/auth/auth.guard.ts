@@ -4,7 +4,7 @@ import type { JwtPayload } from 'jsonwebtoken';
 const { verify } = jwt;
 import { DbService } from '../db/db.service.js';
 export type Role = 'PATIENT' | 'NURSE' | 'ADMIN' | 'CLINICAL_REVIEWER';
-export interface AuthUser { id: string; role: Role; }
+export interface AuthUser { id: string; role: Role; deviceSessionId?: string; }
 export interface AuthRequest { headers: { authorization?: string }; user?: AuthUser; url?: string }
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -34,7 +34,7 @@ export class AuthGuard implements CanActivate {
     await requireActiveDeviceSession(this.db, row.id, payload.dsi);
     // Until the initial password is replaced, only the auth routes (me / change-password) work.
     if (row.must_change_password && !(request.url ?? '').startsWith('/v1/auth/')) throw new ForbiddenException({ code: 'PASSWORD_CHANGE_REQUIRED' });
-    request.user = { id: row.id, role: row.role as Role };
+    request.user = { id: row.id, role: row.role as Role, deviceSessionId: typeof payload.dsi==='string' ? payload.dsi : undefined };
     return true;
   }
 }

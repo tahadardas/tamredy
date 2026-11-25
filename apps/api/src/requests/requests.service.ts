@@ -220,7 +220,7 @@ export class RequestsService {
   }
   async findOne(userId: string, requestId: string) {
     const found = await this.db.query(`SELECT id,requester_user_id,beneficiary_id,service_id,status,version,price_amount,currency_code,created_at,
-       booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at,
+       booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at,clinical_approval_status,
        (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = care_requests.id AND mp.status = 'PENDING') AS active_proposals_count
        FROM care_requests WHERE id=$1 AND requester_user_id=$2`,[requestId,userId]);
     if(!found.rowCount) missing();
@@ -231,13 +231,13 @@ export class RequestsService {
       JOIN services s ON s.id=cri.service_id
       WHERE cri.request_id=$1
       ORDER BY cri.created_at ASC
-    `, [requestId]).catch(() => ({ rows: [] }));
+    `, [requestId]);
     return { ...found.rows[0], items: items.rows };
   }
   async list(userId: string, page: PageArgs) {
     // One joined query for request + service + beneficiary + winning assignment.
     // A correlated lookup per row would be a N+1 anti-pattern.
-    const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,
+    const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,cr.clinical_approval_status,
       cr.created_at,cr.version,
       cr.booking_mode, cr.marketplace_status, cr.open_expires_at, cr.latest_acceptable_arrival_at,
       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING') AS active_proposals_count,
@@ -273,7 +273,7 @@ export class RequestsService {
     return this.db.transaction(client => cancelRequest(client, userId, requestId, dto));
   }
   async track(userId:string, requestId:string) {
-    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
+    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.clinical_approval_status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_Y(nl.location::geometry) END AS nurse_lat,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_X(nl.location::geometry) END AS nurse_lng,
       CASE WHEN cr.status='EN_ROUTE' THEN nl.recorded_at END AS location_at

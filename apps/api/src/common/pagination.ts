@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-export interface CursorPoint { at: string; id: string; }
+export interface CursorPoint { at: string; id: string; rank?: string | null; }
 export interface PageArgs { limit: number; cursor: CursorPoint | null; }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
@@ -12,7 +12,7 @@ function secret(): string {
 }
 function sign(body:string):string { return createHmac('sha256',secret()).update(body).digest('base64url'); }
 export function encodeCursor(point:CursorPoint,scope:string):string {
-  const body=Buffer.from(JSON.stringify({v:1,at:point.at,id:point.id,scope})).toString('base64url');
+  const body=Buffer.from(JSON.stringify({v:1,...point,scope})).toString('base64url');
   return `${body}.${sign(body)}`;
 }
 export function decodeCursor(value:string,scope:string):CursorPoint {
@@ -26,7 +26,8 @@ export function decodeCursor(value:string,scope:string):CursorPoint {
     const data=JSON.parse(Buffer.from(parts[0],'base64url').toString('utf8'));
     if(data.v!==1 || data.scope!==scope || typeof data.at!=='string' || !ISO_TIME.test(data.at)
       || !Number.isFinite(Date.parse(data.at)) || typeof data.id!=='string' || !UUID.test(data.id)) throw Error();
-    return {at:data.at,id:data.id};
+    if(data.rank!==undefined && data.rank!==null && (typeof data.rank!=='string' || data.rank.length>64)) throw Error();
+    return {at:data.at,id:data.id, ...(data.rank!==undefined ? {rank:data.rank} : {})};
   }catch { throw new Error('INVALID_CURSOR'); }
 }
 export function parsePage(rawLimit:unknown, rawCursor:unknown, scope:string):PageArgs {
