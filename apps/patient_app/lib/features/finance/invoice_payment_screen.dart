@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../../core/patient_session_coordinator.dart';
@@ -22,28 +23,47 @@ class _InvoicePaymentScreenState extends State<InvoicePaymentScreen> {
   bool _loading = true;
   bool _busyTip = false;
   String? _error;
+  StreamSubscription<RealtimeEvent>? _paymentSub;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // BUG-045: Live auto-refresh invoice status when nurse collects cash or issues tip/bill updates.
+    _paymentSub = widget.session.eventBus
+        .whereType({'payment.paid', 'payment.partially_paid', 'payment.tip', 'visit.complete'})
+        .listen((evt) {
+      final evtReqId = evt.payload['requestId']?.toString() ?? evt.payload['request_id']?.toString();
+      if (evtReqId == null || evtReqId.isEmpty || evtReqId == widget.requestId) {
+        unawaited(_load(silent: true));
+      }
+    });
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _paymentSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final b = await widget.session.finance.loadBill(widget.requestId);
       if (mounted) {
         setState(() {
           _bill = b;
           _loading = false;
+          _error = null;
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() {
           _error = explainError(e, fallback: 'تعذر تحميل الفاتورة');
           _loading = false;

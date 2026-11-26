@@ -26,7 +26,12 @@ class PatientSessionCoordinator extends ChangeNotifier {
   StreamSubscription<RealtimeEvent>? _notifSub;
   StreamSubscription<NotificationRouteTarget>? _routeSub;
   bool _initialized = false;
+  SessionInitState _initState = SessionInitState.idle;
+  String? _initError;
   bool marketingOptIn = false;
+
+  SessionInitState get initState => _initState;
+  String? get initError => _initError;
 
   void Function(NotificationRouteTarget target)? onRouteTarget;
 
@@ -46,8 +51,16 @@ class PatientSessionCoordinator extends ChangeNotifier {
 
     PatientAlarm.coordinator = notifications;
 
+    // BUG-042: Targeted Invalidation Matrix — filter out high-frequency telemetry / WebRTC signals.
     _notifSub = eventBus.stream.listen((ev) {
-      if (ev.type != 'tracking.updated') {
+      const highFreqNonNotif = {
+        'tracking.updated',
+        'call.signal',
+        'location.ack',
+        'location.rejected',
+        'pong',
+      };
+      if (!highFreqNonNotif.contains(ev.type)) {
         unreadNotifications.value = unreadNotifications.value + 1;
       }
       final callId = ev.payload['callId']?.toString() ?? ev.payload['call_id']?.toString();
@@ -101,36 +114,68 @@ class PatientSessionCoordinator extends ChangeNotifier {
     await api.writeLocal('patient_text_scale', clamped.toStringAsFixed(2));
   }
 
+  /// BUG-046: Staged startup (Critical -> Deferred -> On-Demand) with explicit SessionInitState & retry support.
   Future<void> initAuthenticatedSession() async {
-    if (_initialized) return;
-    _initialized = true;
-    notifications.setAuthenticatedUserId(await api.currentUserId());
-    await bookingDraft.restoreDraft();
-    await PatientAlarm.requestPermissions();
+    if (_initialized || _initState == SessionInitState.loading) return;
+    _initState = SessionInitState.loading;
+    _initError = null;
+    notifyListeners();
 
-    await Future.wait([
-      catalog.load(),
-      requests.refreshAll(),
-      bookingDraft.loadBeneficiaries(),
-      bookingDraft.loadSavedPlaces(),
-      bookingDraft.loadRegions(),
-      conversations.loadConversations(),
-      finance.loadReferral(),
-      refreshUnreadNotifications(),
-      loadMarketingConsent(),
-    ]);
+    try {
+      notifications.setAuthenticatedUserId(await api.currentUserId());
+      await bookingDraft.restoreDraft();
+      unawaited(PatientAlarm.requestPermissions());
 
-    await callManager.checkActiveCalls(
-      defaultPeerName: requests.primaryActiveRequest?.nurseName ?? 'الممرض المعتمد',
-      defaultPeerRole: 'ممرض مرخص',
-    );
+      // Critical path: catalog, active/recent requests, and active calls only
+      final criticalErrors = <Object>[];
+      await Future.wait([
+        catalog.load().catchError((Object e) {
+          criticalErrors.add(e);
+        }),
+        requests.refreshAll().catchError((Object e) {
+          criticalErrors.add(e);
+        }),
+      ]);
 
-    final pending = notifications.takePendingColdStartTarget();
-    if (pending != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        onRouteTarget?.call(pending);
-      });
+      await callManager.checkActiveCalls(
+        defaultPeerName: requests.primaryActiveRequest?.nurseName ?? 'الممرض المعتمد',
+        defaultPeerRole: 'ممرض مرخص',
+      );
+
+      _initialized = true;
+      _initState = criticalErrors.isEmpty ? SessionInitState.ready : SessionInitState.partial;
+      if (criticalErrors.isNotEmpty) {
+        _initError = explainError(criticalErrors.first, fallback: 'تم التحميل الجزئي؛ اسحب للتحديث');
+      }
+      notifyListeners();
+
+      // Deferred path: background hydration without blocking initial UI interactivity
+      unawaited(Future.wait<void>([
+        bookingDraft.loadBeneficiaries().catchError((_) {}),
+        bookingDraft.loadSavedPlaces().catchError((_) {}),
+        bookingDraft.loadRegions().catchError((_) {}),
+        conversations.loadConversations().catchError((_) {}),
+        finance.loadReferral().catchError((_) {}),
+        refreshUnreadNotifications().catchError((_) {}),
+        loadMarketingConsent().catchError((_) {}),
+      ]));
+
+      final pending = notifications.takePendingColdStartTarget();
+      if (pending != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onRouteTarget?.call(pending);
+        });
+      }
+    } catch (e) {
+      _initState = SessionInitState.failed;
+      _initError = explainError(e, fallback: 'تعذر تهيئة الجلسة');
+      notifyListeners();
     }
+  }
+
+  Future<void> retryInit() async {
+    _initialized = false;
+    await initAuthenticatedSession();
   }
 
   Future<void> resyncAll() async {

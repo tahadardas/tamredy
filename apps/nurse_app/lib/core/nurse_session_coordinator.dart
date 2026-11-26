@@ -38,6 +38,11 @@ class NurseSessionCoordinator extends ChangeNotifier {
   StreamSubscription<NotificationRouteTarget>? _routeSub;
   void Function(NotificationRouteTarget target)? onRouteTarget;
   bool _initialized = false;
+  SessionInitState _initState = SessionInitState.idle;
+  String? _initError;
+
+  SessionInitState get initState => _initState;
+  String? get initError => _initError;
 
   NurseSessionCoordinator() {
     api = TamreedyApi(appType: 'NURSE_APP');
@@ -72,8 +77,16 @@ class NurseSessionCoordinator extends ChangeNotifier {
 
     OfferAlarm.coordinator = notifications;
 
+    // BUG-042: Targeted Invalidation Matrix — ignore high-frequency telemetry/WebRTC signals.
     _evSub = eventBus.stream.listen((ev) {
-      if (ev.type != 'tracking.updated') {
+      const highFreqNonNotif = {
+        'tracking.updated',
+        'call.signal',
+        'location.ack',
+        'location.rejected',
+        'pong',
+      };
+      if (!highFreqNonNotif.contains(ev.type)) {
         unreadNotifications.value = unreadNotifications.value + 1;
       }
       if (ev.type.startsWith('safety.') && guardianEnabled) {
@@ -83,6 +96,8 @@ class NurseSessionCoordinator extends ChangeNotifier {
           guardian.refreshSession();
         }
       } else if (ev.type == 'payment.paid' || ev.type == 'payment.partially_paid' || ev.type == 'payment.tip') {
+        finance.refresh();
+      } else if (ev.type == 'visit.complete') {
         finance.refresh();
       } else if (ev.type == 'call.incoming') {
         final callId = ev.payload['callId']?.toString() ?? ev.payload['call_id']?.toString();
@@ -137,42 +152,76 @@ class NurseSessionCoordinator extends ChangeNotifier {
     await api.writeLocal('nurse_text_scale', clamped.toStringAsFixed(2));
   }
 
+  /// BUG-046: Staged startup (Critical -> Deferred -> On-Demand) with explicit SessionInitState & retry support.
   Future<void> initAuthenticatedSession() async {
-    if (_initialized) return;
-    _initialized = true;
-    notifications.setAuthenticatedUserId(await api.currentUserId());
-    await OfferAlarm.requestPermissions();
+    if (_initialized || _initState == SessionInitState.loading) return;
+    _initState = SessionInitState.loading;
+    _initError = null;
+    notifyListeners();
 
-    if (guardianEnabled) {
-      await guardian.restoreSos();
-      guardian.location.sync();
+    try {
+      notifications.setAuthenticatedUserId(await api.currentUserId());
+      unawaited(OfferAlarm.requestPermissions());
+
+      if (guardianEnabled) {
+        unawaited(guardian.restoreSos().catchError((_) {}));
+        unawaited(guardian.location.sync().catchError((_) {}));
+      }
+
+      // Critical path: nurse profile + active visit + open offers / availability
+      final criticalErrors = <Object>[];
+      await Future.wait([
+        loadProfile().catchError((Object e) {
+          criticalErrors.add(e);
+        }),
+        visit.restoreActiveAssignment().catchError((Object e) {
+          criticalErrors.add(e);
+        }),
+      ]);
+
+      if (!visit.hasActiveWork) {
+        await Future.wait([
+          offers.fetchOpenOffers().catchError((_) {}),
+          availability.restoreSavedIntent().catchError((_) {}),
+        ]);
+      }
+
+      await callManager.checkActiveCalls(
+        defaultPeerName: visit.patientName ?? 'المريض',
+        defaultPeerRole: 'المريض / المستفيد',
+      );
+
+      _initialized = true;
+      _initState = criticalErrors.isEmpty ? SessionInitState.ready : SessionInitState.partial;
+      if (criticalErrors.isNotEmpty) {
+        _initError = explainError(criticalErrors.first, fallback: 'تم التحميل الجزئي؛ اسحب للتحديث');
+      }
+      notifyListeners();
+
+      // Deferred path: financial summary, open marketplace board, calendar, unread badge
+      unawaited(Future.wait<void>([
+        finance.refresh().catchError((_) {}),
+        marketplace.refreshAll().catchError((_) {}),
+        calendar.load().catchError((_) {}),
+        refreshUnreadNotifications().catchError((_) {}),
+      ]));
+
+      final pending = notifications.takePendingColdStartTarget();
+      if (pending != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          onRouteTarget?.call(pending);
+        });
+      }
+    } catch (e) {
+      _initState = SessionInitState.failed;
+      _initError = explainError(e, fallback: 'تعذر تهيئة جلسة الممرض');
+      notifyListeners();
     }
+  }
 
-    await Future.wait([
-      loadProfile(),
-      visit.restoreActiveAssignment(),
-      finance.refresh(),
-      marketplace.refreshAll(),
-      calendar.load(),
-      refreshUnreadNotifications(),
-    ]);
-
-    if (!visit.hasActiveWork) {
-      await offers.fetchOpenOffers();
-      await availability.restoreSavedIntent();
-    }
-
-    await callManager.checkActiveCalls(
-      defaultPeerName: visit.patientName ?? 'المريض',
-      defaultPeerRole: 'المريض / المستفيد',
-    );
-
-    final pending = notifications.takePendingColdStartTarget();
-    if (pending != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        onRouteTarget?.call(pending);
-      });
-    }
+  Future<void> retryInit() async {
+    _initialized = false;
+    await initAuthenticatedSession();
   }
 
   Future<void> resyncAll() async {

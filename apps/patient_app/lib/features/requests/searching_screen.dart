@@ -24,7 +24,9 @@ class SearchingScreen extends StatefulWidget {
 class _SearchingScreenState extends State<SearchingScreen> {
   Timer? _tickTimer;
   Timer? _pollTimer;
+  StreamSubscription<bool>? _connSub;
   int _elapsedSeconds = 0;
+  bool _transitioned = false;
 
   @override
   void initState() {
@@ -34,41 +36,67 @@ class _SearchingScreenState extends State<SearchingScreen> {
       if (!mounted) return;
       setState(() => _elapsedSeconds++);
     });
-    _pollTimer = Timer.periodic(const Duration(seconds: 12), (_) => _syncAndCheckRoute());
+    _syncPollingToConnection();
+    _connSub = widget.session.eventBus.connectionStateStream.listen((connected) {
+      if (!mounted) return;
+      if (connected) {
+        _pollTimer?.cancel();
+        _pollTimer = null;
+        unawaited(_syncAndCheckRoute());
+      } else {
+        _syncPollingToConnection();
+      }
+    });
     widget.session.requests.addListener(_onRequestsChanged);
+  }
+
+  void _syncPollingToConnection() {
+    if (widget.session.eventBus.isConnected || _pollTimer != null) return;
+    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (widget.session.eventBus.isConnected) {
+        _pollTimer?.cancel();
+        _pollTimer = null;
+        return;
+      }
+      unawaited(_syncAndCheckRoute());
+    });
   }
 
   @override
   void dispose() {
     _tickTimer?.cancel();
     _pollTimer?.cancel();
+    _connSub?.cancel();
     widget.session.requests.removeListener(_onRequestsChanged);
     super.dispose();
   }
 
+  /// BUG-044: Idempotent route transition guard + full handling of assigned, open, recovery, and terminal states.
   void _onRequestsChanged() {
-    if (!mounted) return;
+    if (!mounted || _transitioned) return;
     final req = widget.session.requests.requestById(widget.requestId);
     if (req == null) return;
+    Widget? destination;
     if (req.hasAssignedNurse) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => TrackingScreen(session: widget.session, requestId: req.id),
-        ),
-      );
+      destination = TrackingScreen(session: widget.session, requestId: req.id);
     } else if (req.status == 'OPEN_FOR_PROPOSALS') {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => OpenProposalsScreen(session: widget.session, requestId: req.id),
-        ),
-      );
-    } else if (req.status == 'UNFULFILLED' || req.status == 'AWAITING_RECOVERY_CHOICE') {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => RequestDetailScreen(session: widget.session, requestId: req.id),
-        ),
-      );
+      destination = OpenProposalsScreen(session: widget.session, requestId: req.id);
+    } else if (req.status == 'UNFULFILLED' ||
+        req.status == 'AWAITING_RECOVERY_CHOICE' ||
+        req.status == 'CANCELLED' ||
+        req.status == 'EXPIRED' ||
+        req.status == 'ESCALATED' ||
+        req.clinicalApprovalStatus == 'PENDING' ||
+        req.clinicalApprovalStatus == 'REJECTED') {
+      destination = RequestDetailScreen(session: widget.session, requestId: req.id);
     }
+    if (destination == null) return;
+    _transitioned = true;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: (_) => destination!),
+    );
   }
 
   Future<void> _syncAndCheckRoute() async {

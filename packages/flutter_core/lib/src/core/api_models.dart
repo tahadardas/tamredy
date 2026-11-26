@@ -9,6 +9,15 @@ enum ConnectionHealth {
   serverUnavailable,
 }
 
+/// Explicit startup initialization lifecycle (BUG-046).
+enum SessionInitState {
+  idle,
+  loading,
+  ready,
+  partial,
+  failed,
+}
+
 /// Categorized API failure reasons (Phase 1, Section 6).
 enum ApiErrorKind {
   offline,

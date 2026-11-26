@@ -26,17 +26,41 @@ class _OpenProposalsScreenState extends State<OpenProposalsScreen> {
   String? _decliningId;
   bool _extending = false;
   Timer? _fallbackTimer;
+  StreamSubscription<bool>? _connSub;
 
   @override
   void initState() {
     super.initState();
     _refresh();
-    _fallbackTimer = Timer.periodic(const Duration(seconds: 20), (_) => _refresh(silent: true));
+    _ensureFallbackTimer();
+    _connSub = widget.session.eventBus.connectionStateStream.listen((connected) {
+      if (!mounted) return;
+      if (connected) {
+        _fallbackTimer?.cancel();
+        _fallbackTimer = null;
+        unawaited(_refresh(silent: true));
+      } else {
+        _ensureFallbackTimer();
+      }
+    });
+  }
+
+  void _ensureFallbackTimer() {
+    if (widget.session.eventBus.isConnected || _fallbackTimer != null) return;
+    _fallbackTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (widget.session.eventBus.isConnected) {
+        _fallbackTimer?.cancel();
+        _fallbackTimer = null;
+        return;
+      }
+      unawaited(_refresh(silent: true));
+    });
   }
 
   @override
   void dispose() {
     _fallbackTimer?.cancel();
+    _connSub?.cancel();
     super.dispose();
   }
 
