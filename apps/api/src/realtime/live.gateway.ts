@@ -110,6 +110,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
           requestId:result.tracking.requestId,assignmentId:result.tracking.assignmentId,
           latitude:dto.latitude,longitude:dto.longitude,accuracyMeters:dto.accuracyMeters,
           capturedAt:dto.capturedAt,sequenceNumber:dto.sequenceNumber,
+          recipientRole:'PATIENT',targetApp:'PATIENT_APP',
         });
       }
       return ack;

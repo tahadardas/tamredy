@@ -51,15 +51,16 @@ export class LiveLocationService {
       if (!redisFailed && !redisAccepted) throw new ConflictException({ code: 'LOCATION_OUT_OF_ORDER' });
     }
 
+    if (redisFailed && process.env.LOCATION_POSTGRES_FALLBACK_ENABLED === 'false') {
+      throw new ServiceUnavailableException({ code: 'LIVE_LOCATION_UNAVAILABLE' });
+    }
+
     const shouldPersist = !this.geo.active || redisFailed || await this.geo.claimPersistenceWindow(context.nurseId);
     if (shouldPersist) {
       const persisted = await this.persistence.persist(context.nurseId, dto, capturedAt, receivedAt);
       if (!persisted && (!this.geo.active || redisFailed)) {
         throw new ConflictException({ code: 'LOCATION_OUT_OF_ORDER' });
       }
-    }
-    if (redisFailed && process.env.LOCATION_POSTGRES_FALLBACK_ENABLED === 'false') {
-      throw new ServiceUnavailableException({ code: 'LIVE_LOCATION_UNAVAILABLE' });
     }
 
     const tracking = await this.trackingAuthorization.recipient(context.nurseId, dto.assignmentId);

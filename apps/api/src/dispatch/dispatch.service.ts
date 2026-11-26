@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { conflict, gone, missing } from '../common/errors.js';
 import { commissionFor, computeBill, ruleFromRow } from '../pricing/pricing.js';
@@ -9,6 +9,7 @@ import { transitionRequest } from '../requests/request-lifecycle.js';
 import { AssignmentOrchestrator } from './assignment.orchestrator.js';
 import { BillingService } from '../pricing/billing.service.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
+import { LiveLocationReadService, haversineDistanceMeters } from '../live-location/live-location-read.service.js';
 
 @Injectable()
 export class DispatchService {
@@ -19,6 +20,7 @@ export class DispatchService {
     private readonly billing: BillingService,
     private readonly fees: FeesService,
     private readonly routes: RoutesService,
+    @Optional() private readonly liveLocationRead?: LiveLocationReadService,
   ) {}
 
   async offersForUser(userId: string) {
@@ -126,25 +128,34 @@ export class DispatchService {
 
   private async estimateDeparture(userId: string, assignmentId: string) {
     if (!this.routes.configured) return null;
-    const result = await this.db.query(`SELECT nl.recorded_at::text AS recorded_at,
-        ST_Y(nl.location::geometry) AS nurse_lat, ST_X(nl.location::geometry) AS nurse_lng,
+    const result = await this.db.query(`SELECT n.id AS nurse_id,
+        coalesce(r.search_max_location_seconds, 120) AS max_age_s,
+        coalesce(r.search_max_accuracy_meters, 100) AS max_acc_m,
         ST_Y(r.location::geometry) AS patient_lat, ST_X(r.location::geometry) AS patient_lng
       FROM request_assignments a
       JOIN care_requests r ON r.id=a.request_id AND r.status='ASSIGNED'
       JOIN nurses n ON n.id=a.nurse_id AND n.user_id=$1
-      JOIN nurse_locations nl ON nl.nurse_id=n.id
-      WHERE a.id=$2 AND a.status='ACTIVE'
-        AND nl.recorded_at>clock_timestamp()-coalesce(r.search_max_location_seconds,120)*interval '1 second'
-        AND nl.accuracy_m<=coalesce(r.search_max_accuracy_meters,100)`, [userId, assignmentId]);
-    const location = result.rows[0];
-    if (!location) return null;
+      WHERE a.id=$2 AND a.status IN ('ACTIVE','RESERVED')`, [userId, assignmentId]);
+    const row = result.rows[0];
+    if (!row) return null;
+    const liveLoc = this.liveLocationRead
+      ? await this.liveLocationRead.getNurseLocation(row.nurse_id).catch(() => null)
+      : null;
+    if (!liveLoc) return null;
+    const ageMs = Date.now() - liveLoc.recordedAt.getTime();
+    if (ageMs > Number(row.max_age_s) * 1000 || liveLoc.accuracyMeters > Number(row.max_acc_m)) return null;
     try {
       const route = await this.routes.compute(
-        { lat: Number(location.nurse_lat), lng: Number(location.nurse_lng) },
-        { lat: Number(location.patient_lat), lng: Number(location.patient_lng) },
+        { lat: liveLoc.latitude, lng: liveLoc.longitude },
+        { lat: Number(row.patient_lat), lng: Number(row.patient_lng) },
       );
       if (!Number.isSafeInteger(route.durationSeconds) || route.durationSeconds < 1 || route.durationSeconds > 86400) return null;
-      return { duration: route.durationSeconds, provider: this.routes.provider, recordedAt: location.recorded_at };
+      return {
+        duration: route.durationSeconds,
+        provider: this.routes.provider,
+        recordedAt: liveLoc.recordedAt.toISOString(),
+        fromRedis: liveLoc.source === 'redis',
+      };
     } catch {
       return null;
     }
@@ -188,19 +199,40 @@ export class DispatchService {
         }
       }
       if (action === 'arrive') {
-        const location = (await c.query(`SELECT nl.recorded_at,nl.accuracy_m,
-          round(ST_Distance(nl.location,r.location))::int AS distance_m
-          FROM nurse_locations nl JOIN care_requests r ON r.id=$2
-          WHERE nl.nurse_id=$1`, [nurseId,requestId])).rows[0];
-        const valid = location && new Date(location.recorded_at).getTime() > Date.now()-120_000
-          && Number(location.accuracy_m)<=150 && Number(location.distance_m)<=250;
+        const reqCoords = (await c.query(
+          `SELECT ST_Y(r.location::geometry) AS patient_lat, ST_X(r.location::geometry) AS patient_lng
+           FROM care_requests r WHERE r.id=$1`,
+          [requestId],
+        )).rows[0];
+        const liveLoc = this.liveLocationRead
+          ? await this.liveLocationRead.getNurseLocation(nurseId, c).catch(() => null)
+          : null;
+        let recordedAt: Date | null = liveLoc?.recordedAt ?? null;
+        let accuracyM: number | null = liveLoc?.accuracyMeters ?? null;
+        let distanceM: number | null = (liveLoc && reqCoords)
+          ? Math.round(haversineDistanceMeters(liveLoc.latitude, liveLoc.longitude, Number(reqCoords.patient_lat), Number(reqCoords.patient_lng)))
+          : null;
+        if (!liveLoc) {
+          const location = (await c.query(`SELECT nl.recorded_at,nl.accuracy_m,
+            round(ST_Distance(nl.location,r.location))::int AS distance_m
+            FROM nurse_locations nl JOIN care_requests r ON r.id=$2
+            WHERE nl.nurse_id=$1`, [nurseId,requestId])).rows[0];
+          if (location) {
+            recordedAt = new Date(location.recorded_at);
+            accuracyM = Number(location.accuracy_m);
+            distanceM = Number(location.distance_m);
+          }
+        }
+        const valid = recordedAt !== null && accuracyM !== null && distanceM !== null
+          && recordedAt.getTime() > Date.now() - 120_000
+          && accuracyM <= 150 && distanceM <= 250;
         if (!valid) {
           const overrideReason=options?.geofenceOverrideReason?.trim();
           if (!overrideReason || overrideReason.length<5) conflict('ARRIVAL_GEOFENCE_FAILED');
           await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
             VALUES($1,$2,'visit.arrival.geofence_override',$3::jsonb)`, [requestId,userId,JSON.stringify({
-            reason:overrideReason,distanceMeters:location?.distance_m ?? null,
-            accuracyMeters:location?.accuracy_m ?? null,recordedAt:location?.recorded_at ?? null,
+            reason:overrideReason,distanceMeters:distanceM ?? null,
+            accuracyMeters:accuracyM ?? null,recordedAt:recordedAt ? recordedAt.toISOString() : null,
           })]);
         }
       }
@@ -209,20 +241,15 @@ export class DispatchService {
         if (!eligibility.eligible) conflict(eligibility.reasons[0]?.code ?? 'NURSE_NOT_ELIGIBLE');
       }
       if (action === 'depart') {
-        await c.query(`WITH estimate AS (
-          SELECT $2::integer AS duration, $3::text AS provider FROM nurse_locations nl
-          JOIN request_assignments a ON a.nurse_id=nl.nurse_id
-          JOIN care_requests r ON r.id=a.request_id
-          WHERE a.id=$1 AND nl.recorded_at=$4::timestamptz
-            AND nl.recorded_at>statement_timestamp()-coalesce(r.search_max_location_seconds,120)*interval '1 second'
-            AND nl.accuracy_m<=coalesce(r.search_max_accuracy_meters,100)
-        ) UPDATE request_assignments SET departed_at=statement_timestamp(),
+        const duration = estimate?.duration ?? null;
+        const provider = estimate?.provider ?? null;
+        await c.query(`UPDATE request_assignments SET departed_at=statement_timestamp(),
           eta_reference_at=statement_timestamp(), eta_version=1,
-          eta_duration_seconds=(SELECT duration FROM estimate),
-          eta_provider=(SELECT provider FROM estimate),
-          expected_arrival_at=statement_timestamp()+(SELECT duration FROM estimate)*interval '1 second',
-          eta_status=CASE WHEN EXISTS (SELECT 1 FROM estimate) THEN 'AVAILABLE' ELSE 'ETA_UNAVAILABLE' END
-        WHERE id=$1`, [assignmentId, estimate?.duration ?? null, estimate?.provider ?? null, estimate?.recordedAt ?? null]);
+          eta_duration_seconds=$2::integer,
+          eta_provider=$3::text,
+          expected_arrival_at=CASE WHEN $2::integer IS NOT NULL THEN statement_timestamp()+$2::integer*interval '1 second' ELSE NULL END,
+          eta_status=CASE WHEN $2::integer IS NOT NULL THEN 'AVAILABLE' ELSE 'ETA_UNAVAILABLE' END
+        WHERE id=$1`, [assignmentId, duration, provider]);
       }
       if(action==='arrive') {
         await c.query(`INSERT INTO visits(assignment_id,arrived_at) VALUES($1,now()) ON CONFLICT(assignment_id) DO NOTHING`,[assignmentId]);

@@ -1,9 +1,10 @@
-import { Controller, Get, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Optional, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
 import { missing } from '../common/errors.js';
 import { DuesService } from '../pricing/fees.service.js';
 import { RequestRecoveryService } from '../requests/request-recovery.service.js';
+import { LiveLocationReadService } from '../live-location/live-location-read.service.js';
 
 /** Read-only nurse views used by N01, N06, N07 and N09. Amounts are computed
  *  from completed requests; no real balance exists until a licensed provider
@@ -14,6 +15,7 @@ export class NurseMeController {
     private readonly db: DbService,
     private readonly recovery: RequestRecoveryService,
     private readonly dues: DuesService,
+    @Optional() private readonly liveLocationRead?: LiveLocationReadService,
   ) {}
 
   @Get('summary') async summary(@Request() r: AuthRequest) {
@@ -90,6 +92,12 @@ export class NurseMeController {
     const row = n.rows[0];
     const nurseId = row.id;
 
+    // Load active dispatch location/heartbeat policy thresholds
+    const dispatchSettings = (await this.db.query(`SELECT value FROM app_settings WHERE key='dispatch'`)).rows[0]?.value ?? {};
+    const maxLocationAgeSeconds = Number(dispatchSettings.maxLocationAgeSeconds ?? 120);
+    const maxLocationAccuracyMeters = Number(dispatchSettings.maxLocationAccuracyMeters ?? 100);
+    const maxHeartbeatAgeSeconds = Number(dispatchSettings.maxHeartbeatAgeSeconds ?? 120);
+
     // Check credentials
     const creds = await this.db.query(`SELECT 1 FROM nurse_credentials WHERE nurse_id=$1 AND approved=true AND expires_at>now()`, [nurseId]);
     const credentialsApproved = (creds.rowCount ?? 0) > 0;
@@ -106,9 +114,21 @@ export class NurseMeController {
     const active = await this.db.query(`SELECT 1 FROM request_assignments a JOIN care_requests cr ON cr.id=a.request_id WHERE a.nurse_id=$1 AND a.status='ACTIVE' AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')`, [nurseId]);
     const hasActiveAssignment = (active.rowCount ?? 0) > 0;
 
-    const isHeartbeatFresh = row.heartbeat_age_s !== null && row.heartbeat_age_s <= 120;
-    const hasLocation = row.location_age_s !== null;
-    const isLocationFresh = hasLocation;
+    // BUG-033 / BUG-037: Read Redis-first live location when available, fallback to Postgres snapshot
+    const liveLoc = this.liveLocationRead
+      ? await this.liveLocationRead.getNurseLocation(nurseId).catch(() => null)
+      : null;
+    const effectiveLocationAgeS = liveLoc
+      ? Math.max(0, Math.floor((Date.now() - liveLoc.recordedAt.getTime()) / 1000))
+      : row.location_age_s;
+    const effectiveAccuracyM = liveLoc ? liveLoc.accuracyMeters : (row.accuracy_m !== null && row.accuracy_m !== undefined ? Number(row.accuracy_m) : null);
+
+    const isHeartbeatFresh = row.heartbeat_age_s !== null && row.heartbeat_age_s <= maxHeartbeatAgeSeconds;
+    const hasLocation = effectiveLocationAgeS !== null;
+    const isLocationFresh = hasLocation
+      && Number(effectiveLocationAgeS) <= maxLocationAgeSeconds
+      && (effectiveAccuracyM === null || Number(effectiveAccuracyM) <= maxLocationAccuracyMeters);
+    const isLocationAccurate = effectiveAccuracyM === null ? hasLocation : Number(effectiveAccuracyM) <= maxLocationAccuracyMeters;
 
     const unmet: string[] = [];
     let calculatedStatus = 'READY';
@@ -132,6 +152,12 @@ export class NurseMeController {
     } else if (!hasLocation) {
       calculatedStatus = 'LOCATION_REQUIRED';
       unmet.push('يرجى تمكين أذونات وخدمة الموقع الجغرافي');
+    } else if (Number(effectiveLocationAgeS) > maxLocationAgeSeconds) {
+      calculatedStatus = 'LOCATION_STALE';
+      unmet.push('إحداثيات الموقع قديمة؛ يرجى تحديث الموقع الجغرافي');
+    } else if (!isLocationAccurate) {
+      calculatedStatus = 'LOCATION_INACCURATE';
+      unmet.push('دقة تحديد الموقع غير كافية لاستقبال الطلبات');
     } else if (!isHeartbeatFresh) {
       calculatedStatus = 'CONNECTION_LOST';
       unmet.push('الاتصال بالخادم غير مستقر أو انقطع نبض الاتصال');
@@ -151,9 +177,12 @@ export class NurseMeController {
       settlementBlocked,
       hasActiveAssignment,
       lastHeartbeatSecondsAgo: row.heartbeat_age_s,
-      lastLocationSecondsAgo: row.location_age_s,
-      locationAccuracyMeters: row.accuracy_m,
+      lastLocationSecondsAgo: effectiveLocationAgeS,
+      locationAccuracyMeters: effectiveAccuracyM,
+      maxLocationAgeSeconds,
+      maxLocationAccuracyMeters,
       isLocationFresh,
+      isLocationAccurate,
       isHeartbeatFresh,
       unmetRequirements: unmet,
     };

@@ -9,7 +9,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
   const db = new PGlite();
   t.after(() => db.close());
   // Exercise the production SQL with distances represented as meters on one axis.
-  for (const migration of ['001_core', '005_password_accounts_push', '016_expand_dispatch_waves_limit', '018_dispatch_diagnostics_and_deliveries', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate']) {
+  for (const migration of ['001_core', '005_password_accounts_push', '006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '016_expand_dispatch_waves_limit', '018_dispatch_diagnostics_and_deliveries', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate', '059_wallet_ledger', '063_push_device_session_isolation']) {
     const sql = readFileSync(new URL(`../../../infra/db/migrations/${migration}.sql`, import.meta.url), 'utf8')
       .replace(/CREATE EXTENSION[^;]*;/g, '')
       .replace(/geography\(Point,4326\)/g, 'double precision')
@@ -21,7 +21,8 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
     CREATE TABLE IF NOT EXISTS care_request_items (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       request_id uuid NOT NULL,
-      service_id uuid NOT NULL
+      service_id uuid NOT NULL,
+      expected_minutes integer NOT NULL DEFAULT 30
     );
     CREATE TABLE IF NOT EXISTS user_blocks (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -29,6 +30,30 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
       blocked_user_id uuid NOT NULL,
       revoked_at timestamptz
     );
+    CREATE TABLE IF NOT EXISTS nurse_calendar_blocks (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      nurse_id uuid NOT NULL,
+      start_time timestamptz NOT NULL,
+      end_time timestamptz NOT NULL
+    );
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS planned_start_at timestamptz;
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS planned_end_at timestamptz;
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS travel_buffer_before_minutes integer NOT NULL DEFAULT 30;
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS travel_buffer_after_minutes integer NOT NULL DEFAULT 15;
+    CREATE FUNCTION nurse_has_schedule_conflict(uuid, timestamptz, timestamptz, uuid)
+      RETURNS boolean LANGUAGE sql STABLE AS $$
+        SELECT EXISTS (
+          SELECT 1 FROM nurse_calendar_blocks b
+          WHERE b.nurse_id=$1 AND b.start_time < $3 AND b.end_time > $2
+        ) OR EXISTS (
+          SELECT 1 FROM request_assignments a
+          WHERE a.nurse_id=$1 AND a.status IN ('RESERVED','ACTIVE')
+            AND a.planned_start_at IS NOT NULL
+            AND ($4 IS NULL OR a.request_id <> $4)
+            AND a.planned_start_at - a.travel_buffer_before_minutes * interval '1 minute' < $3
+            AND a.planned_end_at + a.travel_buffer_after_minutes * interval '1 minute' > $2
+        );
+      $$;
     CREATE FUNCTION ST_DWithin(double precision, double precision, double precision)
       RETURNS boolean LANGUAGE sql AS $$ SELECT abs($1 - $2) <= $3 $$;
     CREATE TABLE app_settings (key text PRIMARY KEY, value jsonb);
@@ -53,8 +78,14 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
         ON d.phone=u.phone_e164;
     INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved)
       SELECT id,'license',now()+interval '1 day',true FROM nurses;
+    INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit,prepaid_balance)
+      SELECT id,'RECEIVABLES',100000,0 FROM nurses;
     INSERT INTO nurse_skills(nurse_id,service_id,approved) SELECT n.id,s.id,true FROM nurses n CROSS JOIN services s;
-    INSERT INTO device_tokens(user_id,token,platform) SELECT id,phone_e164 || repeat('x',30),'android' FROM users WHERE role='NURSE';
+    INSERT INTO device_sessions(id,user_id,active_role,app_type)
+      SELECT gen_random_uuid(),id,'NURSE','NURSE_APP' FROM users WHERE role='NURSE';
+    INSERT INTO device_tokens(user_id,token,platform,session_id,role_scope,app_type)
+      SELECT u.id,u.phone_e164 || repeat('x',30),'android',ds.id,'NURSE','NURSE_APP'
+      FROM users u JOIN device_sessions ds ON ds.user_id=u.id WHERE u.role='NURSE';
   `);
   const pool = { connect: async () => ({ query: db.query.bind(db), release() {} }) };
   const offers = async () => (await db.query(`
@@ -67,7 +98,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
   `);
 
   assert.equal(await doDispatch(pool), true);
-  assert.deepEqual(await offers(), [{ nurse: 'near-a', wave: 1 }, { nurse: 'near-b', wave: 1 }, { nurse: 'stale', wave: 1 }]);
+  assert.deepEqual(await offers(), [{ nurse: 'near-a', wave: 1 }, { nurse: 'near-b', wave: 1 }]);
   assert.equal(await doDispatch(pool), false);
   const events = (await db.query("SELECT * FROM outbox_events WHERE event_type='offer.created' ORDER BY id")).rows;
   const alarms = [];
@@ -78,23 +109,23 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
       return { result: 'ok' };
     },
   }, events);
-  assert.deepEqual(delivery, { sent: 3, failed: 0, pruned: 0 });
-  assert.deepEqual(alarms.map(a => a.token).sort(), ['near-a', 'near-b', 'stale']);
-  assert.equal(new Set(alarms.map(a => a.offerId)).size, 3);
+  assert.deepEqual(delivery, { sent: 2, failed: 0, pruned: 0 });
+  assert.deepEqual(alarms.map(a => a.token).sort(), ['near-a', 'near-b']);
+  assert.equal(new Set(alarms.map(a => a.offerId)).size, 2);
 
   await nextWave();
   assert.equal(await doDispatch(pool), true);
-  assert.deepEqual(await offers(), [{ nurse: 'near-a', wave: 1 }, { nurse: 'near-b', wave: 1 }, { nurse: 'stale', wave: 1 }, { nurse: 'middle', wave: 2 }]);
+  assert.deepEqual(await offers(), [{ nurse: 'near-a', wave: 1 }, { nurse: 'near-b', wave: 1 }, { nurse: 'middle', wave: 2 }]);
   assert.deepEqual(await pushDeliverBatch(db, {}, events), { sent: 0, failed: 0, pruned: 0 });
   await nextWave();
   assert.equal(await doDispatch(pool), true);
-  assert.deepEqual(await offers(), [{ nurse: 'near-a', wave: 1 }, { nurse: 'near-b', wave: 1 }, { nurse: 'stale', wave: 1 }, { nurse: 'middle', wave: 2 }, { nurse: 'far', wave: 3 }]);
+  assert.deepEqual(await offers(), [{ nurse: 'near-a', wave: 1 }, { nurse: 'near-b', wave: 1 }, { nurse: 'middle', wave: 2 }, { nurse: 'far', wave: 3 }]);
 
   await db.exec("UPDATE care_requests SET status='ASSIGNED'; UPDATE dispatch_jobs SET next_run_at=now()-interval '1 second';");
   assert.equal(await doDispatch(pool), true);
   assert.equal((await db.query('SELECT status FROM care_requests')).rows[0].status, 'ASSIGNED');
   assert.equal((await db.query('SELECT * FROM dispatch_jobs')).rowCount, 0);
-  assert.equal((await offers()).length, 5);
+  assert.equal((await offers()).length, 4);
   const finalEvents = (await db.query("SELECT * FROM outbox_events WHERE event_type='offer.created' ORDER BY id")).rows;
   assert.deepEqual(await pushDeliverBatch(db, {}, finalEvents), { sent: 0, failed: 0, pruned: 0 });
 

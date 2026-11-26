@@ -1,7 +1,7 @@
 import { cancelRequest, cancellationClassification } from './cancellation.service.js';
 import type { CancelRequestDto } from './cancel-request.dto.js';
 import { createHash } from 'node:crypto';
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { CreateRequestDto } from '../common/dto.js';
 import { conflict, forbidden, invalid, missing } from '../common/errors.js';
@@ -13,6 +13,7 @@ import { PricingCompositionService } from '../pricing/pricing-composition.servic
 
 import { saveSchedule, validateAppointment, verifyScheduledSafety } from '../scheduling/scheduling.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
+import { LiveLocationReadService } from '../live-location/live-location-read.service.js';
 
 @Injectable()
 export class RequestsService {
@@ -22,6 +23,7 @@ export class RequestsService {
     private readonly fees: FeesService = new FeesService(),
     private readonly autos: AutoDiscountService = new AutoDiscountService(),
     private readonly pricingComposition: PricingCompositionService = new PricingCompositionService(promos, fees, autos),
+    @Optional() private readonly liveLocationRead?: LiveLocationReadService,
   ) {}
   async create(userId: string, dto: CreateRequestDto, key: string) {
     if (!key || key.length > 128) invalid('Idempotency-Key required, maximum 128 chars');
@@ -310,7 +312,9 @@ export class RequestsService {
     return this.db.transaction(client => cancelRequest(client, userId, requestId, dto));
   }
   async track(userId:string, requestId:string) {
-    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.version,cr.booking_mode,cr.clinical_approval_status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
+    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.version,cr.booking_mode,cr.clinical_approval_status,
+      cr.search_max_location_seconds,
+      ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_Y(nl.location::geometry) END AS nurse_lat,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_X(nl.location::geometry) END AS nurse_lng,
       CASE WHEN cr.status='EN_ROUTE' THEN nl.recorded_at END AS location_at
@@ -318,7 +322,19 @@ export class RequestsService {
       LEFT JOIN nurse_locations nl ON nl.nurse_id=a.nurse_id
       WHERE cr.id=$1 AND cr.requester_user_id=$2`,[requestId,userId]);
     if(!r.rowCount) missing();
-    const { nurse_id: nurseId, ...row } = r.rows[0];
+    const { nurse_id: nurseId, search_max_location_seconds: maxLocAgeSec, ...row } = r.rows[0];
+    // BUG-037: Read live coordinates Redis-first when EN_ROUTE so patient tracking is not stuck on 30s PG checkpoints.
+    if (nurseId && row.status === 'EN_ROUTE' && this.liveLocationRead) {
+      const liveLoc = await this.liveLocationRead.getNurseLocation(nurseId).catch(() => null);
+      const maxAgeMs = Number(maxLocAgeSec ?? 120) * 1000;
+      if (liveLoc && Date.now() - liveLoc.recordedAt.getTime() <= maxAgeMs) {
+        row.nurse_lat = liveLoc.latitude;
+        row.nurse_lng = liveLoc.longitude;
+        row.location_at = liveLoc.recordedAt;
+        row.location_accuracy_m = liveLoc.accuracyMeters;
+        row.location_source = liveLoc.source;
+      }
+    }
     // "Top nurse" badge shown to the patient (marketing feature, switched on/off from the dashboard).
     let badge: { badge: boolean; rating: number; reviews: number } | null = null;
     if (nurseId) {

@@ -3,6 +3,16 @@ import { Redis } from 'ioredis';
 import type { LiveLocationUpdateDto } from './location-update.dto.js';
 import type { PreviousLocation } from './location-validator.js';
 
+export interface RedisDetailedLocation {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  recordedAt: Date;
+  capturedAt: Date;
+  sequenceNumber: number;
+  source: 'redis';
+}
+
 const UPDATE_SCRIPT = `
 local hash = KEYS[1]
 local geo = KEYS[2]
@@ -65,6 +75,24 @@ export class GeoIndexService implements OnModuleDestroy {
       capturedAt: new Date(Number(value.capturedAtEpochMs)),
       sequenceNumber: Number(value.sequenceNumber),
       sessionId: value.sessionId,
+    };
+  }
+
+  async currentDetailed(nurseId: string): Promise<RedisDetailedLocation | null> {
+    if (!this.redis) return null;
+    const value = await this.redis.hgetall(`live:location:${nurseId}`);
+    if (!value.capturedAtEpochMs || !value.latitude || !value.longitude || !value.sequenceNumber) {
+      return null;
+    }
+    const capturedAt = new Date(Number(value.capturedAtEpochMs));
+    return {
+      latitude: Number(value.latitude),
+      longitude: Number(value.longitude),
+      accuracyMeters: Number(value.accuracyMeters ?? 9999),
+      recordedAt: capturedAt,
+      capturedAt,
+      sequenceNumber: Number(value.sequenceNumber),
+      source: 'redis',
     };
   }
 

@@ -30,12 +30,49 @@ async function diagnoseExclusions(c: pg.PoolClient, requestId: string, serviceId
         WHEN n.verified = false THEN 'NOT_VERIFIED'
         WHEN n.availability_intent != 'AVAILABLE' THEN 'NURSE_OFFLINE'
         WHEN n.work_status != 'AVAILABLE' THEN 'NURSE_BUSY'
-        WHEN n.last_heartbeat_at IS NULL OR n.last_heartbeat_at <= now() - interval '120 seconds' THEN 'STALE_HEARTBEAT'
+        WHEN n.last_heartbeat_at IS NULL OR n.last_heartbeat_at <= statement_timestamp() - coalesce(req.search_max_heartbeat_seconds, 120) * interval '1 second' THEN 'STALE_HEARTBEAT'
         WHEN nl.location IS NULL THEN 'NO_LOCATION'
-        WHEN NOT EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > now()) THEN 'LICENSE_NOT_APPROVED'
+        WHEN nl.recorded_at IS NULL OR nl.recorded_at <= statement_timestamp() - coalesce(req.search_max_location_seconds, 120) * interval '1 second' THEN 'LOCATION_STALE'
+        WHEN nl.accuracy_m IS NULL OR nl.accuracy_m > coalesce(req.search_max_accuracy_meters, 100) THEN 'LOCATION_INACCURATE'
+        WHEN NOT EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > statement_timestamp()) THEN 'LICENSE_NOT_APPROVED'
         WHEN NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true)
              OR EXISTS (SELECT 1 FROM care_request_items cri WHERE cri.request_id = $1 AND NOT EXISTS (SELECT 1 FROM nurse_skills ns WHERE ns.nurse_id = n.id AND ns.service_id = cri.service_id AND ns.approved = true)) THEN 'SKILL_NOT_APPROVED'
         WHEN EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id = n.id AND a.status = 'ACTIVE') THEN 'ACTIVE_ASSIGNMENT'
+        WHEN nurse_has_schedule_conflict(
+          n.id,
+          statement_timestamp(),
+          statement_timestamp() + greatest(15, coalesce((SELECT sum(cri.expected_minutes) FROM care_request_items cri WHERE cri.request_id = req.id), 30)) * interval '1 minute',
+          req.id
+        ) THEN 'SCHEDULE_CONFLICT'
+        WHEN nfa.id IS NULL THEN 'FINANCE_ACCOUNT_REQUIRED'
+        WHEN (
+          coalesce(ps.nurse_debt_limit, 0) > 0 AND greatest(coalesce((
+            SELECT sum(CASE
+              WHEN e.account_id = 'CASH_HELD_BY_NURSE:' || n.id::text THEN e.debit_amount - e.credit_amount
+              WHEN e.account_id = 'NURSE_PAYABLE:' || n.id::text THEN e.debit_amount - e.credit_amount
+              ELSE 0 END)
+            FROM financial_ledger_entries e
+            WHERE e.account_id IN ('CASH_HELD_BY_NURSE:' || n.id::text, 'NURSE_PAYABLE:' || n.id::text)
+          ), 0), 0) > ps.nurse_debt_limit
+        ) THEN 'SETTLEMENT_REQUIRED'
+        WHEN (
+          CASE
+            WHEN nfa.financial_model = 'PREPAID' THEN
+              round(req.price_amount * req.commission_bps / 10000) > greatest(0, nfa.prepaid_balance - coalesce(held.prepaid, 0))
+            ELSE
+              round(req.price_amount * req.commission_bps / 10000) > (
+                (CASE WHEN nfa.financial_model = 'RECEIVABLES' THEN 0 ELSE greatest(0, nfa.prepaid_balance - coalesce(held.prepaid, 0)) END)
+                + greatest(0, nfa.credit_limit - greatest(coalesce((
+                    SELECT sum(CASE
+                      WHEN e.account_id = 'CASH_HELD_BY_NURSE:' || n.id::text THEN e.debit_amount - e.credit_amount
+                      WHEN e.account_id = 'NURSE_PAYABLE:' || n.id::text THEN e.debit_amount - e.credit_amount
+                      ELSE 0 END)
+                    FROM financial_ledger_entries e
+                    WHERE e.account_id IN ('CASH_HELD_BY_NURSE:' || n.id::text, 'NURSE_PAYABLE:' || n.id::text)
+                  ), 0), 0) - coalesce(held.credit, 0))
+              )
+          END
+        ) THEN 'FINANCIAL_LIMIT_REACHED'
         WHEN EXISTS (SELECT 1 FROM request_offers ro WHERE ro.request_id = $1 AND ro.nurse_id = n.id) THEN 'OFFER_ALREADY_SENT'
         WHEN EXISTS (
           SELECT 1 FROM user_blocks ub
@@ -53,6 +90,12 @@ async function diagnoseExclusions(c: pg.PoolClient, requestId: string, serviceId
       END AS detail
     FROM nurses n JOIN users u ON u.id = n.user_id
     LEFT JOIN nurse_locations nl ON nl.nurse_id = n.id
+    LEFT JOIN nurse_financial_accounts nfa ON nfa.nurse_id = n.id
+    LEFT JOIN pricing_settings ps ON ps.id = 1
+    LEFT JOIN LATERAL (
+      SELECT sum(prepaid_amount) AS prepaid, sum(credit_amount) AS credit
+      FROM financial_reservations WHERE nurse_id = n.id AND status = 'HELD'
+    ) held ON nfa.id IS NOT NULL
     CROSS JOIN care_requests req
     WHERE req.id = $1
       AND (n.availability_intent = 'AVAILABLE' OR n.verified = true)
@@ -172,7 +215,13 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
         JOIN users u ON u.id = n.user_id AND u.status = 'ACTIVE'
         JOIN nurse_locations nl ON nl.nurse_id = n.id
         JOIN nurse_skills ns ON ns.nurse_id = n.id AND ns.service_id = $2 AND ns.approved = true
+        JOIN nurse_financial_accounts nfa ON nfa.nurse_id = n.id
         JOIN care_requests req ON req.id = $1
+        LEFT JOIN pricing_settings ps ON ps.id = 1
+        LEFT JOIN LATERAL (
+          SELECT sum(prepaid_amount) AS prepaid, sum(credit_amount) AS credit
+          FROM financial_reservations WHERE nurse_id = n.id AND status = 'HELD'
+        ) held ON true
         WHERE n.verified = true AND n.work_status = 'AVAILABLE' AND n.availability_intent = 'AVAILABLE'
           AND NOT EXISTS (
             SELECT 1 FROM care_request_items cri
@@ -182,14 +231,52 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
                 WHERE sk.nurse_id = n.id AND sk.service_id = cri.service_id AND sk.approved = true
               )
           )
-          AND n.last_heartbeat_at > now() - interval '120 seconds'
+          AND n.last_heartbeat_at > statement_timestamp() - coalesce(req.search_max_heartbeat_seconds, 120) * interval '1 second'
           AND nl.location IS NOT NULL
+          AND nl.recorded_at IS NOT NULL
+          AND nl.recorded_at > statement_timestamp() - coalesce(req.search_max_location_seconds, 120) * interval '1 second'
+          AND nl.accuracy_m IS NOT NULL
+          AND nl.accuracy_m <= coalesce(req.search_max_accuracy_meters, 100)
           AND EXISTS (SELECT 1 FROM nurse_credentials nc
-                     WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > now())
+                     WHERE nc.nurse_id = n.id AND nc.approved = true AND nc.expires_at > statement_timestamp())
           AND NOT EXISTS (SELECT 1 FROM request_offers existing
                          WHERE existing.request_id = req.id AND existing.nurse_id = n.id)
           AND NOT EXISTS (SELECT 1 FROM request_assignments a
                          WHERE a.nurse_id = n.id AND a.status = 'ACTIVE')
+          AND NOT nurse_has_schedule_conflict(
+            n.id,
+            statement_timestamp(),
+            statement_timestamp() + greatest(15, coalesce((SELECT sum(cri.expected_minutes) FROM care_request_items cri WHERE cri.request_id = req.id), 30)) * interval '1 minute',
+            req.id
+          )
+          AND (
+            coalesce(ps.nurse_debt_limit, 0) <= 0 OR greatest(coalesce((
+              SELECT sum(CASE
+                WHEN e.account_id = 'CASH_HELD_BY_NURSE:' || n.id::text THEN e.debit_amount - e.credit_amount
+                WHEN e.account_id = 'NURSE_PAYABLE:' || n.id::text THEN e.debit_amount - e.credit_amount
+                ELSE 0 END)
+              FROM financial_ledger_entries e
+              WHERE e.account_id IN ('CASH_HELD_BY_NURSE:' || n.id::text, 'NURSE_PAYABLE:' || n.id::text)
+            ), 0), 0) <= ps.nurse_debt_limit
+          )
+          AND (
+            CASE
+              WHEN nfa.financial_model = 'PREPAID' THEN
+                round(req.price_amount * req.commission_bps / 10000) <= greatest(0, nfa.prepaid_balance - coalesce(held.prepaid, 0))
+              ELSE
+                round(req.price_amount * req.commission_bps / 10000) <= (
+                  (CASE WHEN nfa.financial_model = 'RECEIVABLES' THEN 0 ELSE greatest(0, nfa.prepaid_balance - coalesce(held.prepaid, 0)) END)
+                  + greatest(0, nfa.credit_limit - greatest(coalesce((
+                      SELECT sum(CASE
+                        WHEN e.account_id = 'CASH_HELD_BY_NURSE:' || n.id::text THEN e.debit_amount - e.credit_amount
+                        WHEN e.account_id = 'NURSE_PAYABLE:' || n.id::text THEN e.debit_amount - e.credit_amount
+                        ELSE 0 END)
+                      FROM financial_ledger_entries e
+                      WHERE e.account_id IN ('CASH_HELD_BY_NURSE:' || n.id::text, 'NURSE_PAYABLE:' || n.id::text)
+                    ), 0), 0) - coalesce(held.credit, 0))
+                )
+            END
+          )
           ${nightPolicyEnabled() ? 'AND guardian_dispatch_denial(n.id,req.id,statement_timestamp()) IS NULL' : ''}
           AND NOT EXISTS (
             SELECT 1 FROM user_blocks ub

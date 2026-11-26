@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { AvailabilityDto } from '../common/dto.js';
 import { conflict, missing } from '../common/errors.js';
@@ -7,6 +7,7 @@ import { DuesService } from '../pricing/fees.service.js';
 import { LiveLocationService } from '../live-location/live-location.service.js';
 import { LiveLocationUpdateDto } from '../live-location/location-update.dto.js';
 import { AssignmentLocationAuthorizationService } from '../requests/assignment-location-authorization.service.js';
+import { LiveGateway } from '../realtime/live.gateway.js';
 @Injectable()
 export class NursesService {
   constructor(
@@ -14,6 +15,7 @@ export class NursesService {
     private readonly liveLocation: LiveLocationService,
     private readonly dues: DuesService = new DuesService(),
     private readonly locationAuth: AssignmentLocationAuthorizationService = new AssignmentLocationAuthorizationService(),
+    @Optional() private readonly live?: LiveGateway,
   ) {}
   async availability(userId: string, dto: AvailabilityDto) {
     return this.db.transaction(async c => {
@@ -34,7 +36,22 @@ export class NursesService {
     });
   }
   async location(userId:string,deviceSessionId:string|undefined,dto:LiveLocationUpdateDto) {
-    return this.liveLocation.ingest(userId,deviceSessionId,dto);
+    const result = await this.liveLocation.ingest(userId,deviceSessionId,dto);
+    // BUG-036: Broadcast live tracking.updated even when nurse location arrives over HTTP PUT /v1/nurse/me/location
+    if (result.tracking && this.live) {
+      await this.live.sendToUser(result.tracking.patientUserId, 'tracking.updated', {
+        requestId: result.tracking.requestId,
+        assignmentId: result.tracking.assignmentId,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        accuracyMeters: dto.accuracyMeters,
+        capturedAt: dto.capturedAt,
+        sequenceNumber: dto.sequenceNumber,
+        recipientRole: 'PATIENT',
+        targetApp: 'PATIENT_APP',
+      });
+    }
+    return result;
   }
   async heartbeat(userId:string) {
     const result=await this.db.query(`UPDATE nurses SET last_heartbeat_at=now(),updated_at=now()

@@ -13,14 +13,15 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
   await db.exec(migration('001_core').replace(/CREATE EXTENSION[^;]*;/g, '')
     .replaceAll('geography(Point,4326)', 'double precision')
     .replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
-  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate']) {
+  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate', '059_wallet_ledger']) {
     await db.exec(migration(name));
   }
   await db.exec(`
     CREATE TABLE IF NOT EXISTS care_request_items (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       request_id uuid NOT NULL,
-      service_id uuid NOT NULL
+      service_id uuid NOT NULL,
+      expected_minutes integer NOT NULL DEFAULT 30
     );
     CREATE TABLE IF NOT EXISTS user_blocks (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -28,6 +29,30 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
       blocked_user_id uuid NOT NULL,
       revoked_at timestamptz
     );
+    CREATE TABLE IF NOT EXISTS nurse_calendar_blocks (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      nurse_id uuid NOT NULL,
+      start_time timestamptz NOT NULL,
+      end_time timestamptz NOT NULL
+    );
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS planned_start_at timestamptz;
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS planned_end_at timestamptz;
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS travel_buffer_before_minutes integer NOT NULL DEFAULT 30;
+    ALTER TABLE request_assignments ADD COLUMN IF NOT EXISTS travel_buffer_after_minutes integer NOT NULL DEFAULT 15;
+    CREATE FUNCTION nurse_has_schedule_conflict(uuid, timestamptz, timestamptz, uuid)
+      RETURNS boolean LANGUAGE sql STABLE AS $$
+        SELECT EXISTS (
+          SELECT 1 FROM nurse_calendar_blocks b
+          WHERE b.nurse_id=$1 AND b.start_time < $3 AND b.end_time > $2
+        ) OR EXISTS (
+          SELECT 1 FROM request_assignments a
+          WHERE a.nurse_id=$1 AND a.status IN ('RESERVED','ACTIVE')
+            AND a.planned_start_at IS NOT NULL
+            AND ($4 IS NULL OR a.request_id <> $4)
+            AND a.planned_start_at - a.travel_buffer_before_minutes * interval '1 minute' < $3
+            AND a.planned_end_at + a.travel_buffer_after_minutes * interval '1 minute' > $2
+        );
+      $$;
     CREATE FUNCTION ST_DWithin(double precision,double precision,double precision)
     RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT abs($1-$2)<=$3 $$;
   `);
@@ -49,6 +74,8 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
       SELECT id,true,'OFFLINE','OFFLINE',now() FROM users WHERE role='NURSE';
     INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved)
       SELECT id,'test',now()+interval '1 day',true FROM nurses;
+    INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit,prepaid_balance)
+      SELECT id,'RECEIVABLES',100000,0 FROM nurses;
     INSERT INTO nurse_skills(nurse_id,service_id,approved)
       SELECT n.id,s.id,true FROM nurses n CROSS JOIN services s;
     INSERT INTO nurse_locations(nurse_id,location,accuracy_m)
