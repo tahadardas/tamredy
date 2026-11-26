@@ -1,25 +1,24 @@
 import 'package:flutter/material.dart';
 import 'design/tokens/tam_tokens.dart';
 
-/// Shared design tokens for the patient and nurse apps.
+/// Shared design tokens for the patient and nurse apps (Tamreedy Signature 3.0).
 class TamreedyColors {
-  static const navy = Color(0xFF0F172A);
-  static const deepNavy = Color(0xFF0B1220);
-  static const teal = Color(0xFF0F766E);
-  static const tealAccent = Color(0xFF0D9488);
-  static const tealAlt = Color(0xFF115E59);
+  static const navy = Color(0xFF163B45);
+  static const deepNavy = Color(0xFF0A1419);
+  static const teal = Color(0xFF007F78);
+  static const tealAccent = Color(0xFF009B92);
+  static const tealAlt = Color(0xFF005F59);
   static const secondary = Color(0xFF0EA5E9);
   static const background = Color(0xFFFFFFFF);
-  static const canvas = Color(0xFFF8FAFC);
-  static const text = Color(0xFF0F172A);
+  static const canvas = Color(0xFFF6F8FA);
+  static const text = Color(0xFF122B34);
   static const subtext = Color(0xFF64748B);
   static const border = Color(0xFFE2E8F0);
-  static const success = Color(0xFF16A34A);
-  static const warning = Color(0xFFD97706);
+  static const success = Color(0xFF15803D);
+  static const warning = Color(0xFFB45309);
   static const danger = Color(0xFFDC2626);
 
-  // Tinted surfaces used by icon boxes, chips and notices.
-  static const tealTint = Color(0xFFCCFBF1);
+  static const tealTint = Color(0xFFE0F5F1);
   static const blueTint = Color(0xFFE0F2FE);
   static const orangeTint = Color(0xFFFEF3C7);
   static const warningTint = Color(0xFFFEF3C7);
@@ -36,7 +35,7 @@ const String kFontFamily = 'NotoSansArabic';
 const String kFontPackage = 'tamreedy_core';
 
 TextStyle tamText({
-  double size = 14,
+  double size = 15,
   FontWeight weight = FontWeight.w400,
   Color color = TamreedyColors.text,
   double? height,
@@ -87,8 +86,8 @@ ThemeData _buildTheme(TamThemeColors c) {
       elevation: 0,
       centerTitle: false,
       titleTextStyle: tamText(
-        size: 18,
-        weight: FontWeight.w700,
+        size: 19,
+        weight: FontWeight.w800,
         color: c.textPrimary,
       ),
     ),

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Tamreedy Design System 2.0 — Spacing, Radii, Breakpoints, Motion, Shadows,
-/// and Semantic Light/Dark Color Tokens.
+/// Tamreedy Signature 3.0 — Modern Medical Minimalism Tokens.
 
 abstract class TamSpacing {
   static const double xxs = 2.0;
@@ -44,7 +43,6 @@ abstract class TamMotion {
   static const Curve standard = Curves.easeOutCubic;
   static const Curve emphasized = Curves.easeInOutCubicEmphasized;
 
-  /// Returns [Duration.zero] when the user has enabled Reduced Motion.
   static Duration of(BuildContext context, [Duration base = normal]) {
     if (MediaQuery.disableAnimationsOf(context)) return Duration.zero;
     return base;
@@ -109,50 +107,52 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
     required this.isDark,
   });
 
+  /// Tamreedy Signature 3.0 Light Palette
   static const light = TamThemeColors(
-    primary: Color(0xFF0F766E),
-    primaryAccent: Color(0xFF0D9488),
-    primaryDark: Color(0xFF115E59),
-    primaryTint: Color(0xFFCCFBF1),
+    primary: Color(0xFF007F78),
+    primaryAccent: Color(0xFF009B92),
+    primaryDark: Color(0xFF005F59),
+    primaryTint: Color(0xFFE0F5F1),
     secondary: Color(0xFF0EA5E9),
     secondaryTint: Color(0xFFE0F2FE),
-    background: Color(0xFFF8FAFC),
+    background: Color(0xFFF6F8FA),
     surface: Color(0xFFFFFFFF),
-    surfaceElevated: Color(0xFFF1F5F9),
-    textPrimary: Color(0xFF0F172A),
+    surfaceElevated: Color(0xFFF0F4F7),
+    textPrimary: Color(0xFF122B34),
     textSecondary: Color(0xFF64748B),
     textMuted: Color(0xFF94A3B8),
     border: Color(0xFFE2E8F0),
     borderStrong: Color(0xFFCBD5E1),
-    success: Color(0xFF16A34A),
+    success: Color(0xFF15803D),
     successTint: Color(0xFFDCFCE7),
-    warning: Color(0xFFD97706),
+    warning: Color(0xFFB45309),
     warningTint: Color(0xFFFEF3C7),
     danger: Color(0xFFDC2626),
     dangerTint: Color(0xFFFEE2E2),
     info: Color(0xFF0EA5E9),
     infoTint: Color(0xFFE0F2FE),
-    heroStart: Color(0xFF0F172A),
-    heroEnd: Color(0xFF115E59),
+    heroStart: Color(0xFF163B45),
+    heroEnd: Color(0xFF005F59),
     navBackground: Color(0xFFFFFFFF),
     isDark: false,
   );
 
+  /// Tamreedy Signature 3.0 Dark Palette
   static const dark = TamThemeColors(
     primary: Color(0xFF14B8A6),
     primaryAccent: Color(0xFF2DD4BF),
-    primaryDark: Color(0xFF0D9488),
-    primaryTint: Color(0xFF134E4A),
+    primaryDark: Color(0xFF007F78),
+    primaryTint: Color(0xFF0E3D3A),
     secondary: Color(0xFF38BDF8),
     secondaryTint: Color(0xFF0C4A6E),
-    background: Color(0xFF0B1220),
-    surface: Color(0xFF111B2E),
-    surfaceElevated: Color(0xFF18253D),
+    background: Color(0xFF0A1419),
+    surface: Color(0xFF112027),
+    surfaceElevated: Color(0xFF172B35),
     textPrimary: Color(0xFFF1F5F9),
     textSecondary: Color(0xFF94A3B8),
     textMuted: Color(0xFF64748B),
-    border: Color(0xFF1E293B),
-    borderStrong: Color(0xFF334155),
+    border: Color(0xFF1E333E),
+    borderStrong: Color(0xFF2D4856),
     success: Color(0xFF22C55E),
     successTint: Color(0xFF14532D),
     warning: Color(0xFFF59E0B),
@@ -161,9 +161,9 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
     dangerTint: Color(0xFF7F1D1D),
     info: Color(0xFF38BDF8),
     infoTint: Color(0xFF0C4A6E),
-    heroStart: Color(0xFF0F172A),
-    heroEnd: Color(0xFF134E4A),
-    navBackground: Color(0xFF111B2E),
+    heroStart: Color(0xFF0F2830),
+    heroEnd: Color(0xFF005F59),
+    navBackground: Color(0xFF112027),
     isDark: true,
   );
 
@@ -177,13 +177,13 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
         ]
       : [
           BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.04),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: const Color(0xFF122B34).withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
           ),
           BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.02),
-            blurRadius: 4,
+            color: const Color(0xFF122B34).withValues(alpha: 0.02),
+            blurRadius: 3,
             offset: const Offset(0, 1),
           ),
         ];
@@ -191,20 +191,20 @@ class TamThemeColors extends ThemeExtension<TamThemeColors> {
   List<BoxShadow> get elevatedShadow => isDark
       ? [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.40),
+            color: Colors.black.withValues(alpha: 0.42),
             blurRadius: 24,
             offset: const Offset(0, 10),
           ),
         ]
       : [
           BoxShadow(
-            color: primary.withValues(alpha: 0.14),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
+            color: primary.withValues(alpha: 0.16),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
           BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.05),
-            blurRadius: 8,
+            color: const Color(0xFF122B34).withValues(alpha: 0.05),
+            blurRadius: 6,
             offset: const Offset(0, 2),
           ),
         ];

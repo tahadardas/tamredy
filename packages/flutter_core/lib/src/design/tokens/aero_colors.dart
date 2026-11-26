@@ -1,42 +1,47 @@
 import 'package:flutter/material.dart';
 
-/// Tamreedy Design System 2.0 (Aero Evolution) — Legacy static color aliases.
-/// Prefer `context.tamColors` for theme-aware Light/Dark semantic colors.
-abstract class AeroColors {
-  // Brand Anchors (Medical Premium 2.0)
-  static const Color primaryNavy = Color(0xFF0F172A);
-  static const Color primary = Color(0xFF0F766E);
-  static const Color primaryDark = Color(0xFF115E59);
-  static const Color accentTeal = Color(0xFF0D9488);
-  static const Color secondarySky = Color(0xFF0EA5E9);
-  static const Color deepNavyOffer = Color(0xFF0B1220);
+/// Unified color tokens aligned with Tamreedy Signature 3.0.
+class AeroColors {
+  static const Color primaryNavy = Color(0xFF163B45);
+  static const Color deepNavy = Color(0xFF0A1419);
+  static const Color accentTeal = Color(0xFF007F78);
+  static const Color accentTealDark = Color(0xFF005F59);
+  static const Color accentTealLight = Color(0xFF009B92);
+  static const Color secondary = Color(0xFF0EA5E9);
 
-  // Surfaces & Canvas
-  static const Color lightCanvas = Color(0xFFF8FAFC);
-  static const Color aeroTint = Color(0xFFCCFBF1);
-  static const Color aeroTintLight = Color(0xFFF0FDFA);
-  static const Color surfaceWhite = Colors.white;
+  static const Color lightCanvas = Color(0xFFF6F8FA);
+  static const Color surfaceWhite = Color(0xFFFFFFFF);
+  static const Color aeroTint = Color(0xFFE0F5F1);
+  static const Color aeroTintLight = Color(0xFFF0FAF8);
 
-  // Frosted Glass Tints (restrained for calm healthcare UI)
-  static final Color glassLight = Colors.white.withValues(alpha: 0.94);
-  static final Color glassElevated = const Color(0xFFF1F5F9).withValues(alpha: 0.96);
-  static final Color glassTealTint = const Color(0xFF0D9488).withValues(alpha: 0.08);
-  static final Color glassNavyTint = const Color(0xFF0F172A).withValues(alpha: 0.05);
-
-  // Borders & Glows
-  static final Color borderLight = const Color(0xFFE2E8F0);
-  static final Color borderGlow = const Color(0xFF0D9488).withValues(alpha: 0.38);
-  static final Color borderCard = const Color(0xFFE2E8F0);
-  static const Color borderSubtle = Color(0xFFCBD5E1);
-
-  // Typography
-  static const Color textPrimary = Color(0xFF0F172A);
+  static const Color textPrimary = Color(0xFF122B34);
   static const Color textSecondary = Color(0xFF64748B);
   static const Color textMuted = Color(0xFF94A3B8);
 
-  // Semantic
-  static const Color success = Color(0xFF16A34A);
+  static const Color success = Color(0xFF15803D);
+  static const Color successLight = Color(0xFFDCFCE7);
+  static const Color warning = Color(0xFFB45309);
+  static const Color warningLight = Color(0xFFFEF3C7);
   static const Color danger = Color(0xFFDC2626);
-  static const Color warning = Color(0xFFD97706);
+  static const Color dangerLight = Color(0xFFFEE2E2);
   static const Color info = Color(0xFF0EA5E9);
+  static const Color infoLight = Color(0xFFE0F2FE);
+
+  static const Color borderLight = Color(0xFFE2E8F0);
+  static const Color borderSubtle = Color(0xFFCBD5E1);
+  static const Color glassLight = Color(0xCCFFFFFF);
+  static const Color glassBorder = Color(0xB3FFFFFF);
+  static const Color glassShadow = Color(0x14122B34);
+
+  static const LinearGradient primaryGradient = LinearGradient(
+    colors: [Color(0xFF007F78), Color(0xFF005F59)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const LinearGradient navyGradient = LinearGradient(
+    colors: [Color(0xFF163B45), Color(0xFF005F59)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 }

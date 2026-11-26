@@ -4,6 +4,9 @@ import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
+import 'core/api_models.dart';
+import 'errors.dart';
 
 /// Demo mode runs the apps on built-in sample data (no backend needed).
 /// Defaults to FALSE. Must only be enabled explicitly in development with `--dart-define=DEMO=true`.
@@ -34,9 +37,9 @@ final AppEnvironment kAppEnvironment = resolveEnvironment();
 String defaultBaseUrlForEnv(AppEnvironment env) {
   switch (env) {
     case AppEnvironment.production:
-      return 'https://tamredy.dardus.com.sy';
+      return 'https://tamredy.dardus.com.sy/api';
     case AppEnvironment.staging:
-      return 'https://staging-api.tamreedy.com';
+      return 'http://85.215.243.237:18300';
     case AppEnvironment.dev:
       if (kIsWeb) return 'http://localhost:3000';
       return defaultTargetPlatform == TargetPlatform.android
@@ -46,15 +49,28 @@ String defaultBaseUrlForEnv(AppEnvironment env) {
 }
 
 /// Interim login is phone + password (accounts are created by an admin).
-/// Switch to `--dart-define=AUTH_MODE=otp` once an SMS gateway exists.
 const String kAuthMode = String.fromEnvironment(
   'AUTH_MODE',
   defaultValue: 'password',
 );
 
-/// Centralized API client for all Tamreedy mobile apps.
+/// Centralized API client for all Tamreedy mobile apps (Tamreedy 3.0).
+/// Features:
+/// - Shared HTTP Client with per-operation timeouts
+/// - GET in-flight request deduplication
+/// - Request cancellation support via CancelToken
+/// - Singleflight auth token refresh
+/// - End-to-end correlation IDs
+/// - Typed ApiResult<T> & ConnectionHealth tracking
+/// - Safe idempotency key helpers (no blind retry of financial/booking mutations)
 class TamreedyApi {
   static const String _customBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
+  static const _uuid = Uuid();
+
+  /// Identifies whether this client instance is running in PATIENT_APP or NURSE_APP.
+  final String appType;
+
+  TamreedyApi({this.appType = 'PATIENT_APP'});
 
   static String get baseUrl {
     String url = _customBaseUrl.isNotEmpty ? _customBaseUrl : defaultBaseUrlForEnv(kAppEnvironment);
@@ -77,33 +93,68 @@ class TamreedyApi {
     return url;
   }
 
+  /// Resolves the Socket.IO `/live` namespace URL using only scheme+host+port,
+  /// stripping any REST path prefix (such as `/api` in production Nginx/Plesk proxy).
+  static String get socketNamespaceUrl {
+    final uri = Uri.parse(baseUrl);
+    final portPart = uri.hasPort ? ':${uri.port}' : '';
+    return '${uri.scheme}://${uri.host}$portPart/live';
+  }
+
   final _storage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      resetOnError: false,
-    ),
+    aOptions: AndroidOptions(resetOnError: false),
   );
   final _random = Random();
+
+  /// Tracks live connection health across HTTP & Realtime layers.
+  final ValueNotifier<ConnectionHealth> connectionHealth =
+      ValueNotifier<ConnectionHealth>(ConnectionHealth.online);
 
   /// Single Flight completer to prevent multiple concurrent refresh operations
   Completer<bool>? _refreshCompleter;
 
+  /// Coalesces identical concurrent GET requests to prevent duplicate API bursts.
+  final Map<String, Future<dynamic>> _inFlightGets = {};
+
   late final Dio dio = _createDio();
 
+  String newIdempotencyKey() => _uuid.v4();
+
+  void markReconnecting() {
+    if (connectionHealth.value != ConnectionHealth.reconnecting) {
+      connectionHealth.value = ConnectionHealth.reconnecting;
+    }
+  }
+
+  void markOnline() {
+    if (connectionHealth.value != ConnectionHealth.online) {
+      connectionHealth.value = ConnectionHealth.online;
+    }
+  }
+
+  void markStale() {
+    if (connectionHealth.value == ConnectionHealth.online) {
+      connectionHealth.value = ConnectionHealth.staleData;
+    }
+  }
+
   Dio _createDio() {
-    // Safety check: Prevent running production build with DEMO=true
     if (kAppEnvironment == AppEnvironment.production && kDemoMode) {
       throw StateError('SECURITY ALERT: Running Production mode with DEMO=true is strictly prohibited!');
     }
 
+    final defaultPolicy = RequestTimeoutPolicy.forClass(ApiRequestClass.read);
     final client = Dio(
       BaseOptions(
         baseUrl: baseUrl,
-        connectTimeout: const Duration(seconds: 20),
-        receiveTimeout: const Duration(seconds: 30),
+        connectTimeout: defaultPolicy.connectTimeout,
+        receiveTimeout: defaultPolicy.receiveTimeout,
+        sendTimeout: defaultPolicy.sendTimeout,
         headers: {
           'Accept': 'application/json',
           'X-Client-Platform': defaultTargetPlatform.name,
           'X-Client-Env': kAppEnvironment.name,
+          'X-Client-App': appType,
         },
       ),
     );
@@ -111,11 +162,10 @@ class TamreedyApi {
     client.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // Generate unique correlation ID for end-to-end tracing
-          final traceId = 'tam-${DateTime.now().millisecondsSinceEpoch}-${_random.nextInt(999999).toString().padLeft(6, '0')}';
+          final traceId =
+              'tam-${DateTime.now().millisecondsSinceEpoch}-${_random.nextInt(999999).toString().padLeft(6, '0')}';
           options.headers['X-Correlation-Id'] = traceId;
 
-          // Attach JWT access token if available
           final jwt = await _storage.read(key: 'access_token');
           if (jwt != null && !options.headers.containsKey('Authorization')) {
             options.headers['Authorization'] = 'Bearer $jwt';
@@ -129,6 +179,7 @@ class TamreedyApi {
           handler.next(options);
         },
         onResponse: (response, handler) {
+          markOnline();
           if (kDebugMode) {
             final traceId = response.requestOptions.headers['X-Correlation-Id'];
             debugPrint('[HTTP] <- ${response.statusCode} ${response.requestOptions.path} [trace:$traceId]');
@@ -141,7 +192,16 @@ class TamreedyApi {
             debugPrint('[HTTP ERROR] ${e.response?.statusCode ?? 'NET'} ${e.requestOptions.path} [trace:$traceId]: ${e.message}');
           }
 
-          // Single-flight silent refresh on 401 Unauthorized (exclude only non-recoverable auth endpoints)
+          if (e.type == DioExceptionType.connectionError) {
+            connectionHealth.value = ConnectionHealth.offline;
+          } else if (e.type == DioExceptionType.connectionTimeout ||
+              e.type == DioExceptionType.receiveTimeout ||
+              e.type == DioExceptionType.sendTimeout) {
+            connectionHealth.value = ConnectionHealth.reconnecting;
+          } else if ((e.response?.statusCode ?? 0) >= 502) {
+            connectionHealth.value = ConnectionHealth.serverUnavailable;
+          }
+
           final path = e.requestOptions.path;
           final isUnrecoverableAuthRoute = path.endsWith('/refresh') ||
               path.endsWith('/login') ||
@@ -153,7 +213,6 @@ class TamreedyApi {
             final refreshed = await _refreshSingleFlight();
             if (refreshed) {
               final opts = e.requestOptions..extra['retried'] = true;
-              // Update Authorization header with the newly acquired token
               final newJwt = await _storage.read(key: 'access_token');
               if (newJwt != null) {
                 opts.headers['Authorization'] = 'Bearer $newJwt';
@@ -174,7 +233,8 @@ class TamreedyApi {
   /// Checks whether the server is reachable and responsive before proceeding.
   Future<bool> checkServerHealth() async {
     try {
-      final r = await dio.get('/health', options: Options(sendTimeout: const Duration(seconds: 5), receiveTimeout: const Duration(seconds: 5)));
+      final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.health);
+      final r = await dio.get('/health', options: policy.toOptions());
       return r.statusCode == 200;
     } catch (_) {
       return false;
@@ -208,7 +268,6 @@ class TamreedyApi {
     return next;
   }
 
-  /// Persistent hardware-anchored device identifier stored safely in secure storage.
   Future<String> getDeviceId() async {
     var id = await _storage.read(key: 'device_id');
     if (id == null || id.isEmpty) {
@@ -218,10 +277,8 @@ class TamreedyApi {
     return id;
   }
 
-  /// Rotates the refresh token now (used by the realtime channel on reconnect).
   Future<bool> refreshNow() => _refreshSingleFlight();
 
-  /// True right after a login with the initial password; the app must show the change-password screen.
   bool mustChangePassword = false;
 
   Future<bool> hasSession() async =>
@@ -230,17 +287,10 @@ class TamreedyApi {
   Future<String?> getCachedRole() => _storage.read(key: 'cached_user_role');
 
   Future<void> _saveTokens(Map<String, dynamic> t) async {
-    await _storage.write(
-      key: 'access_token',
-      value: t['accessToken'] as String,
-    );
-    await _storage.write(
-      key: 'refresh_token',
-      value: t['refreshToken'] as String,
-    );
+    await _storage.write(key: 'access_token', value: t['accessToken'] as String);
+    await _storage.write(key: 'refresh_token', value: t['refreshToken'] as String);
   }
 
-  /// Single Flight Refresh: prevents multiple simultaneous refresh calls when parallel requests receive 401.
   Future<bool> _refreshSingleFlight() async {
     if (_refreshCompleter != null) {
       return _refreshCompleter!.future;
@@ -259,16 +309,20 @@ class TamreedyApi {
       ).post('/v1/auth/refresh', data: {'refreshToken': rt, 'deviceId': devId});
 
       await _saveTokens(Map<String, dynamic>.from(r.data as Map));
+      markOnline();
       _refreshCompleter!.complete(true);
       return true;
     } catch (e) {
-      // Security: Only clear session if server explicitly revoked or invalidated the session
-      // NEVER clear local tokens on network timeouts, socket exceptions, 5xx server errors, or offline state!
       if (e is DioException && e.response != null) {
         final code = e.response!.statusCode;
         final data = e.response!.data;
         final err = data is Map ? (data['code'] ?? data['message']) : null;
-        if (code == 401 && (err == 'REFRESH_INVALID' || err == 'REFRESH_EXPIRED' || err == 'REFRESH_REUSED' || err == 'SESSION_REVOKED' || err == 'ACCOUNT_INACTIVE')) {
+        if (code == 401 &&
+            (err == 'REFRESH_INVALID' ||
+                err == 'REFRESH_EXPIRED' ||
+                err == 'REFRESH_REUSED' ||
+                err == 'SESSION_REVOKED' ||
+                err == 'ACCOUNT_INACTIVE')) {
           await _storage.delete(key: 'access_token');
           await _storage.delete(key: 'refresh_token');
           await _storage.delete(key: 'cached_user_role');
@@ -281,7 +335,6 @@ class TamreedyApi {
     }
   }
 
-  /// Interim password login; returns the account role.
   Future<String> login(String phone, String password) async {
     final devId = await getDeviceId();
     final t = await post('/v1/auth/login', {
@@ -297,7 +350,6 @@ class TamreedyApi {
     return role;
   }
 
-  /// Replaces the password (ends other sessions) and keeps this device signed in.
   Future<void> changePassword(String current, String next) async {
     final t = await post('/v1/auth/change-password', {
       'currentPassword': current,
@@ -307,11 +359,9 @@ class TamreedyApi {
     mustChangePassword = false;
   }
 
-  /// Step 1 of login: the server sends an OTP by SMS.
   Future<void> requestOtp(String phone) async =>
       post('/v1/auth/otp/request', {'phone': phone});
 
-  /// Step 2: exchange the code for tokens; returns the account role.
   Future<String> verifyOtp(String phone, String code) async {
     final devId = await getDeviceId();
     final t = await post('/v1/auth/otp/verify', {
@@ -326,12 +376,14 @@ class TamreedyApi {
     return role;
   }
 
-  /// Patient self-registration. Signs the new account in and returns its role.
   Future<String> register(String phone, String name, String password) async {
+    final devId = await getDeviceId();
     final t = await post('/v1/auth/register', {
       'phone': phone,
       'displayName': name,
       'password': password,
+      'deviceId': devId,
+      'platform': defaultTargetPlatform.name,
     });
     await _saveTokens(t);
     final role = (t['role'] as String?) ?? 'PATIENT';
@@ -339,7 +391,6 @@ class TamreedyApi {
     return role;
   }
 
-  /// Nurse join application (no account is created until staff approve it).
   Future<void> applyAsNurse({
     required String phone,
     required String name,
@@ -355,6 +406,7 @@ class TamreedyApi {
     required List<int> docBytes,
     required String docName,
   }) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.upload);
     await dio.post(
       '/v1/auth/nurse-applications',
       data: FormData.fromMap({
@@ -371,11 +423,10 @@ class TamreedyApi {
         'idPhoto': MultipartFile.fromBytes(idBytes, filename: idName),
         'document': MultipartFile.fromBytes(docBytes, filename: docName),
       }),
-      options: Options(sendTimeout: const Duration(seconds: 90)),
+      options: policy.toOptions(),
     );
   }
 
-  /// Nurse onboarding: uploads a licence/ID/degree/photo (stored encrypted by the server).
   Future<void> uploadNurseDocument({
     required List<int> bytes,
     required String filename,
@@ -383,6 +434,7 @@ class TamreedyApi {
     String? licenseRef,
     String? expiresAt,
   }) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.upload);
     await dio.post(
       '/v1/nurse/me/documents',
       data: FormData.fromMap({
@@ -391,13 +443,16 @@ class TamreedyApi {
         if (expiresAt != null) 'expiresAt': expiresAt,
         'file': MultipartFile.fromBytes(bytes, filename: filename),
       }),
-      options: Options(sendTimeout: const Duration(seconds: 60)),
+      options: policy.toOptions(),
     );
   }
 
   Future<void> logout() async {
     final rt = await _storage.read(key: 'refresh_token');
     final devId = await getDeviceId();
+    try {
+      await dio.delete('/v1/devices', data: {'deviceId': devId, 'appType': appType});
+    } catch (_) {}
     if (rt != null) {
       try {
         await post('/v1/auth/logout', {'refreshToken': rt, 'deviceId': devId});
@@ -414,51 +469,151 @@ class TamreedyApi {
 
   Future<void> signOut() => logout();
 
-  Future<Map<String, dynamic>> getMap(String path) async =>
-      Map<String, dynamic>.from((await dio.get(path)).data as Map);
+  /// Deduplicated GET with optional cancellation token and controlled retry on transient read failures.
+  Future<dynamic> _getRaw(
+    String path, {
+    CancelToken? cancelToken,
+    bool deduplicate = true,
+  }) async {
+    if (cancelToken != null || !deduplicate) {
+      return _executeGetWithRetry(path, cancelToken: cancelToken);
+    }
+    final existing = _inFlightGets[path];
+    if (existing != null) return existing;
 
-  Future<List<dynamic>> getList(String path) async =>
-      List<dynamic>.from((await dio.get(path)).data as List);
+    final future = _executeGetWithRetry(path).whenComplete(() {
+      _inFlightGets.remove(path);
+    });
+    _inFlightGets[path] = future;
+    return future;
+  }
+
+  Future<dynamic> _executeGetWithRetry(String path, {CancelToken? cancelToken}) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.read);
+    try {
+      final res = await dio.get(path, cancelToken: cancelToken, options: policy.toOptions());
+      return res.data;
+    } on DioException catch (e) {
+      // Safe retry ONCE for read-only GET requests on timeout or 502/503/504
+      final status = e.response?.statusCode ?? 0;
+      final retryable = e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          status == 502 ||
+          status == 503 ||
+          status == 504;
+      if (retryable && !(cancelToken?.isCancelled ?? false)) {
+        await Future<void>.delayed(Duration(milliseconds: 250 + _random.nextInt(300)));
+        final res = await dio.get(path, cancelToken: cancelToken, options: policy.toOptions());
+        return res.data;
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> getMap(String path, {CancelToken? cancelToken}) async =>
+      Map<String, dynamic>.from((await _getRaw(path, cancelToken: cancelToken)) as Map);
+
+  Future<List<dynamic>> getList(String path, {CancelToken? cancelToken}) async =>
+      List<dynamic>.from((await _getRaw(path, cancelToken: cancelToken)) as List);
+
+  Future<ApiResult<Map<String, dynamic>>> safeGetMap(String path, {CancelToken? cancelToken}) async {
+    try {
+      return ApiOk(await getMap(path, cancelToken: cancelToken));
+    } catch (e) {
+      return ApiErr(mapApiFailure(e));
+    }
+  }
+
+  Future<ApiResult<List<dynamic>>> safeGetList(String path, {CancelToken? cancelToken}) async {
+    try {
+      return ApiOk(await getList(path, cancelToken: cancelToken));
+    } catch (e) {
+      return ApiErr(mapApiFailure(e));
+    }
+  }
 
   Future<Map<String, dynamic>> post(
     String path, [
     Map<String, dynamic>? body,
     Map<String, String>? headers,
-  ]) async => Map<String, dynamic>.from(
-    (await dio.post(
-          path,
-          data: body,
-          options: Options(headers: headers),
-        )).data
-        as Map,
-  );
+    CancelToken? cancelToken,
+  ]) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.mutation);
+    final res = await dio.post(
+      path,
+      data: body,
+      cancelToken: cancelToken,
+      options: policy.toOptions(base: Options(headers: headers)),
+    );
+    if (res.data is Map) {
+      return Map<String, dynamic>.from(res.data as Map);
+    }
+    return const {};
+  }
+
+  Future<ApiResult<Map<String, dynamic>>> safePost(
+    String path, [
+    Map<String, dynamic>? body,
+    Map<String, String>? headers,
+    CancelToken? cancelToken,
+  ]) async {
+    try {
+      return ApiOk(await post(path, body, headers, cancelToken));
+    } catch (e) {
+      return ApiErr(mapApiFailure(e));
+    }
+  }
 
   Future<Map<String, dynamic>> put(
     String path,
-    Map<String, dynamic> body,
-  ) async =>
-      Map<String, dynamic>.from((await dio.put(path, data: body)).data as Map);
+    Map<String, dynamic> body, {
+    CancelToken? cancelToken,
+  }) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.mutation);
+    final res = await dio.put(
+      path,
+      data: body,
+      cancelToken: cancelToken,
+      options: policy.toOptions(),
+    );
+    if (res.data is Map) {
+      return Map<String, dynamic>.from(res.data as Map);
+    }
+    return const {};
+  }
 
   Future<Map<String, dynamic>> delete(
     String path, [
     Map<String, dynamic>? body,
-  ]) async =>
-      Map<String, dynamic>.from((await dio.delete(path, data: body)).data as Map);
+    CancelToken? cancelToken,
+  ]) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.mutation);
+    final res = await dio.delete(
+      path,
+      data: body,
+      cancelToken: cancelToken,
+      options: policy.toOptions(),
+    );
+    if (res.data is Map) {
+      return Map<String, dynamic>.from(res.data as Map);
+    }
+    return const {};
+  }
 
   // =========================================================================
   // Smart Booking & Open Marketplace Endpoints
   // =========================================================================
 
-  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm}) async {
-    final res = await dio.get(
+  Future<List<dynamic>> getMarketplaceRequests({double? maxDistanceKm, CancelToken? cancelToken}) async {
+    final res = await _getRaw(
       maxDistanceKm != null
           ? '/v1/marketplace/requests?maxDistanceKm=$maxDistanceKm'
           : '/v1/marketplace/requests',
+      cancelToken: cancelToken,
     );
-    final data = res.data;
-    if (data is List) return List<dynamic>.from(data);
-    if (data is Map) {
-      final list = data['requests'] ?? data['items'];
+    if (res is List) return List<dynamic>.from(res);
+    if (res is Map) {
+      final list = res['requests'] ?? res['items'];
       if (list is List) return List<dynamic>.from(list);
     }
     return const [];
@@ -470,12 +625,14 @@ class TamreedyApi {
     List<int> bytes,
     String filename,
   ) async {
+    final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.upload);
     await dio.post(
       '/v1/requests/$requestId/clinical-evidence',
       data: FormData.fromMap({
         'evidenceType': type,
         'file': MultipartFile.fromBytes(bytes, filename: filename),
       }),
+      options: policy.toOptions(),
     );
   }
 
@@ -505,7 +662,11 @@ class TamreedyApi {
       getList('/v1/requests/$requestId/proposals');
 
   Future<Map<String, dynamic>> acceptProposal(String requestId, String proposalId) =>
-      post('/v1/requests/$requestId/proposals/$proposalId/accept');
+      post(
+        '/v1/requests/$requestId/proposals/$proposalId/accept',
+        {},
+        {'Idempotency-Key': newIdempotencyKey()},
+      );
 
   Future<Map<String, dynamic>> declineProposal(String requestId, String proposalId, {String? reason}) =>
       post('/v1/requests/$requestId/proposals/$proposalId/decline', {

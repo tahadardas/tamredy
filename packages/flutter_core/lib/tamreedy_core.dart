@@ -2,6 +2,10 @@ library tamreedy_core;
 
 export 'src/analytics.dart';
 export 'src/api.dart';
+export 'src/core/api_models.dart';
+export 'src/core/call_manager.dart';
+export 'src/core/notification_coordinator.dart';
+export 'src/core/realtime_bus.dart';
 export 'src/errors.dart';
 export 'src/change_password_screen.dart';
 export 'src/firebase_boot.dart';
@@ -19,5 +23,6 @@ export 'src/theme.dart';
 export 'src/widgets.dart';
 export 'src/design/aero_design.dart';
 export 'src/design/widgets/tam_call_screen.dart';
+export 'src/design/widgets/tam_connection_banner.dart';
 export 'src/trusted_contacts_screen.dart';
 export 'src/emergency_directory_screen.dart';

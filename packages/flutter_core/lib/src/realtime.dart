@@ -1,10 +1,12 @@
 import 'dart:async';
-import 'firebase_boot.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'api.dart';
+import 'core/notification_coordinator.dart';
+import 'core/realtime_bus.dart';
+import 'firebase_boot.dart';
 
 /// FCM is enabled by default when google-services.json / GoogleService-Info.plist is present.
 const bool kFcmEnabled = bool.fromEnvironment(
@@ -12,7 +14,7 @@ const bool kFcmEnabled = bool.fromEnvironment(
   defaultValue: true,
 );
 
-/// Events the server emits on `/live` (payloads only carry ids; details come from REST).
+/// Complete set of events emitted by `/live` Gateway.
 const liveEvents = [
   'catalog.changed',
   'offer.created',
@@ -25,6 +27,12 @@ const liveEvents = [
   'visit.interrupted',
   'request.unfulfilled',
   'request.schedule_released',
+  'marketplace.request.published',
+  'marketplace.request.updated',
+  'marketplace.proposal.created',
+  'marketplace.proposal.accepted',
+  'marketplace.proposal.withdrawn',
+  'marketplace.recovery.alert',
   'safety.event_changed',
   'safety.checkin_due',
   'safety.checkin_reminder',
@@ -32,11 +40,15 @@ const liveEvents = [
   'visit.arrive',
   'visit.start',
   'visit.complete',
+  'visit.departure_delayed',
   'payment.updated',
   'payment.partially_paid',
+  'payment.partial',
   'payment.paid',
   'payment.tip',
   'tracking.updated',
+  'chat.message',
+  'chat.read',
   'call.incoming',
   'call.ringing',
   'call.accepted',
@@ -48,15 +60,20 @@ const liveEvents = [
   'call.ended',
   'call.missed',
   'call.failed',
+  'NOTIFICATION_RECEIVED',
 ];
 
-/// Best-effort realtime channel. REST is the source of truth: every (re)connect,
-/// app resume and push triggers [onResync], so missed events never leave stale UI.
+/// Primary WebSocket channel for Tamreedy 3.0.
+/// Routes deduplicated events to [RealtimeEventBus] and [NotificationCoordinator]
+/// WITHOUT triggering blanket REST resyncs on every event or GPS tick.
 class LiveChannel {
   final TamreedyApi api;
+  final RealtimeEventBus? eventBus;
+  final NotificationCoordinator? coordinator;
   final VoidCallback onResync;
-  final void Function(String type) onEvent;
+  final void Function(String type)? onEvent;
   final void Function(String type, Map<String, dynamic> payload)? onEventData;
+
   io.Socket? _socket;
   bool _refreshing = false;
   bool connected = false;
@@ -67,47 +84,83 @@ class LiveChannel {
     required this.onResync,
     required this.onEvent,
     this.onEventData,
+    this.eventBus,
+    this.coordinator,
   });
+
+  io.Socket? get rawSocket => _socket;
 
   Future<void> start() async {
     if (_socket != null) return;
     final token = await api.accessToken();
     if (token == null) return;
     final s = io.io(
-      '${TamreedyApi.baseUrl}/live',
+      TamreedyApi.socketNamespaceUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
           .setAuth({'token': token})
           .enableReconnection()
           .setReconnectionDelay(1000)
           .setReconnectionDelayMax(15000)
+          .setRandomizationFactor(0.25)
           .disableAutoConnect()
           .build(),
     );
     _socket = s;
-    s.onConnect((_) => connected = true);
-    // Server accepts the socket, then tells us to reconcile over REST.
+    s.onConnect((_) {
+      connected = true;
+      api.markOnline();
+    });
+    // Reconcile over REST only on socket (re)connection handshake.
     s.on('connected', (_) => onResync());
+
     for (final e in liveEvents) {
       s.on(e, (data) {
-        if (data is Map) {
-          final eventId = data['eventId'];
-          if (eventId is String) {
-            if (!_seenEvents.add(eventId)) return;
-            if (_seenEvents.length > 512) _seenEvents.remove(_seenEvents.first);
-          }
-          onEventData?.call(e, Map<String, dynamic>.from(data));
+        final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+        final eventId = payload['eventId']?.toString() ?? '';
+        if (eventId.isNotEmpty) {
+          if (!_seenEvents.add(eventId)) return;
+          if (_seenEvents.length > 512) _seenEvents.remove(_seenEvents.first);
         }
-        onEvent(e);
+
+        if (coordinator != null && e != 'catalog.changed' && e != 'tracking.updated' && e != 'call.signal') {
+          final parsed = AppNotificationEvent.fromMap(payload, fallbackType: e);
+          if (!coordinator!.isAuthorizedForThisApp(parsed)) return;
+          coordinator!.acceptEvent(parsed, dedupe: false);
+        }
+
+        eventBus?.emit(
+          eventId: eventId.isNotEmpty ? eventId : '$e:${DateTime.now().microsecondsSinceEpoch}',
+          type: e,
+          payload: payload,
+        );
+        onEventData?.call(e, payload);
+        onEvent?.call(e);
       });
     }
+
     s.onDisconnect((reason) async {
       connected = false;
-      // The server drops sockets whose access token expired: refresh and reconnect with the new one.
+      api.markReconnecting();
       if (reason == 'io server disconnect') await _reauth();
     });
-    s.onConnectError((_) => _reauth());
+    s.onConnectError((_) {
+      api.markReconnecting();
+      _reauth();
+    });
     s.connect();
+  }
+
+  Future<bool> sendLocation(Map<String, dynamic> payload) async {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return false;
+    final completer = Completer<bool>();
+    socket.emitWithAck('location.update', payload, ack: (response) {
+      if (!completer.isCompleted) {
+        completer.complete(response is Map && response['sequenceNumber'] == payload['sequenceNumber']);
+      }
+    });
+    return completer.future.timeout(const Duration(seconds: 2), onTimeout: () => false);
   }
 
   Future<void> _reauth() async {
@@ -133,22 +186,26 @@ class LiveChannel {
   }
 }
 
-/// Dedicated authenticated location transport. Socket.IO is primary; callers
-/// retain the HTTP endpoint as a reconciliation fallback when this channel is
-/// unavailable or does not acknowledge the sequence in time.
+/// Dedicated authenticated location transport (uses [LiveChannel] when shared,
+/// or falls back to its own socket when instantiated standalone).
 class LiveLocationChannel {
   final TamreedyApi api;
+  final LiveChannel? sharedChannel;
   io.Socket? _socket;
-  bool get connected => _socket?.connected == true;
+  bool get connected => sharedChannel?.connected ?? (_socket?.connected == true);
 
-  LiveLocationChannel(this.api);
+  LiveLocationChannel(this.api, {this.sharedChannel});
 
   Future<void> start() async {
+    if (sharedChannel != null) {
+      await sharedChannel!.start();
+      return;
+    }
     if (_socket != null) return;
     final token = await api.accessToken();
     if (token == null) return;
     final socket = io.io(
-      '${TamreedyApi.baseUrl}/live',
+      TamreedyApi.socketNamespaceUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
           .setAuth({'token': token})
@@ -163,6 +220,9 @@ class LiveLocationChannel {
   }
 
   Future<bool> send(Map<String, dynamic> payload) async {
+    if (sharedChannel != null) {
+      return sharedChannel!.sendLocation(payload);
+    }
     final socket = _socket;
     if (socket == null || !socket.connected) return false;
     final completer = Completer<bool>();
@@ -180,15 +240,24 @@ class LiveLocationChannel {
   }
 }
 
-/// Registers this device for FCM and forwards taps/foreground pushes as a resync.
+/// Registers this device for FCM with role/app isolation and routes foreground/tap/cold-start pushes.
 class PushRegistrar {
   final TamreedyApi api;
   final VoidCallback onPush;
+  final NotificationCoordinator? coordinator;
+  final void Function(Map<String, dynamic> data)? onForegroundData;
+
   StreamSubscription<RemoteMessage>? _fg, _opened;
   StreamSubscription<String>? _refresh;
-  PushRegistrar({required this.api, required this.onPush});
+  String? _lastRegisteredToken;
 
-  /// Never throws: the app must run without Firebase configured.
+  PushRegistrar({
+    required this.api,
+    required this.onPush,
+    this.coordinator,
+    this.onForegroundData,
+  });
+
   Future<void> start() async {
     if (!kFcmEnabled || kIsWeb) return;
     try {
@@ -199,8 +268,28 @@ class PushRegistrar {
       final token = await m.getToken();
       if (token != null) await _register(token);
       _refresh = m.onTokenRefresh.listen(_register);
-      _fg = FirebaseMessaging.onMessage.listen((_) => onPush());
-      _opened = FirebaseMessaging.onMessageOpenedApp.listen((_) => onPush());
+
+      // Cold-start launch from notification tap
+      final initial = await m.getInitialMessage();
+      if (initial != null) {
+        coordinator?.routeFromTap(initial.data, coldStart: true);
+      }
+
+      _fg = FirebaseMessaging.onMessage.listen((msg) {
+        if (coordinator != null) {
+          final event = AppNotificationEvent.fromMap(msg.data);
+          if (!coordinator!.acceptEvent(event)) return;
+        }
+        onForegroundData?.call(msg.data);
+        onPush();
+      });
+
+      _opened = FirebaseMessaging.onMessageOpenedApp.listen((msg) {
+        if (coordinator != null) {
+          coordinator!.routeFromTap(msg.data);
+        }
+        onPush();
+      });
     } catch (e) {
       debugPrint('push disabled: $e');
     }
@@ -208,15 +297,28 @@ class PushRegistrar {
 
   Future<void> _register(String token) async {
     try {
+      final devId = await api.getDeviceId();
       await api.post('/v1/devices', {
         'token': token,
-        'platform': defaultTargetPlatform == TargetPlatform.iOS
-            ? 'ios'
-            : 'android',
+        'platform': defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android',
+        'deviceId': devId,
+        'appType': api.appType,
       });
+      _lastRegisteredToken = token;
     } catch (_) {
       /* retried on next launch / token refresh */
     }
+  }
+
+  Future<void> unregister() async {
+    try {
+      final devId = await api.getDeviceId();
+      await api.delete('/v1/devices', {
+        if (_lastRegisteredToken != null) 'token': _lastRegisteredToken,
+        'deviceId': devId,
+        'appType': api.appType,
+      });
+    } catch (_) {}
   }
 
   void dispose() {
@@ -226,30 +328,46 @@ class PushRegistrar {
   }
 }
 
-/// Wrap the signed-in shell: runs the socket + push, resyncs on app resume.
-/// Does nothing in demo mode.
+/// Signed-in Realtime & Push host.
+/// In Tamreedy 3.0, events flow directly to [RealtimeEventBus] and [NotificationCoordinator]
+/// without triggering redundant global `onResync` calls on every single event!
 class RealtimeHost extends StatefulWidget {
   final TamreedyApi api;
   final VoidCallback onResync;
   final void Function(String type)? onEvent;
   final void Function(String type, Map<String, dynamic> payload)? onEventData;
+  final RealtimeEventBus? eventBus;
+  final NotificationCoordinator? coordinator;
+  final void Function(Map<String, dynamic> data)? onForegroundPush;
   final Widget child;
+
   const RealtimeHost({
     super.key,
     required this.api,
     required this.onResync,
     this.onEvent,
     this.onEventData,
+    this.eventBus,
+    this.coordinator,
+    this.onForegroundPush,
     required this.child,
   });
+
   @override
   State<RealtimeHost> createState() => _RealtimeHostState();
 }
 
-class _RealtimeHostState extends State<RealtimeHost>
-    with WidgetsBindingObserver {
+class _RealtimeHostState extends State<RealtimeHost> with WidgetsBindingObserver {
   LiveChannel? _live;
   PushRegistrar? _push;
+  DateTime _lastResyncAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _debouncedResync() {
+    final now = DateTime.now();
+    if (now.difference(_lastResyncAt) < const Duration(seconds: 3)) return;
+    _lastResyncAt = now;
+    widget.onResync();
+  }
 
   @override
   void initState() {
@@ -258,19 +376,25 @@ class _RealtimeHostState extends State<RealtimeHost>
     WidgetsBinding.instance.addObserver(this);
     _live = LiveChannel(
       api: widget.api,
-      onResync: widget.onResync,
+      eventBus: widget.eventBus,
+      coordinator: widget.coordinator,
+      onResync: _debouncedResync,
       onEventData: widget.onEventData,
-      onEvent: (t) {
-        widget.onEvent?.call(t);
-        widget.onResync();
-      },
+      onEvent: widget.onEvent,
     )..start();
-    _push = PushRegistrar(api: widget.api, onPush: widget.onResync)..start();
+    _push = PushRegistrar(
+      api: widget.api,
+      coordinator: widget.coordinator,
+      onForegroundData: widget.onForegroundPush,
+      onPush: _debouncedResync,
+    )..start();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) widget.onResync();
+    if (state == AppLifecycleState.resumed) {
+      _debouncedResync();
+    }
   }
 
   @override

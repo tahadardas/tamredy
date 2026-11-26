@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'core/api_models.dart';
 
 const _codes = <String, String>{
   'LOGIN_INVALID': 'رقم الهاتف أو كلمة المرور غير صحيحة',
@@ -17,6 +18,8 @@ const _codes = <String, String>{
   'FILE_REQUIRED': 'اختر ملفًا أولًا',
   'LICENSE_FIELDS_TOGETHER': 'اكتب رقم الرخصة وتاريخ انتهائها',
   'TOO_MANY_DOCUMENTS': 'بلغت الحد الأقصى من المستندات',
+  'TOO_MANY_BENEFICIARIES': 'بلغت الحد الأقصى لعدد المستفيدين',
+  'BENEFICIARY_CONSENT_REQUIRED': 'يلزم تأكيد الموافقة لإضافة المستفيد',
   'SETTLEMENT_REQUIRED': 'عليك تسوية المستحقات للشركة قبل قبول طلبات جديدة',
   'NURSE_NOT_VERIFIED': 'رخصتك لم تُعتمد بعد',
   'SCHEDULE_NIGHT_RESTRICTED': 'هذا الموعد غير متاح وفق سياسة السلامة. اختر موعدًا آخر.',
@@ -29,6 +32,7 @@ const _codes = <String, String>{
   'NIGHT_POLICY_COVERAGE_REQUIRED': 'لا تتوفر تغطية سلامة لهذه الزيارة الآن.',
   'OFFER_EXPIRED': 'انتهت مهلة هذا العرض',
   'REQUEST_ALREADY_ASSIGNED': 'قبِل هذا الطلب ممرض آخر',
+  'REQUEST_ALREADY_ASSIGNED_OR_CLOSED': 'تم إسناد هذا الطلب أو إغلاقه بالفعل',
   'REQUEST_CANNOT_BE_CANCELLED': 'لا يمكن إلغاء الطلب في حالته الحالية',
   'PROMO_NOT_FOUND': 'كود الخصم غير صحيح',
   'PROMO_EXPIRED': 'كود الخصم منتهي',
@@ -36,6 +40,7 @@ const _codes = <String, String>{
   'APPLICATION_ALREADY_OPEN': 'لديك طلب انضمام قيد المراجعة بهذا الرقم، سنتواصل معك',
   'LICENSE_EXPIRED': 'الوثيقة منتهية الصلاحية؛ ارفع وثيقة سارية',
   'ROLE_NOT_ALLOWED': 'هذا الحساب غير مخصص لهذا التطبيق',
+  'ROLE_APP_MISMATCH': 'عدم تطابق نوع الحساب مع التطبيق',
   'REQUEST_NOT_OPEN': 'الطلب لم يعد متاحاً لاستقبال عروض الجاهزية',
   'REQUEST_EXPIRED': 'انتهت مهلة استقبال العروض لهذا الطلب',
   'ARRIVAL_TIME_IN_PAST': 'وقت الوصول المقترح يجب أن يكون في المستقبل',
@@ -50,46 +55,151 @@ const _codes = <String, String>{
   'PROPOSAL_EXPIRED': 'انتهت مدة صلاحية هذا العرض',
   'PROPOSAL_NOT_PENDING': 'هذا العرض لم يعد متاحاً',
   'PROPOSAL_VERSION_CONFLICT': 'تم تحديث العرض، يرجى إعادة المحاولة',
+  'WALLET_NOT_ENABLED': 'المحفظة الإلكترونية غير مفعلة حاليًا؛ الدفع نقدي عند الزيارة',
+  'CLINICAL_VISIT_NOTE_REQUIRED': 'يرجى توثيق الملاحظات السريرية للزيارة قبل إنهائها',
+  'REQUEST_ITEMS_REQUIRE_OUTCOME': 'يجب تحديد نتيجة تنفيذ كل خدمة قبل إنهاء الزيارة',
+  'NO_SERVICE_ITEM_COMPLETED': 'لا يمكن إنهاء الزيارة دون تنفيذ خدمة واحدة على الأقل',
+  'ARRIVAL_GEOFENCE_FAILED': 'موقعك الحالي بعيد عن عنوان الزيارة؛ أضف سبب الاستثناء للمتابعة',
 };
 
 String? nightPolicyMessage(Object? code) =>
-    code is String && (code.startsWith('NIGHT_POLICY_') || code.startsWith('VISIT_COMPANION_') || code == 'VISIT_SAFETY_REVIEW_REQUIRED') ? _codes[code] : null;
+    code is String && (code.startsWith('NIGHT_POLICY_') || code.startsWith('VISIT_COMPANION_') || code == 'VISIT_SAFETY_REVIEW_REQUIRED')
+        ? _codes[code]
+        : null;
 
-/// Turns any failure into a short, clear Arabic sentence (never a raw exception or an English message).
-String explainError(Object e, {String? fallback}) {
+ApiFailure mapApiFailure(Object e, {String? fallback}) {
+  if (e is ApiFailure) return e;
   if (e is DioException) {
-    final data = e.response?.data;
-    final code = data is Map ? data['code'] : null;
-    if (code is String && _codes.containsKey(code)) return _codes[code]!;
-    switch (e.type) {
-      case DioExceptionType.connectionError:
-      case DioExceptionType.connectionTimeout:
-      case DioExceptionType.sendTimeout:
-      case DioExceptionType.receiveTimeout:
-        return 'تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى';
-      default:
+    if (e.type == DioExceptionType.cancel) {
+      return const ApiFailure(
+        kind: ApiErrorKind.cancelled,
+        messageAr: 'تم إلغاء الطلب',
+      );
     }
-    switch (e.response?.statusCode) {
+    if (e.type == DioExceptionType.connectionError) {
+      return ApiFailure(
+        kind: ApiErrorKind.offline,
+        messageAr: 'لا يوجد اتصال بالإنترنت. تحقق من الشبكة وحاول مجدداً.',
+        raw: e,
+      );
+    }
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return ApiFailure(
+        kind: ApiErrorKind.timeout,
+        messageAr: 'انتهت مهلة الاتصال بالخادم. الشبكة بطيئة أو الخادم مشغول.',
+        raw: e,
+      );
+    }
+
+    final status = e.response?.statusCode;
+    final data = e.response?.data;
+    final code = data is Map ? (data['code'] ?? data['message'])?.toString() : null;
+    final mappedCode = (code != null && _codes.containsKey(code)) ? _codes[code]! : null;
+
+    switch (status) {
       case 400:
-        return fallback ?? 'البيانات المدخلة غير صالحة، راجعها وحاول مرة أخرى';
+      case 422:
+        return ApiFailure(
+          kind: ApiErrorKind.validation,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? fallback ?? 'البيانات المدخلة غير صالحة، راجعها وحاول مرة أخرى',
+          raw: e,
+        );
       case 401:
-        return 'انتهت الجلسة، سجّل الدخول من جديد';
+        return ApiFailure(
+          kind: ApiErrorKind.sessionExpired,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً',
+          raw: e,
+        );
       case 403:
-        return 'ليست لديك صلاحية لهذه العملية';
+        return ApiFailure(
+          kind: ApiErrorKind.forbidden,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'ليست لديك صلاحية لتنفيذ هذا الإجراء',
+          raw: e,
+        );
       case 404:
-        return 'الخدمة غير متاحة حاليًا، حاول لاحقًا';
+      case 410:
+        return ApiFailure(
+          kind: ApiErrorKind.notFound,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'العنصر المطلوب غير موجود أو انتهت صلاحيته',
+          raw: e,
+        );
       case 409:
-        return fallback ?? 'تعذر تنفيذ العملية في الحالة الحالية';
+        return ApiFailure(
+          kind: ApiErrorKind.conflict,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? fallback ?? 'تعارض مع حالة الطلب الحالية، يرجى التحديث',
+          raw: e,
+        );
       case 413:
-        return 'الملف كبير جدًا';
+        return ApiFailure(
+          kind: ApiErrorKind.validation,
+          statusCode: status,
+          code: code,
+          messageAr: 'حجم الملف كبير جداً',
+          raw: e,
+        );
       case 429:
-        return 'محاولات كثيرة، انتظر قليلًا ثم أعد المحاولة';
-      case 500:
+        return ApiFailure(
+          kind: ApiErrorKind.rateLimited,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'محاولات كثيرة متتالية، انتظر قليلاً ثم أعد المحاولة',
+          raw: e,
+        );
+      case 501:
+        return ApiFailure(
+          kind: ApiErrorKind.featureUnavailable,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'هذه الميزة غير مفعّلة حالياً',
+          raw: e,
+        );
       case 502:
       case 503:
       case 504:
-        return 'الخادم غير متاح حاليًا، حاول بعد قليل';
+        return ApiFailure(
+          kind: ApiErrorKind.serverUnavailable,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'الخادم غير متاح حالياً، حاول بعد قليل',
+          raw: e,
+        );
+      case 500:
+        return ApiFailure(
+          kind: ApiErrorKind.internalError,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? 'حدث خطأ داخلي في الخادم، حاول بعد قليل',
+          raw: e,
+        );
+      default:
+        return ApiFailure(
+          kind: ApiErrorKind.unknown,
+          statusCode: status,
+          code: code,
+          messageAr: mappedCode ?? fallback ?? 'تعذر إتمام الطلب، حاول مرة أخرى',
+          raw: e,
+        );
     }
   }
-  return fallback ?? 'حدث خطأ غير متوقع، حاول مرة أخرى';
+  return ApiFailure(
+    kind: ApiErrorKind.unknown,
+    messageAr: fallback ?? 'حدث خطأ غير متوقع، حاول مرة أخرى',
+    raw: e,
+  );
 }
+
+/// Turns any failure into a short, clear Arabic sentence (never a raw exception or an English message).
+String explainError(Object e, {String? fallback}) =>
+    mapApiFailure(e, fallback: fallback).messageAr;

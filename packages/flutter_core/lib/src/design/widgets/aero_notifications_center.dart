@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import '../tokens/aero_colors.dart';
 import '../tokens/aero_typography.dart';
-import 'aero_glass_card.dart';
+import '../tokens/tam_tokens.dart';
 
 class AeroNotificationItem {
   final String id;
@@ -45,44 +44,29 @@ class _AeroNotificationsCenterState extends State<AeroNotificationsCenter> {
   bool _unreadOnly = false;
 
   IconData _getTypeIcon(String type) {
-    switch (type) {
-      case 'VISIT_STATUS_CHANGED':
-        return Icons.local_hospital;
-      case 'CHAT_MESSAGE_RECEIVED':
-        return Icons.chat_bubble_outline;
-      case 'VOICE_CALL_MISSED':
-        return Icons.phone_missed;
-      case 'SCHEDULED_VISIT_REMINDER':
-        return Icons.alarm;
-      case 'CARE_PLAN_UPDATE':
-        return Icons.calendar_month;
-      case 'FINANCIAL_TRANSACTION':
-      case 'WALLET_CREDIT':
-        return Icons.account_balance_wallet;
-      case 'SAFETY_ALERT':
-        return Icons.shield;
-      default:
-        return Icons.notifications_none;
-    }
+    if (type.startsWith('chat.')) return Icons.chat_bubble_outline_rounded;
+    if (type.startsWith('call.')) return Icons.call_rounded;
+    if (type.startsWith('payment.')) return Icons.receipt_long_rounded;
+    if (type.startsWith('safety.')) return Icons.shield_rounded;
+    if (type.startsWith('marketplace.')) return Icons.campaign_rounded;
+    if (type.startsWith('offer.')) return Icons.notifications_active_rounded;
+    return Icons.local_hospital_rounded;
   }
 
   String _formatTime(DateTime dt) {
     final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 60) {
-      return 'منذ ${diff.inMinutes} دقيقة';
-    } else if (diff.inHours < 24) {
-      return 'منذ ${diff.inHours} ساعة';
-    } else {
-      return 'منذ ${diff.inDays} يوم';
-    }
+    if (diff.inMinutes < 1) return 'الآن';
+    if (diff.inMinutes < 60) return 'منذ ${diff.inMinutes} دقيقة';
+    if (diff.inHours < 24) return 'منذ ${diff.inHours} ساعة';
+    return 'منذ ${diff.inDays} يوم';
   }
 
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     final displayedList = _unreadOnly
         ? widget.notifications.where((n) => !n.isRead).toList()
         : widget.notifications;
-
     final unreadCount = widget.notifications.where((n) => !n.isRead).length;
 
     return Directionality(
@@ -90,9 +74,9 @@ class _AeroNotificationsCenterState extends State<AeroNotificationsCenter> {
       child: Container(
         height: MediaQuery.of(context).size.height * 0.8,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: tc.background,
         child: Column(
           children: [
-            // Header
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -100,14 +84,14 @@ class _AeroNotificationsCenterState extends State<AeroNotificationsCenter> {
                   children: [
                     Text(
                       'مركز التنبيهات',
-                      style: aeroText(size: 18, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+                      style: aeroText(size: 19, weight: FontWeight.w800, color: tc.textPrimary),
                     ),
                     if (unreadCount > 0) ...[
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AeroColors.accentTeal,
+                          color: tc.primary,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
@@ -123,29 +107,27 @@ class _AeroNotificationsCenterState extends State<AeroNotificationsCenter> {
                     onPressed: widget.onMarkAllRead,
                     child: Text(
                       'تحديد الكل كمقروء',
-                      style: aeroText(size: 13, weight: FontWeight.w600, color: AeroColors.accentTeal),
+                      style: aeroText(size: 13, weight: FontWeight.w700, color: tc.primary),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 12),
-
-            // Tabs / Filter Chips
+            const SizedBox(height: 10),
             Row(
               children: [
                 ChoiceChip(
-                  label: Text('الكل (${widget.notifications.length})', style: aeroText(size: 12)),
+                  label: Text('الكل (${widget.notifications.length})', style: aeroText(size: 12.5, color: tc.textPrimary)),
                   selected: !_unreadOnly,
-                  selectedColor: AeroColors.aeroTint,
+                  selectedColor: tc.primaryTint,
                   onSelected: (val) {
                     if (val) setState(() => _unreadOnly = false);
                   },
                 ),
                 const SizedBox(width: 8),
                 ChoiceChip(
-                  label: Text('غير مقروءة ($unreadCount)', style: aeroText(size: 12)),
+                  label: Text('غير مقروءة ($unreadCount)', style: aeroText(size: 12.5, color: tc.textPrimary)),
                   selected: _unreadOnly,
-                  selectedColor: AeroColors.aeroTint,
+                  selectedColor: tc.primaryTint,
                   onSelected: (val) {
                     if (val) setState(() => _unreadOnly = true);
                   },
@@ -153,22 +135,17 @@ class _AeroNotificationsCenterState extends State<AeroNotificationsCenter> {
               ],
             ),
             const SizedBox(height: 12),
-
-            // List
             Expanded(
               child: widget.isLoading
-                  ? const Center(child: CircularProgressIndicator(color: AeroColors.accentTeal))
+                  ? Center(child: CircularProgressIndicator(color: tc.primary))
                   : displayedList.isEmpty
                       ? Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.notifications_off_outlined, size: 48, color: AeroColors.textMuted),
+                              Icon(Icons.notifications_off_outlined, size: 48, color: tc.textMuted),
                               const SizedBox(height: 8),
-                              Text(
-                                'لا توجد تنبيهات حالياً',
-                                style: aeroText(size: 14, color: AeroColors.textSecondary),
-                              ),
+                              Text('لا توجد تنبيهات حالياً', style: aeroText(size: 14, color: tc.textSecondary)),
                             ],
                           ),
                         )
@@ -177,67 +154,72 @@ class _AeroNotificationsCenterState extends State<AeroNotificationsCenter> {
                           separatorBuilder: (_, __) => const SizedBox(height: 8),
                           itemBuilder: (context, index) {
                             final notif = displayedList[index];
-                            return GestureDetector(
-                              onTap: () => widget.onNotificationTap?.call(notif.id),
-                              child: AeroGlassCard(
-                                padding: const EdgeInsets.all(12),
-                                tintColor: notif.isRead ? Colors.white : AeroColors.aeroTintLight,
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 20,
-                                      backgroundColor: notif.isRead ? AeroColors.lightCanvas : AeroColors.aeroTint,
-                                      child: Icon(
-                                        _getTypeIcon(notif.type),
-                                        size: 20,
-                                        color: notif.isRead ? AeroColors.textSecondary : AeroColors.accentTeal,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  notif.title,
-                                                  style: aeroText(
-                                                    size: 14,
-                                                    weight: notif.isRead ? FontWeight.w600 : FontWeight.w700,
-                                                    color: AeroColors.primaryNavy,
-                                                  ),
-                                                ),
-                                              ),
-                                              Text(
-                                                _formatTime(notif.createdAt),
-                                                style: aeroText(size: 10, color: AeroColors.textMuted),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            notif.body,
-                                            style: aeroText(size: 12, color: AeroColors.textSecondary, height: 1.3),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (!notif.isRead) ...[
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        width: 8,
-                                        height: 8,
-                                        decoration: const BoxDecoration(
-                                          color: AeroColors.accentTeal,
-                                          shape: BoxShape.circle,
+                            return Material(
+                              color: notif.isRead ? tc.surface : tc.primaryTint.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(16),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(16),
+                                onTap: () => widget.onNotificationTap?.call(notif.id),
+                                child: Container(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: tc.border),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: notif.isRead ? tc.surfaceElevated : tc.primaryTint,
+                                        child: Icon(
+                                          _getTypeIcon(notif.type),
+                                          size: 20,
+                                          color: notif.isRead ? tc.textSecondary : tc.primary,
                                         ),
                                       ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    notif.title,
+                                                    style: aeroText(
+                                                      size: 14,
+                                                      weight: notif.isRead ? FontWeight.w600 : FontWeight.w800,
+                                                      color: tc.textPrimary,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Text(
+                                                  _formatTime(notif.createdAt),
+                                                  style: aeroText(size: 11, color: tc.textMuted),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              notif.body,
+                                              style: aeroText(size: 13, color: tc.textSecondary, height: 1.4),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (!notif.isRead) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          width: 8,
+                                          height: 8,
+                                          decoration: BoxDecoration(color: tc.primary, shape: BoxShape.circle),
+                                        ),
+                                      ],
                                     ],
-                                  ],
+                                  ),
                                 ),
                               ),
                             );

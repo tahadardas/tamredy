@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import '../tokens/aero_colors.dart';
 import '../tokens/aero_radii.dart';
 import '../tokens/aero_typography.dart';
-import 'aero_glass_card.dart';
+import '../tokens/tam_tokens.dart';
 
 class AeroChatMessage {
   final String id;
@@ -14,6 +13,9 @@ class AeroChatMessage {
   final DateTime createdAt;
   final bool isMe;
   final bool isRead;
+  final bool isPending;
+  final bool isFailed;
+  final bool isSystem;
 
   const AeroChatMessage({
     required this.id,
@@ -25,11 +27,14 @@ class AeroChatMessage {
     required this.createdAt,
     required this.isMe,
     this.isRead = false,
+    this.isPending = false,
+    this.isFailed = false,
+    this.isSystem = false,
   });
 }
 
-/// AeroChatView — Real-time in-app chat component supporting Medical Aero aesthetics,
-/// contact masking warnings, voice call shortcuts, and attachment previews.
+/// Tamreedy 3.0 in-app chat view with send state, retry on failure,
+/// contact masking advisory, attachment upload, and voice call trigger.
 class AeroChatView extends StatefulWidget {
   final String recipientName;
   final String? recipientRole;
@@ -37,6 +42,7 @@ class AeroChatView extends StatefulWidget {
   final bool showContactAdvisory;
   final VoidCallback? onVoiceCallPressed;
   final ValueChanged<String> onSendMessage;
+  final ValueChanged<AeroChatMessage>? onRetryMessage;
   final VoidCallback? onPickAttachment;
   final bool isSending;
 
@@ -48,6 +54,7 @@ class AeroChatView extends StatefulWidget {
     this.showContactAdvisory = true,
     this.onVoiceCallPressed,
     required this.onSendMessage,
+    this.onRetryMessage,
     this.onPickAttachment,
     this.isSending = false,
   });
@@ -76,27 +83,25 @@ class _AeroChatViewState extends State<AeroChatView> {
 
   @override
   Widget build(BuildContext context) {
+    final tc = context.tamColors;
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Column(
         children: [
-          // Header / Recipient Bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: AeroColors.surfaceWhite,
-              border: Border(
-                bottom: BorderSide(color: AeroColors.borderLight),
-              ),
+              color: tc.surface,
+              border: Border(bottom: BorderSide(color: tc.border)),
             ),
             child: Row(
               children: [
                 CircleAvatar(
                   radius: 20,
-                  backgroundColor: AeroColors.aeroTint,
+                  backgroundColor: tc.primaryTint,
                   child: Text(
-                    widget.recipientName.isNotEmpty ? widget.recipientName[0] : '?',
-                    style: aeroText(size: 16, weight: FontWeight.w700, color: AeroColors.primaryNavy),
+                    widget.recipientName.isNotEmpty ? widget.recipientName[0] : '؟',
+                    style: aeroText(size: 16, weight: FontWeight.w800, color: tc.primaryDark),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -106,77 +111,76 @@ class _AeroChatViewState extends State<AeroChatView> {
                     children: [
                       Text(
                         widget.recipientName,
-                        style: aeroText(size: 16, weight: FontWeight.w700),
+                        style: aeroText(size: 16, weight: FontWeight.w700, color: tc.textPrimary),
                       ),
                       if (widget.recipientRole != null)
                         Text(
                           widget.recipientRole!,
-                          style: aeroText(size: 12, color: AeroColors.textSecondary),
+                          style: aeroText(size: 12, color: tc.textSecondary),
                         ),
                     ],
                   ),
                 ),
                 if (widget.onVoiceCallPressed != null)
                   IconButton(
-                    icon: const Icon(Icons.call, color: AeroColors.accentTeal),
-                    tooltip: 'اتصال صوتي تمريضي',
+                    icon: Icon(Icons.call_rounded, color: tc.primary),
+                    tooltip: 'مكالمة صوتية آمنة',
                     onPressed: widget.onVoiceCallPressed,
                   ),
               ],
             ),
           ),
-
-          // Contact Advisory Warning Banner
           if (widget.showContactAdvisory)
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFFEF3C7),
+                color: tc.warningTint,
                 borderRadius: BorderRadius.circular(AeroRadii.badge),
-                border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4)),
+                border: Border.all(color: tc.warning.withValues(alpha: 0.35)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.security, size: 18, color: Color(0xFFB45309)),
+                  Icon(Icons.verified_user_rounded, size: 18, color: tc.warning),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'نوصي بالتواصل ضمن التطبيق لحماية الخصوصية وضمان توثيق الملاحظات الطبية ضمن سجل الزيارة المعتمد.',
-                      style: aeroText(size: 11, color: const Color(0xFF92400E), height: 1.3),
+                      'نوصي بالتواصل داخل التطبيق لحماية خصوصيتك وتوثيق الملاحظات الطبية.',
+                      style: aeroText(size: 11.5, color: tc.textPrimary, height: 1.35),
                     ),
                   ),
                 ],
               ),
             ),
-
-          // Messages List
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(16),
-              reverse: true,
-              itemCount: widget.messages.length,
-              itemBuilder: (context, index) {
-                final msg = widget.messages[index];
-                return _buildMessageBubble(msg);
-              },
-            ),
+            child: widget.messages.isEmpty
+                ? Center(
+                    child: Text(
+                      'ابدأ المحادثة الآن',
+                      style: aeroText(size: 14, color: tc.textSecondary),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    reverse: true,
+                    itemCount: widget.messages.length,
+                    itemBuilder: (context, index) => _buildMessageBubble(widget.messages[index], tc),
+                  ),
           ),
-
-          // Input Bar
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AeroColors.surfaceWhite,
-              border: Border(top: BorderSide(color: AeroColors.borderLight)),
+              color: tc.surface,
+              border: Border(top: BorderSide(color: tc.border)),
             ),
             child: SafeArea(
+              top: false,
               child: Row(
                 children: [
                   if (widget.onPickAttachment != null)
                     IconButton(
-                      icon: const Icon(Icons.attach_file, color: AeroColors.textSecondary),
+                      icon: Icon(Icons.attach_file_rounded, color: tc.textSecondary),
                       onPressed: widget.onPickAttachment,
                       tooltip: 'إرفاق وصفة أو تقرير',
                     ),
@@ -184,16 +188,18 @@ class _AeroChatViewState extends State<AeroChatView> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        color: AeroColors.lightCanvas,
+                        color: tc.surfaceElevated,
                         borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: AeroColors.borderSubtle),
+                        border: Border.all(color: tc.border),
                       ),
                       child: TextField(
                         controller: _textController,
-                        style: aeroText(size: 14),
+                        style: aeroText(size: 15, color: tc.textPrimary),
+                        minLines: 1,
+                        maxLines: 4,
                         decoration: InputDecoration(
                           hintText: 'اكتب رسالتك هنا...',
-                          hintStyle: aeroText(size: 14, color: AeroColors.textMuted),
+                          hintStyle: aeroText(size: 14, color: tc.textMuted),
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(vertical: 12),
@@ -204,8 +210,8 @@ class _AeroChatViewState extends State<AeroChatView> {
                   ),
                   const SizedBox(width: 8),
                   CircleAvatar(
-                    backgroundColor: AeroColors.accentTeal,
-                    radius: 22,
+                    backgroundColor: tc.primary,
+                    radius: 24,
                     child: widget.isSending
                         ? const SizedBox(
                             width: 18,
@@ -213,7 +219,8 @@ class _AeroChatViewState extends State<AeroChatView> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : IconButton(
-                            icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                            icon: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                            tooltip: 'إرسال',
                             onPressed: _handleSend,
                           ),
                   ),
@@ -226,62 +233,103 @@ class _AeroChatViewState extends State<AeroChatView> {
     );
   }
 
-  Widget _buildMessageBubble(AeroChatMessage msg) {
+  Widget _buildMessageBubble(AeroChatMessage msg, TamThemeColors tc) {
+    if (msg.isSystem) {
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: tc.surfaceElevated,
+            borderRadius: BorderRadius.circular(99),
+          ),
+          child: Text(
+            msg.text,
+            textAlign: TextAlign.center,
+            style: aeroText(size: 12, color: tc.textSecondary),
+          ),
+        ),
+      );
+    }
+
     final isMe = msg.isMe;
     return Align(
       alignment: isMe ? Alignment.centerLeft : Alignment.centerRight,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-        child: AeroGlassCard(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          borderRadius: 16,
-          tintColor: isMe ? AeroColors.aeroTint : Colors.white,
-          child: Column(
-            crossAxisAlignment: isMe ? CrossAxisAlignment.start : CrossAxisAlignment.end,
-            children: [
-              if (msg.attachmentUrl != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      height: 120,
-                      color: AeroColors.borderLight,
-                      child: const Center(
-                        child: Icon(Icons.insert_drive_file, color: AeroColors.accentTeal, size: 36),
-                      ),
-                    ),
-                  ),
-                ),
-              Text(
-                msg.text,
-                style: aeroText(
-                  size: 14,
-                  color: isMe ? AeroColors.primaryNavy : AeroColors.textPrimary,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${msg.createdAt.hour.toString().padLeft(2, '0')}:${msg.createdAt.minute.toString().padLeft(2, '0')}',
-                    style: aeroText(size: 10, color: AeroColors.textMuted),
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      msg.isRead ? Icons.done_all : Icons.done,
-                      size: 14,
-                      color: msg.isRead ? AeroColors.accentTeal : AeroColors.textMuted,
-                    ),
-                  ],
-                ],
-              ),
-            ],
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? tc.primaryTint : tc.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: msg.isFailed ? tc.danger : (isMe ? tc.primary.withValues(alpha: 0.25) : tc.border),
           ),
+        ),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+          children: [
+            if (msg.attachmentUrl != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: tc.surfaceElevated,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.insert_drive_file_rounded, color: tc.primary, size: 20),
+                      const SizedBox(width: 6),
+                      Text('مرفق طبي', style: aeroText(size: 12, color: tc.textPrimary)),
+                    ],
+                  ),
+                ),
+              ),
+            Text(
+              msg.text,
+              style: aeroText(
+                size: 15,
+                color: tc.textPrimary,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${msg.createdAt.hour.toString().padLeft(2, '0')}:${msg.createdAt.minute.toString().padLeft(2, '0')}',
+                  style: aeroText(size: 10.5, color: tc.textMuted),
+                ),
+                if (isMe) ...[
+                  const SizedBox(width: 5),
+                  if (msg.isFailed)
+                    InkWell(
+                      onTap: () => widget.onRetryMessage?.call(msg),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.error_outline_rounded, size: 14, color: tc.danger),
+                          const SizedBox(width: 3),
+                          Text('إعادة المحاولة', style: aeroText(size: 11, weight: FontWeight.w700, color: tc.danger)),
+                        ],
+                      ),
+                    )
+                  else if (msg.isPending)
+                    Icon(Icons.schedule_rounded, size: 13, color: tc.textMuted)
+                  else
+                    Icon(
+                      msg.isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                      size: 14,
+                      color: msg.isRead ? tc.primary : tc.textMuted,
+                    ),
+                ],
+              ],
+            ),
+          ],
         ),
       ),
     );
