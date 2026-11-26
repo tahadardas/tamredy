@@ -1,0 +1,742 @@
+{
+  "release": "Tamreedy 3.1 RC1",
+  "target_branch": "feature/tamreedy-production-hardening",
+  "source_branch": "feature/tamreedy-mobile-rebirth",
+  "base_commit": "89f9574b906817912defc9a6388682cb557cc0b9",
+  "summary": {
+    "total_bugs": 48,
+    "verified_by_automated_tests": 29,
+    "implemented_not_verified_end_to_end": 19,
+    "blocked_or_missing_implementation": 0,
+    "contract_unification_commit": "5b0f2f3",
+    "verification_commit": "427a25e",
+    "admin_web_modified": false,
+    "migrations_added": [
+      "infra/db/migrations/064_booking_mode_lifecycle_unification.sql",
+      "infra/db/migrations/065_financial_commission_snapshot_and_backfill.sql",
+      "infra/db/migrations/066_proposal_accept_idempotency.sql",
+      "infra/db/migrations/067_device_session_generation.sql",
+      "infra/db/migrations/068_clinical_review_duration_and_closure.sql",
+      "infra/db/migrations/069_voice_signal_atomic_ordering.sql"
+    ],
+    "automated_checks_executed": [
+      {
+        "command": "pnpm --filter @tamreedy/api build",
+        "result": "PASSED (exit 0)"
+      },
+      {
+        "command": "pnpm --filter @tamreedy/worker build",
+        "result": "PASSED (exit 0)"
+      },
+      {
+        "command": "node --test apps/worker/tests/*.test.mjs",
+        "result": "13/13 PASSED (21842ms, PGlite + mock transport)"
+      },
+      {
+        "command": "node --test apps/api/tests/{18 suites incl. tamreedy_31_maintenance.test.mjs}",
+        "result": "73/73 PASSED (18763ms, PGlite + mock WS/Redis)"
+      },
+      {
+        "command": "flutter analyze --no-pub && flutter test --no-pub (packages/flutter_core)",
+        "result": "0 analyzer issues, 30/30 PASSED"
+      },
+      {
+        "command": "flutter analyze --no-pub && flutter test --no-pub (apps/patient_app)",
+        "result": "0 analyzer issues, 4/4 PASSED"
+      },
+      {
+        "command": "flutter analyze --no-pub && flutter test --no-pub (apps/nurse_app)",
+        "result": "0 analyzer issues, 9/9 PASSED"
+      },
+      {
+        "command": "flutter build apk/appbundle --release --dart-define=DEMO=false --dart-define=ENVIRONMENT=production --dart-define=API_BASE_URL=https://tamredy.dardus.com.sy/api --no-pub (patient_app & nurse_app)",
+        "result": "PASSED (Gradle exit 0; signed with debug keystore in build.gradle.kts)"
+      }
+    ],
+    "blocked_external_checks": [
+      "Live PostgreSQL 15+ PostGIS runtime verification (tested against PGlite WASM with PostGIS stubs instead)",
+      "Live Redis GeoIndex runtime verification (tested via in-memory GeoIndex mock instead)",
+      "Firebase Cloud Messaging (FCM) live delivery on physical Android/iOS devices",
+      "Coturn WebRTC ICE/TURN peer-to-peer audio call handshake over network",
+      "Production Android release keystore signing (both build.gradle.kts currently use signingConfigs.debug)"
+    ]
+  },
+  "fixes": [
+    {
+      "id": "BUG-001",
+      "phase": "Phase 1",
+      "severity": "P0",
+      "title": "Typed assignment snapshot separating assignment_status and request_status on nurse visit recovery",
+      "commit": "b101598",
+      "files": [
+        "apps/api/src/requests/request-recovery.service.ts",
+        "packages/flutter_core/lib/src/core/api_models.dart",
+        "apps/nurse_app/lib/features/visit/visit_store.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs + packages/flutter_core/test/tamreedy_31_core_test.dart"
+    },
+    {
+      "id": "BUG-002",
+      "phase": "Phase 1",
+      "severity": "P0",
+      "title": "Unify marketplace_status values including INITIAL for SCHEDULED booking check constraint",
+      "commit": "b101598",
+      "files": [
+        "infra/db/migrations/064_booking_mode_lifecycle_unification.sql",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/src/marketplace/booking-mode.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (scheduled create with INITIAL assertion)"
+    },
+    {
+      "id": "BUG-003",
+      "phase": "Phase 1",
+      "severity": "P0",
+      "title": "Prevent partial list/WS payloads from overwriting richer TrackingStore & NurseHome coordinates",
+      "commit": "b101598",
+      "files": [
+        "apps/patient_app/lib/features/tracking/tracking_store.dart",
+        "apps/nurse_app/lib/features/home/nurse_home_screen.dart",
+        "apps/nurse_app/lib/features/visit/visit_store.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Static analysis and release APK compilation verified; live runtime WS payload merge not executed against live server"
+    },
+    {
+      "id": "BUG-004",
+      "phase": "Phase 1",
+      "severity": "P0",
+      "title": "Preserve richer request fields during merge via TypedCareRequest.mergePreferRicher and version ordering",
+      "commit": "b101598",
+      "files": [
+        "packages/flutter_core/lib/src/core/api_models.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart",
+        "apps/patient_app/lib/features/requests/requests_center_screen.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "packages/flutter_core/test/tamreedy_31_core_test.dart + apps/patient_app/test/patient_rebirth_test.dart"
+    },
+    {
+      "id": "BUG-005",
+      "phase": "Phase 1",
+      "severity": "P1",
+      "title": "Monotonic server-side version column on care_requests & assignments preventing stale overwrite",
+      "commit": "b101598",
+      "files": [
+        "infra/db/migrations/064_booking_mode_lifecycle_unification.sql",
+        "apps/api/src/requests/request-lifecycle.ts",
+        "apps/api/src/requests/request-recovery.service.ts",
+        "packages/flutter_core/lib/src/core/api_models.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "packages/flutter_core/test/tamreedy_31_core_test.dart + apps/api/tests/tamreedy_31_maintenance.test.mjs"
+    },
+    {
+      "id": "BUG-006",
+      "phase": "Phase 1",
+      "severity": "P1",
+      "title": "Safe BookingModeService transitions between INSTANT, OPEN_FOR_PROPOSALS, and recovery states",
+      "commit": "b101598",
+      "files": [
+        "apps/api/src/marketplace/booking-mode.service.ts",
+        "apps/api/src/requests/request-lifecycle.ts",
+        "apps/patient_app/lib/features/requests/requests_store.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/booking_modes.test.mjs + apps/api/tests/tamreedy_31_maintenance.test.mjs"
+    },
+    {
+      "id": "BUG-007",
+      "phase": "Phase 2",
+      "severity": "P0",
+      "title": "Server-authoritative request pricing composition on create using PricingCompositionService",
+      "commit": "013f559",
+      "files": [
+        "apps/api/src/pricing/pricing-composition.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/src/catalog/catalog.controller.ts",
+        "apps/api/src/pricing/pricing.controller.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/fees.test.mjs + apps/api/tests/pricing.test.mjs + apps/api/tests/tamreedy_31_maintenance.test.mjs"
+    },
+    {
+      "id": "BUG-008",
+      "phase": "Phase 2",
+      "severity": "P0",
+      "title": "Summed included_minutes and line totals across multi-service items with quantity",
+      "commit": "013f559",
+      "files": [
+        "apps/api/src/pricing/pricing-composition.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/src/pricing/billing.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/catalog_multi_service.test.mjs + apps/api/tests/tamreedy_31_maintenance.test.mjs"
+    },
+    {
+      "id": "BUG-009",
+      "phase": "Phase 2",
+      "severity": "P0",
+      "title": "Multi-currency isolation rejecting mixed currencies in multi-service requests",
+      "commit": "013f559",
+      "files": [
+        "apps/api/src/pricing/pricing-composition.service.ts",
+        "apps/api/src/requests/requests.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs + apps/api/tests/pricing.test.mjs"
+    },
+    {
+      "id": "BUG-010",
+      "phase": "Phase 2",
+      "severity": "P1",
+      "title": "Debounced pricing estimate refresh avoiding stale overwrite in BookingDraftStore",
+      "commit": "013f559",
+      "files": [
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/features/booking/booking_wizard_screen.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Static analysis and release APK compilation verified; UI debouncing under live API latency not executed"
+    },
+    {
+      "id": "BUG-011",
+      "phase": "Phase 2",
+      "severity": "P0",
+      "title": "Require active nurse financial account and enforce dues/prepaid headroom before offer/accept",
+      "commit": "013f559",
+      "files": [
+        "apps/api/src/dispatch/dispatch.service.ts",
+        "apps/api/src/dispatch/assignment.orchestrator.ts",
+        "apps/api/src/nurses/nurse-financial.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (asserts NURSE_FINANCIAL_ACCOUNT_REQUIRED on accept)"
+    },
+    {
+      "id": "BUG-012",
+      "phase": "Phase 2",
+      "severity": "P1",
+      "title": "Immutable commission_bps_snapshot on care_requests with migration backfill",
+      "commit": "013f559",
+      "files": [
+        "infra/db/migrations/065_financial_commission_snapshot_and_backfill.sql",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/src/pricing/billing.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/fees_flow.test.mjs + migration 065 executed cleanly in PGlite"
+    },
+    {
+      "id": "BUG-013",
+      "phase": "Phase 2",
+      "severity": "P1",
+      "title": "Consistent financial closure upon NO_SERVICE_RENDERED / safe-abort / cancellation settlement",
+      "commit": "013f559",
+      "files": [
+        "apps/api/src/requests/cancellation.service.ts",
+        "apps/api/src/safety/safe-abort.repository.ts",
+        "apps/api/src/pricing/billing.service.ts"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc; specific NO_SERVICE_RENDERED cancellation branch not covered by dedicated integration test"
+    },
+    {
+      "id": "BUG-014",
+      "phase": "Phase 2",
+      "severity": "P1",
+      "title": "Wallet FinancialReservationsService atomic hold, capture, and release lifecycle",
+      "commit": "013f559",
+      "files": [
+        "apps/api/src/wallet/financial-reservations.service.ts",
+        "apps/api/src/dispatch/dispatch.service.ts",
+        "apps/api/src/requests/cancellation.service.ts"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc; full wallet reservation rollback path needs staging PostgreSQL test"
+    },
+    {
+      "id": "BUG-015",
+      "phase": "Phase 3",
+      "severity": "P1",
+      "title": "Client stable UUID idempotency keys persisted across retries for create, switch mode, and accept proposal",
+      "commit": "e6fe8bd",
+      "files": [
+        "packages/flutter_core/lib/src/api.dart",
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/features/requests/open_proposals_screen.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Dart static analysis and release builds green; network retry replay verified on backend side in BUG-016"
+    },
+    {
+      "id": "BUG-016",
+      "phase": "Phase 3",
+      "severity": "P0",
+      "title": "Single transactional idempotency execution in RequestsService.create and AssignmentService.acceptProposal",
+      "commit": "e6fe8bd",
+      "files": [
+        "infra/db/migrations/066_proposal_accept_idempotency.sql",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/src/marketplace/assignment.service.ts",
+        "apps/api/src/marketplace/marketplace.dto.ts",
+        "apps/api/src/marketplace/proposals.controller.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs + apps/api/tests/marketplace_concurrency.test.mjs"
+    },
+    {
+      "id": "BUG-017",
+      "phase": "Phase 3",
+      "severity": "P0",
+      "title": "Eliminate offer accept race condition using atomic row lock and single winner enforcement",
+      "commit": "e6fe8bd",
+      "files": [
+        "apps/api/src/dispatch/dispatch.service.ts",
+        "apps/api/src/dispatch/assignment.orchestrator.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (19 concurrent Promise.allSettled accepts -> exactly 1 winner)"
+    },
+    {
+      "id": "BUG-018",
+      "phase": "Phase 3",
+      "severity": "P0",
+      "title": "Unified canonical lock acquisition hierarchy preventing deadlocks between dispatch, proposals, and cancel",
+      "commit": "e6fe8bd",
+      "files": [
+        "apps/api/src/marketplace/assignment.service.ts",
+        "apps/api/src/requests/cancellation.service.ts",
+        "apps/api/src/dispatch/dispatch.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/marketplace_concurrency.test.mjs + apps/api/tests/tamreedy_31_maintenance.test.mjs"
+    },
+    {
+      "id": "BUG-019",
+      "phase": "Phase 3",
+      "severity": "P1",
+      "title": "Preserve BUSY work_status when nurse still has other ACTIVE assignments after cancel/complete",
+      "commit": "e6fe8bd",
+      "files": [
+        "apps/api/src/requests/cancellation.service.ts",
+        "apps/api/src/dispatch/dispatch.service.ts"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc; multi-concurrent-visit cancellation test scenario not yet scripted"
+    },
+    {
+      "id": "BUG-020",
+      "phase": "Phase 3",
+      "severity": "P1",
+      "title": "Enforce patient cancellation policy fee/cooldown consistently in CancellationService",
+      "commit": "e6fe8bd",
+      "files": [
+        "apps/api/src/requests/cancellation.service.ts",
+        "apps/api/src/requests/requests.service.ts"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc; specific cancellation policy matrix test pending"
+    },
+    {
+      "id": "BUG-021",
+      "phase": "Phase 4",
+      "severity": "P0",
+      "title": "Full state teardown across all stores, caches, alarms, and CallManager on sign-out / account switch",
+      "commit": "0cc8e9a",
+      "files": [
+        "packages/flutter_core/lib/src/api.dart",
+        "packages/flutter_core/lib/src/login_screen.dart",
+        "packages/flutter_core/lib/src/realtime.dart",
+        "packages/flutter_core/lib/src/core/call_manager.dart",
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+        "apps/nurse_app/lib/features/offers/offer_store.dart",
+        "apps/nurse_app/lib/features/calendar/calendar_store.dart",
+        "apps/nurse_app/lib/features/finance/nurse_finance_store.dart",
+        "apps/nurse_app/lib/features/marketplace/marketplace_store.dart",
+        "apps/nurse_app/lib/features/availability/availability_store.dart",
+        "apps/patient_app/lib/features/communication/conversations_store.dart",
+        "apps/patient_app/lib/features/finance/finance_store.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Static analysis + tests passed; full multi-account sign-out teardown requires manual two-account mobile E2E"
+    },
+    {
+      "id": "BUG-022",
+      "phase": "Phase 4",
+      "severity": "P0",
+      "title": "Device session generation enforcement rejecting superseded access tokens across auth and WS",
+      "commit": "0cc8e9a",
+      "files": [
+        "infra/db/migrations/067_device_session_generation.sql",
+        "apps/api/src/auth/auth.service.ts",
+        "apps/api/src/auth/auth.guard.ts",
+        "apps/api/src/realtime/live.gateway.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs + apps/api/tests/device-session.test.mjs + apps/api/tests/auth.test.mjs"
+    },
+    {
+      "id": "BUG-023",
+      "phase": "Phase 4",
+      "severity": "P0",
+      "title": "Exact patient location authorization restricted to active departure window",
+      "commit": "0cc8e9a",
+      "files": [
+        "apps/api/src/requests/assignment-location-authorization.service.ts",
+        "apps/api/src/nurses/nurses.service.ts",
+        "apps/api/src/maps/routes.controller.ts",
+        "apps/api/src/scheduling/calendar.service.ts",
+        "apps/api/src/app.module.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (asserts exact coordinates/address masked on RESERVED assignment outside window)"
+    },
+    {
+      "id": "BUG-024",
+      "phase": "Phase 5",
+      "severity": "P1",
+      "title": "Gate clinical-review requests properly until clinician approval and prevent premature expiry/dispatch",
+      "commit": "39724a1",
+      "files": [
+        "infra/db/migrations/068_clinical_review_duration_and_closure.sql",
+        "apps/api/src/clinical-approvals/clinical-approval.service.ts",
+        "apps/api/src/clinical-approvals/clinical-approval.repository.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/worker/src/smart-recovery.ts"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc & migration 068 verified on PGlite; clinical approval state machine scenario needs dedicated API test"
+    },
+    {
+      "id": "BUG-025",
+      "phase": "Phase 5",
+      "severity": "P1",
+      "title": "Preserve requested open_duration_minutes across clinical review approval and support clean resubmission",
+      "commit": "39724a1",
+      "files": [
+        "infra/db/migrations/068_clinical_review_duration_and_closure.sql",
+        "apps/api/src/clinical-approvals/clinical-approval.service.ts",
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc and flutter analyze; UI resubmission path needs live API test"
+    },
+    {
+      "id": "BUG-026",
+      "phase": "Phase 5",
+      "severity": "P1",
+      "title": "Safe clinical attachment/evidence upload retry before submitting final booking request",
+      "commit": "39724a1",
+      "files": [
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/app/patient_router.dart",
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Flutter analyze + release APK build passed; multipart file upload retry requires live storage endpoint"
+    },
+    {
+      "id": "BUG-027",
+      "phase": "Phase 6",
+      "severity": "P0",
+      "title": "Clear push tokens cleanly on logout/session revocation and enforce app/role isolation on worker push",
+      "commit": "bd38f0e",
+      "files": [
+        "apps/worker/src/push.ts",
+        "apps/worker/src/main.ts",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+        "apps/patient_app/lib/core/patient_session_coordinator.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/worker/tests/push.test.mjs (role/app/active_status filtering & ledger dedupe passed)"
+    },
+    {
+      "id": "BUG-028",
+      "phase": "Phase 6",
+      "severity": "P0",
+      "title": "Strict NotificationCoordinator guard verifying expectedRole, expectedApp, and authenticated userId",
+      "commit": "bd38f0e",
+      "files": [
+        "packages/flutter_core/lib/src/core/notification_coordinator.dart",
+        "packages/flutter_core/lib/src/realtime.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "packages/flutter_core/test/tamreedy_31_core_test.dart + tamreedy3_core_test.dart"
+    },
+    {
+      "id": "BUG-029",
+      "phase": "Phase 6",
+      "severity": "P0",
+      "title": "Bounded canonical eventId deduplication across FCM, local notifications, and WebSocket",
+      "commit": "bd38f0e",
+      "files": [
+        "packages/flutter_core/lib/src/core/notification_coordinator.dart",
+        "apps/worker/src/push.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "packages/flutter_core/test/tamreedy_31_core_test.dart + apps/worker/tests/push.test.mjs"
+    },
+    {
+      "id": "BUG-030",
+      "phase": "Phase 6",
+      "severity": "P0",
+      "title": "Root IncomingOfferOverlay above all screens and routes in NurseApp via NurseShell + root navigatorKey",
+      "commit": "bd38f0e",
+      "files": [
+        "apps/nurse_app/lib/app/nurse_app.dart",
+        "apps/nurse_app/lib/app/nurse_shell.dart",
+        "apps/nurse_app/lib/app/nurse_router.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/nurse_app/test/nurse_rebirth_test.dart (overlay renders above all tabs including Finance & Marketplace)"
+    },
+    {
+      "id": "BUG-031",
+      "phase": "Phase 6",
+      "severity": "P1",
+      "title": "FIFO IncomingOffer queue with automatic expiry pruning and immediate ring/alarm alignment",
+      "commit": "bd38f0e",
+      "files": [
+        "apps/nurse_app/lib/features/offers/offer_store.dart",
+        "apps/nurse_app/lib/alarm.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/nurse_app/test/alarm_test.dart + nurse_rebirth_test.dart"
+    },
+    {
+      "id": "BUG-032",
+      "phase": "Phase 6",
+      "severity": "P1",
+      "title": "Sanitized patient/nurse alarm channel handling and deep-link navigation without data leakage",
+      "commit": "bd38f0e",
+      "files": [
+        "apps/patient_app/lib/patient_alarm.dart",
+        "apps/patient_app/lib/app/patient_router.dart",
+        "apps/nurse_app/lib/alarm.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Widget/alarm logic tested in nurse_app/test/alarm_test.dart; OS native FCM wake-up behavior requires device E2E"
+    },
+    {
+      "id": "BUG-033",
+      "phase": "Phase 7",
+      "severity": "P0",
+      "title": "Enforce live location age/accuracy and heartbeat policy thresholds in NurseMeController.readiness",
+      "commit": "6efb5f1",
+      "files": [
+        "apps/api/src/nurses/nurse-me.controller.ts",
+        "apps/api/src/live-location/live-location-read.service.ts",
+        "apps/api/src/live-location/geo-index.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (stale location asserts LOCATION_STALE / canReceiveOffers=false)"
+    },
+    {
+      "id": "BUG-034",
+      "phase": "Phase 7",
+      "severity": "P0",
+      "title": "Worker instant and open dispatch enforce location freshness/accuracy, financial account, and schedule conflicts",
+      "commit": "6efb5f1",
+      "files": [
+        "apps/worker/src/dispatch.ts",
+        "apps/worker/src/open-dispatch.ts",
+        "apps/worker/tests/dispatch.test.mjs",
+        "apps/worker/tests/open-dispatch.test.mjs"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/worker/tests/dispatch.test.mjs + open-dispatch.test.mjs (all 13 worker tests passed)"
+    },
+    {
+      "id": "BUG-035",
+      "phase": "Phase 7",
+      "severity": "P0",
+      "title": "Reject LiveLocationService.ingest BEFORE PostgreSQL write if Redis GeoIndex fails and fallback is disabled",
+      "commit": "6efb5f1",
+      "files": [
+        "apps/api/src/live-location/live-location.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (asserts LIVE_LOCATION_UNAVAILABLE and PG sequence unchanged)"
+    },
+    {
+      "id": "BUG-036",
+      "phase": "Phase 7",
+      "severity": "P1",
+      "title": "Broadcast targeted tracking.updated to patient on both HTTP /nurses/me/location and WebSocket",
+      "commit": "6efb5f1",
+      "files": [
+        "apps/api/src/nurses/nurses.service.ts",
+        "apps/api/src/realtime/live.gateway.ts"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Compiled cleanly via tsc; live multi-client Socket.IO delivery needs running Redis/Socket.IO integration"
+    },
+    {
+      "id": "BUG-037",
+      "phase": "Phase 7",
+      "severity": "P1",
+      "title": "Redis-first nurse coordinate reads across RequestsService.track and DispatchService.estimateDeparture",
+      "commit": "6efb5f1",
+      "files": [
+        "apps/api/src/live-location/live-location-read.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/src/dispatch/dispatch.service.ts",
+        "apps/api/src/app.module.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/dispatch_acceptance.test.mjs + apps/api/tests/live_location.test.mjs"
+    },
+    {
+      "id": "BUG-038",
+      "phase": "Phase 8",
+      "severity": "P0",
+      "title": "Atomic WebRTC voice signal ordering and eventId deduplication via transactional FOR UPDATE & unique constraint",
+      "commit": "83df101",
+      "files": [
+        "infra/db/migrations/069_voice_signal_atomic_ordering.sql",
+        "apps/api/src/voice/voice.service.ts",
+        "packages/flutter_core/lib/src/core/call_manager.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs + apps/api/tests/voice_calling.test.mjs (also fixed partial ON CONFLICT WHERE event_id IS NOT NULL in commit 427a25e)"
+    },
+    {
+      "id": "BUG-039",
+      "phase": "Phase 8",
+      "severity": "P1",
+      "title": "Restore active outgoing calls cleanly via checkActiveCalls without false presentIncoming UX",
+      "commit": "83df101",
+      "files": [
+        "apps/api/src/voice/voice.service.ts",
+        "packages/flutter_core/lib/src/core/call_manager.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Flutter analyze & API tsc passed; live app cold-start call recovery needs device WebRTC peer testing"
+    },
+    {
+      "id": "BUG-040",
+      "phase": "Phase 8",
+      "severity": "P1",
+      "title": "Gate CallPhase.connected and billing/duration timer on local WebRTC ICE connection state",
+      "commit": "83df101",
+      "files": [
+        "packages/flutter_core/lib/src/core/call_manager.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "packages/flutter_core/test/tamreedy_31_core_test.dart (asserts server call.connected leaves phase at connecting until ICE connects)"
+    },
+    {
+      "id": "BUG-041",
+      "phase": "Phase 8",
+      "severity": "P1",
+      "title": "WS-aware fallback polling and canonical event_id deduplication across voice WS and REST recovery",
+      "commit": "83df101",
+      "files": [
+        "apps/api/src/voice/voice.service.ts",
+        "packages/flutter_core/lib/src/core/call_manager.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Static analysis & build passed; live WS disconnect fallback cadence tested visually via code inspection"
+    },
+    {
+      "id": "BUG-042",
+      "phase": "Phase 9",
+      "severity": "P1",
+      "title": "Filter high-frequency non-notification WS events out of unreadNotifications counter",
+      "commit": "ac8444c",
+      "files": [
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Flutter analyze passed; requires live session event stream for E2E counter check"
+    },
+    {
+      "id": "BUG-043",
+      "phase": "Phase 9",
+      "severity": "P1",
+      "title": "SearchingScreen single RouteTransitionGuard and clean handling of CANCELLED/EXPIRED/ESCALATED states",
+      "commit": "ac8444c",
+      "files": [
+        "apps/patient_app/lib/features/requests/searching_screen.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Flutter analyze and patient_rebirth_test passed; multi-state navigation E2E pending on device"
+    },
+    {
+      "id": "BUG-044",
+      "phase": "Phase 9",
+      "severity": "P1",
+      "title": "Adaptive WS-aware polling on SearchingScreen and OpenProposalsScreen reducing redundant API traffic",
+      "commit": "ac8444c",
+      "files": [
+        "apps/patient_app/lib/features/requests/searching_screen.dart",
+        "apps/patient_app/lib/features/requests/open_proposals_screen.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Flutter analyze and release build passed; runtime polling interval drop requires live WS connection"
+    },
+    {
+      "id": "BUG-045",
+      "phase": "Phase 9",
+      "severity": "P1",
+      "title": "Realtime payment/completion refresh on InvoicePaymentScreen",
+      "commit": "ac8444c",
+      "files": [
+        "apps/patient_app/lib/features/finance/invoice_payment_screen.dart"
+      ],
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "verification": "Flutter analyze and release build passed; live nurse-collects-cash push trigger requires two-device E2E"
+    },
+    {
+      "id": "BUG-046",
+      "phase": "Phase 9",
+      "severity": "P1",
+      "title": "Staged session initialization (Critical vs Deferred) with SessionInitState and explicit retryInit()",
+      "commit": "ac8444c",
+      "files": [
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+        "packages/flutter_core/lib/src/core/api_models.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "packages/flutter_core/test/tamreedy_31_core_test.dart + flutter analyze across all packages"
+    },
+    {
+      "id": "BUG-047",
+      "phase": "Phase 10",
+      "severity": "P1",
+      "title": "Expose runtime feature capabilities (/v1/capabilities) and gate SCHEDULED booking dynamically in mobile app",
+      "commit": "42da147",
+      "files": [
+        "apps/api/src/app.controller.ts",
+        "packages/flutter_core/lib/src/core/api_models.dart",
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/features/booking/booking_wizard_screen.dart"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs + packages/flutter_core/test/tamreedy_31_core_test.dart"
+    },
+    {
+      "id": "BUG-048",
+      "phase": "Phase 10",
+      "severity": "P1",
+      "title": "Add /health/ready checking PostgreSQL pool stats, Redis GeoIndex readiness, and migration status",
+      "commit": "42da147",
+      "files": [
+        "apps/api/src/app.controller.ts",
+        "apps/api/src/db/db.service.ts",
+        "apps/api/src/live-location/geo-index.service.ts"
+      ],
+      "status": "VERIFIED",
+      "verification": "apps/api/tests/tamreedy_31_maintenance.test.mjs (asserts status=ready, db check ok, migrations >= 30)"
+    }
+  ]
+}
