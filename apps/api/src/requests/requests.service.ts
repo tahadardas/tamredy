@@ -149,7 +149,7 @@ export class RequestsService {
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
         userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,combinedCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
-        bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'SCHEDULED' : 'SEARCHING'),
+        bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'INITIAL' : 'SEARCHING'),
         isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
         latestArrivalAt?.toISOString() ?? null, areaId, needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED'
       ]);
@@ -327,7 +327,7 @@ export class RequestsService {
     return this.db.transaction(client => cancelRequest(client, userId, requestId, dto));
   }
   async track(userId:string, requestId:string) {
-    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.clinical_approval_status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
+    const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.version,cr.booking_mode,cr.clinical_approval_status,ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_Y(nl.location::geometry) END AS nurse_lat,
       CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_X(nl.location::geometry) END AS nurse_lng,
       CASE WHEN cr.status='EN_ROUTE' THEN nl.recorded_at END AS location_at

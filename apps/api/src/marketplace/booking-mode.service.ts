@@ -19,7 +19,8 @@ export class BookingModeService {
       // 1. Lock request
       const reqRes = await client.query(
         `SELECT id, requester_user_id, status, booking_mode, version, booking_mode_version,
-                price_amount, currency_code, commission_bps, location
+                price_amount, currency_code, commission_bps, location, clinical_approval_status,
+                open_duration_minutes
          FROM care_requests
          WHERE id = $1
          FOR UPDATE`,
@@ -32,11 +33,24 @@ export class BookingModeService {
         throw new ForbiddenException({ code: 'FORBIDDEN_NOT_REQUEST_OWNER' });
       }
 
-      // Prohibit mode conversion on assigned or active visits
-      if (['ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE', 'COMPLETED', 'ESCALATED'].includes(request.status)) {
+      if (request.clinical_approval_status === 'REJECTED') {
+        throw new ConflictException({
+          code: 'CLINICAL_APPROVAL_REJECTED',
+          message: 'تم رفض الطلب سريرياً ولا يمكن إعادة توجيهه قبل المعالجة',
+        });
+      }
+
+      const CONVERTIBLE_STATUSES = [
+        'SCHEDULED',
+        'OFFERING',
+        'OPEN_FOR_PROPOSALS',
+        'AWAITING_RECOVERY_CHOICE',
+        'UNFULFILLED',
+      ];
+      if (!CONVERTIBLE_STATUSES.includes(request.status)) {
         throw new ConflictException({
           code: 'CANNOT_CONVERT_ASSIGNED_REQUEST',
-          message: 'لا يمكن تحويل نوع الحجز لطلب مسند بالفعل',
+          message: 'لا يمكن تحويل نوع الحجز لطلب مسند أو منتهي بالفعل',
         });
       }
 
@@ -45,28 +59,38 @@ export class BookingModeService {
       const fromStatus = request.status;
       let toStatus = fromStatus;
 
-      if (fromMode === toMode) {
+      if (fromMode === toMode && !['UNFULFILLED', 'AWAITING_RECOVERY_CHOICE'].includes(fromStatus)) {
         throw new ConflictException({ code: 'BOOKING_MODE_ALREADY_ACTIVE' });
       }
 
       // 2. Transition to OPEN MARKETPLACE
       if (toMode === 'OPEN') {
         toStatus = 'OPEN_FOR_PROPOSALS';
+        const clinicalPending = request.clinical_approval_status === 'PENDING';
         const now = new Date();
-        const durationMins = dto.openDurationMinutes ?? 120;
-        const openExpiresAt = new Date(now.getTime() + durationMins * 60000);
-        const latestArrivalAt = dto.latestAcceptableArrivalAt
-          ? new Date(dto.latestAcceptableArrivalAt)
-          : new Date(openExpiresAt.getTime() + 60 * 60000);
+        const durationMins = dto.openDurationMinutes ?? Number(request.open_duration_minutes ?? 120);
+        const openExpiresAt = clinicalPending ? null : new Date(now.getTime() + durationMins * 60000);
+        const latestArrivalAt = clinicalPending
+          ? null
+          : dto.latestAcceptableArrivalAt
+            ? new Date(dto.latestAcceptableArrivalAt)
+            : new Date(openExpiresAt!.getTime() + 60 * 60000);
 
-        // Close pending instant offers and cancel dispatch jobs
+        // Close pending instant offers, stale proposals, dispatch jobs, and previous scheduled visit
         await client.query(
           `UPDATE request_offers SET status = 'EXPIRED' WHERE request_id = $1 AND status = 'OPEN'`,
           [requestId],
         );
+        await client.query(
+          `UPDATE marketplace_proposals
+           SET status = 'INVALIDATED', proposal_version = proposal_version + 1, updated_at = now()
+           WHERE request_id = $1 AND status = 'PENDING'`,
+          [requestId],
+        );
         await client.query(`DELETE FROM dispatch_jobs WHERE request_id = $1`, [requestId]);
+        await client.query(`DELETE FROM scheduled_visits WHERE request_id = $1`, [requestId]);
 
-        await transitionRequest(client, {
+        const newVersion = await transitionRequest(client, {
           requestId,
           fromStatus,
           toStatus,
@@ -82,14 +106,25 @@ export class BookingModeService {
           `UPDATE care_requests
            SET booking_mode = 'OPEN',
                marketplace_status = 'OPEN_FOR_PROPOSALS',
-               published_at = now(),
+               published_at = CASE WHEN $5 THEN NULL ELSE now() END,
+               open_duration_minutes = $4,
                open_expires_at = $2,
                latest_acceptable_arrival_at = $3,
+               search_started_at = NULL,
+               search_expires_at = NULL,
+               scheduled_start_at = NULL,
+               scheduled_end_at = NULL,
                booking_mode_version = booking_mode_version + 1,
                last_mode_change_at = now(),
                updated_at = now()
            WHERE id = $1`,
-          [requestId, openExpiresAt.toISOString(), latestArrivalAt.toISOString()],
+          [
+            requestId,
+            openExpiresAt?.toISOString() ?? null,
+            latestArrivalAt?.toISOString() ?? null,
+            durationMins,
+            clinicalPending,
+          ],
         );
 
         // Audit log transition
@@ -110,7 +145,7 @@ export class BookingModeService {
           ],
         );
 
-        // Emit outbox events
+        // Emit single canonical outbox event with new version
         await client.query(
           `INSERT INTO outbox_events(event_type, aggregate_id, payload)
            VALUES('marketplace.request.published', $1, $2::jsonb)`,
@@ -122,10 +157,10 @@ export class BookingModeService {
               recipientRole: 'PATIENT',
               targetApp: 'PATIENT_APP',
               requestId,
-              entityVersion: Number(request.version) + 1,
-              expiresAt: openExpiresAt.toISOString(),
+              entityVersion: newVersion,
+              expiresAt: openExpiresAt?.toISOString() ?? null,
               skipPush: true,
-              extra: { openExpiresAt },
+              extra: { openExpiresAt, version: newVersion },
             })),
           ],
         );
@@ -134,6 +169,7 @@ export class BookingModeService {
           requestId,
           bookingMode: 'OPEN',
           status: 'OPEN_FOR_PROPOSALS',
+          version: newVersion,
           openExpiresAt,
           latestAcceptableArrivalAt: latestArrivalAt,
         };
@@ -160,14 +196,20 @@ export class BookingModeService {
           await verifyScheduledSafety(client, s.service_id, appointment);
         }
 
-        // Close pending instant offers and cancel dispatch jobs
+        // Close pending instant offers, open proposals, and cancel dispatch jobs
         await client.query(
           `UPDATE request_offers SET status = 'EXPIRED' WHERE request_id = $1 AND status = 'OPEN'`,
           [requestId],
         );
+        await client.query(
+          `UPDATE marketplace_proposals
+           SET status = 'INVALIDATED', proposal_version = proposal_version + 1, updated_at = now()
+           WHERE request_id = $1 AND status = 'PENDING'`,
+          [requestId],
+        );
         await client.query(`DELETE FROM dispatch_jobs WHERE request_id = $1`, [requestId]);
 
-        await transitionRequest(client, {
+        const newVersion = await transitionRequest(client, {
           requestId,
           fromStatus,
           toStatus,
@@ -184,6 +226,10 @@ export class BookingModeService {
                marketplace_status = 'INITIAL',
                scheduled_start_at = $2,
                scheduled_end_at = $3,
+               search_started_at = NULL,
+               search_expires_at = NULL,
+               open_expires_at = NULL,
+               latest_acceptable_arrival_at = NULL,
                booking_mode_version = booking_mode_version + 1,
                last_mode_change_at = now(),
                updated_at = now()
@@ -210,10 +256,29 @@ export class BookingModeService {
           ],
         );
 
+        await client.query(
+          `INSERT INTO outbox_events(event_type, aggregate_id, payload)
+           VALUES('request.created', $1, $2::jsonb)`,
+          [
+            requestId,
+            JSON.stringify(buildNotificationPayload({
+              eventType: 'request.created',
+              recipientUserId: patientUserId,
+              recipientRole: 'PATIENT',
+              targetApp: 'PATIENT_APP',
+              requestId,
+              entityVersion: newVersion,
+              skipPush: true,
+              extra: { bookingMode: 'SCHEDULED', scheduledAt: appointment.toISOString(), version: newVersion },
+            })),
+          ],
+        );
+
         return {
           requestId,
           bookingMode: 'SCHEDULED',
           status: 'SCHEDULED',
+          version: newVersion,
           scheduledAt: appointment.toISOString(),
           scheduledEndAt: scheduledEnd?.toISOString() ?? null,
         };
@@ -260,9 +325,21 @@ export class BookingModeService {
     if (!['UNFULFILLED', 'AWAITING_RECOVERY_CHOICE', 'OPEN_FOR_PROPOSALS', 'SCHEDULED'].includes(request.status)) {
       throw new ConflictException({ code: 'REQUEST_NOT_RECOVERABLE' });
     }
+    if (request.clinical_approval_status === 'REJECTED') {
+      throw new ConflictException({ code: 'CLINICAL_APPROVAL_REJECTED' });
+    }
     const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
+    const clinicalPending = request.clinical_approval_status === 'PENDING';
 
-    await transitionRequest(client, {
+    await client.query(
+      `UPDATE marketplace_proposals
+       SET status = 'INVALIDATED', proposal_version = proposal_version + 1, updated_at = now()
+       WHERE request_id = $1 AND status = 'PENDING'`,
+      [requestId],
+    );
+    await client.query(`DELETE FROM scheduled_visits WHERE request_id = $1`, [requestId]);
+
+    const newVersion = await transitionRequest(client, {
       requestId,
       fromStatus: request.status,
       toStatus: 'OFFERING',
@@ -277,18 +354,24 @@ export class BookingModeService {
       `UPDATE care_requests
        SET booking_mode = 'INSTANT',
            marketplace_status = 'SEARCHING',
-           search_started_at = statement_timestamp(),
-           search_expires_at = statement_timestamp() + $2::integer * interval '1 second',
+           scheduled_start_at = NULL,
+           scheduled_end_at = NULL,
+           open_expires_at = NULL,
+           latest_acceptable_arrival_at = NULL,
+           search_started_at = CASE WHEN $4 THEN NULL ELSE statement_timestamp() END,
+           search_expires_at = CASE WHEN $4 THEN NULL ELSE statement_timestamp() + $2::integer * interval '1 second' END,
            search_radius_meters = $3,
            booking_mode_version = booking_mode_version + 1,
            last_mode_change_at = now(),
            updated_at = now()
        WHERE id = $1`,
-      [requestId, policy?.offerDurationSeconds ?? 60, policy?.radiusMeters ?? 10000],
+      [requestId, policy?.offerDurationSeconds ?? 60, policy?.radiusMeters ?? 10000, clinicalPending],
     );
 
-    await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1)
-      ON CONFLICT(request_id) DO UPDATE SET next_wave=1,next_run_at=statement_timestamp(),updated_at=statement_timestamp()`, [requestId]);
+    if (!clinicalPending) {
+      await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1)
+        ON CONFLICT(request_id) DO UPDATE SET next_wave=1,next_run_at=statement_timestamp(),updated_at=statement_timestamp()`, [requestId]);
+    }
 
     await client.query(
       `INSERT INTO request_booking_transitions(
@@ -310,7 +393,8 @@ export class BookingModeService {
           recipientRole: 'PATIENT',
           targetApp: 'PATIENT_APP',
           requestId,
-          entityVersion: Number(request.version) + 1,
+          entityVersion: newVersion,
+          extra: { version: newVersion },
         })),
       ],
     );
@@ -319,6 +403,7 @@ export class BookingModeService {
       requestId,
       bookingMode: 'INSTANT',
       status: 'OFFERING',
+      version: newVersion,
       retried: true,
     };
   }

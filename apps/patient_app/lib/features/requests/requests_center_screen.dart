@@ -152,8 +152,17 @@ class _RequestsCenterScreenState extends State<RequestsCenterScreen> {
                                   )
                                 : ListView.builder(
                                     padding: const EdgeInsets.all(16),
-                                    itemCount: shown.length,
+                                    itemCount: shown.length + ((_section == _RequestsSection.past && store.hasMoreHistory) ? 1 : 0),
                                     itemBuilder: (context, idx) {
+                                      if (idx >= shown.length) {
+                                        return Padding(
+                                          padding: const EdgeInsets.only(top: 6, bottom: 16),
+                                          child: SoftButton(
+                                            store.loadingMore ? 'جاري التحميل...' : 'تحميل طلبات أقدم',
+                                            onPressed: store.loadingMore ? null : () => store.loadMoreHistory(),
+                                          ),
+                                        );
+                                      }
                                       final req = shown[idx];
                                       return _RequestSummaryCard(
                                         req: req,

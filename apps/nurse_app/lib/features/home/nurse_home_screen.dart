@@ -107,6 +107,8 @@ class NurseHomeScreen extends StatelessWidget {
                           ),
                         ),
                       if (activeVisit) _ActiveVisitBanner(session: session),
+                      if (session.visit.unpaidInvoices.isNotEmpty)
+                        _UnpaidInvoicesSection(session: session),
                       _AvailabilityStatusCard(
                         session: session,
                         lockedByAssignmentOrDebt: blocked || activeVisit,
@@ -472,6 +474,57 @@ class _QuickShortcutsRow extends StatelessWidget {
             onTap: () => NurseRouter.switchTab(2),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _UnpaidInvoicesSection extends StatelessWidget {
+  final NurseSessionCoordinator session;
+  const _UnpaidInvoicesSection({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    final invoices = session.visit.unpaidInvoices;
+    if (invoices.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: TamCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long_rounded, color: tc.warning, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'فواتير معلّقة للتحصيل (${invoices.length})',
+                    style: aeroText(size: 14.5, weight: FontWeight.w800, color: tc.textPrimary),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (var i = 0; i < invoices.length; i++) ...[
+              ListRow(
+                icon: Icons.payments_outlined,
+                title: invoices[i].serviceTitle ?? 'فاتورة زيارة #${invoices[i].requestId.substring(0, invoices[i].requestId.length.clamp(0, 6))}',
+                subtitle: 'المتبقي: ${formatMoney(invoices[i].remaining)} ${invoices[i].currencyCode}',
+                divider: i < invoices.length - 1,
+                trailing: Icon(Icons.chevron_left_rounded, color: tc.textSecondary),
+                onTap: () async {
+                  await session.visit.openUnpaidInvoice(invoices[i]);
+                  if (context.mounted) {
+                    await NurseRouter.openVisitWorkspace(context, session);
+                  }
+                },
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -51,10 +51,14 @@ export class RequestRecoveryService {
     `, [patientUserId, [...PATIENT_RECOVERABLE_STATUSES]]);
 
     const unpaid = await this.db.query(`
-      SELECT id,status,payment_status,amount_due,tip_amount,currency_code,billed_at,created_at
-      FROM care_requests
-      WHERE requester_user_id=$1 AND status='COMPLETED' AND payment_status IN ('DUE','PARTIAL')
-      ORDER BY billed_at DESC NULLS LAST,id DESC
+      SELECT cr.id,cr.status,cr.version,cr.booking_mode,cr.marketplace_status,cr.clinical_approval_status,
+        cr.payment_status,cr.amount_due,cr.tip_amount,cr.currency_code,cr.billed_at,cr.created_at,
+        s.title_ar AS service_title, b.display_name AS beneficiary_name
+      FROM care_requests cr
+      JOIN services s ON s.id=cr.service_id
+      JOIN beneficiaries b ON b.id=cr.beneficiary_id
+      WHERE cr.requester_user_id=$1 AND cr.status='COMPLETED' AND cr.payment_status IN ('DUE','PARTIAL')
+      ORDER BY cr.billed_at DESC NULLS LAST,cr.id DESC
     `, [patientUserId]);
 
     const pendingReviews = await this.db.query(`
@@ -116,21 +120,50 @@ export class RequestRecoveryService {
     `, [nurse.id]);
 
     const unpaidInvoices = await this.db.query(`
-      SELECT a.id AS assignment_id,i.request_id,i.status,i.total_amount+i.tip_amount-i.paid_amount AS remaining
-      FROM invoices i JOIN visits v ON v.id=i.visit_id JOIN request_assignments a ON a.id=v.assignment_id
+      SELECT a.id AS assignment_id,i.id AS invoice_id,i.request_id,i.status,
+        i.total_amount+i.tip_amount-i.paid_amount AS remaining,i.currency_code,
+        cr.version AS request_version,s.title_ar AS service_title,b.display_name AS beneficiary_name
+      FROM invoices i
+      JOIN visits v ON v.id=i.visit_id
+      JOIN request_assignments a ON a.id=v.assignment_id
+      JOIN care_requests cr ON cr.id=i.request_id
+      JOIN services s ON s.id=cr.service_id
+      JOIN beneficiaries b ON b.id=cr.beneficiary_id
       WHERE a.nurse_id=$1 AND i.status IN ('ISSUED','PARTIALLY_PAID')
       ORDER BY i.issued_at DESC,i.id DESC LIMIT 50`, [nurse.id]);
-    const active = assignments.rows.find(row => row.assignment_status==='ACTIVE')
-      ?? assignments.rows.find(row=>row.departure_window_open===true) ?? null;
+
+    const enrichedAssignments = assignments.rows.map(row => ({
+      ...row,
+      allowedActions: this.allowedNurseActions(row.request_status, row.departure_window_open === true),
+    }));
+    const active = enrichedAssignments.find(row => row.assignment_status === 'ACTIVE')
+      ?? enrichedAssignments.find(row => row.departure_window_open === true) ?? null;
     return {
       hasActive: active !== null,
       verified: nurse.verified,
       availability: nurse.availability_intent,
       workStatus: nurse.work_status,
       assignment: active,
-      assignments: assignments.rows,
+      assignments: enrichedAssignments,
       unpaidInvoices: unpaidInvoices.rows,
       serverTime: new Date().toISOString(),
     };
+  }
+
+  private allowedNurseActions(requestStatus: string, departureWindowOpen: boolean): string[] {
+    switch (requestStatus) {
+      case 'ASSIGNED':
+        return departureWindowOpen ? ['DEPART', 'SAFE_ABORT'] : [];
+      case 'EN_ROUTE':
+        return ['ARRIVE', 'UPDATE_LOCATION', 'SAFE_ABORT'];
+      case 'ARRIVED':
+        return ['START_SERVICE', 'SAFE_ABORT'];
+      case 'IN_SERVICE':
+        return ['CLINICAL_NOTES', 'SERVICE_OUTCOMES', 'COMPLETE_VISIT', 'SAFE_ABORT'];
+      case 'ESCALATED':
+        return ['COMPLETE_VISIT', 'SAFE_ABORT'];
+      default:
+        return [];
+    }
   }
 }

@@ -54,17 +54,26 @@ class VisitWorkspaceScreen extends StatelessWidget {
         final v = session.visit;
         final phase = v.phase;
 
-        if (phase == NurseVisitPhase.idle) {
+        if (v.activeUnpaidInvoice != null && !v.hasActiveWork) {
+          return _CompletedCollectionView(session: session);
+        }
+
+        if (phase == NurseVisitPhase.idle || phase == NurseVisitPhase.scheduled) {
           return TamScaffold(
             title: 'تفاصيل الزيارة',
-            subtitle: 'لا توجد زيارة نشطة حالياً',
+            subtitle: phase == NurseVisitPhase.scheduled
+                ? 'موعد محجوز لم يدخل نافذة الانطلاق بعد'
+                : 'لا توجد زيارة نشطة حالياً',
             showBack: true,
             children: [
+              if (v.syncError != null) NoticeBox(v.syncError!),
               if (v.cancellationNotice != null) NoticeBox(v.cancellationNotice!),
-              const TamEmptyState(
+              TamEmptyState(
                 icon: Icons.check_circle_outline_rounded,
-                title: 'اكتملت المهمة أو أُغلقت',
-                message: 'يمكنك العودة للوحة الممرض واستقبال طلبات جديدة.',
+                title: phase == NurseVisitPhase.scheduled ? 'زيارة مجدولة قادمة' : 'اكتملت المهمة أو أُغلقت',
+                message: phase == NurseVisitPhase.scheduled
+                    ? 'ستُفتح خطوات الزيارة والعنوان تلقائياً عند دخول نافذة الانطلاق.'
+                    : 'يمكنك العودة للوحة الممرض واستقبال طلبات جديدة.',
               ),
               PrimaryButton('العودة للوحة الممرض', onPressed: () => Navigator.of(context).maybePop()),
             ],
@@ -89,6 +98,7 @@ class VisitWorkspaceScreen extends StatelessWidget {
           showBack: true,
           onRefresh: v.restoreActiveAssignment,
           children: [
+            if (v.syncError != null) NoticeBox(v.syncError!),
             if (v.error != null) NoticeBox(v.error!),
             TamStepper(
               steps: const ['إسناد', 'في الطريق', 'وصول', 'تنفيذ', 'إنهاء'],

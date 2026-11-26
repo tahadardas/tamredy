@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 
@@ -30,16 +31,32 @@ class RequestsStore extends ChangeNotifier {
   late final StreamSubscription<RealtimeEvent> _sub;
 
   bool loading = false;
+  bool loadingMore = false;
   String? error;
 
-  List<TypedCareRequest> _allRequests = const [];
+  final Map<String, TypedCareRequest> _requestsById = {};
   final Map<String, TypedCareRequest> _detailsCache = {};
   final Map<String, List<TypedProposal>> _proposalsCache = {};
   final Map<String, String> _lastCancellationAttemptKey = {};
+  List<Map<String, dynamic>> _pendingReviews = const [];
+  String? _nextCursor;
+
+  List<TypedCareRequest> _allRequests = const [];
+
+  int _sessionGeneration = 0;
+  int _refreshGeneration = 0;
+  Future<void>? _refreshInFlight;
+  CancelToken? _refreshCancelToken;
+
+  final Map<String, int> _detailGeneration = {};
+  final Map<String, Future<TypedCareRequest?>> _detailInFlight = {};
+  final Map<String, CancelToken> _detailCancelTokens = {};
 
   List<TypedCareRequest> get allRequests => _allRequests;
+  List<Map<String, dynamic>> get pendingReviews => _pendingReviews;
+  bool get hasMoreHistory => _nextCursor != null && _nextCursor!.isNotEmpty;
 
-  /// In-flight instant/open/assigned/in-visit requests (excluding future scheduled until they enter dispatch).
+  /// In-flight instant/open/assigned/in-visit/unfulfilled requests (excluding future scheduled until dispatch).
   List<TypedCareRequest> get activeRequests => _allRequests
       .where((r) => r.isActive && r.status != 'SCHEDULED')
       .toList();
@@ -50,8 +67,11 @@ class RequestsStore extends ChangeNotifier {
   List<TypedCareRequest> get unpaidBills =>
       _allRequests.where((r) => r.isUnpaid).toList();
 
+  List<TypedCareRequest> get unfulfilledRequests =>
+      _allRequests.where((r) => r.isUnfulfilled).toList();
+
   List<TypedCareRequest> get pastRequests => _allRequests
-      .where((r) => !r.isActive && !r.isUnpaid)
+      .where((r) => !r.isActive && !r.isUnpaid && !r.isUnfulfilled)
       .toList();
 
   TypedCareRequest? get primaryActiveRequest =>
@@ -59,34 +79,108 @@ class RequestsStore extends ChangeNotifier {
 
   TypedCareRequest? requestById(String id) {
     final cached = _detailsCache[id];
-    if (cached != null) return cached;
-    for (final r in _allRequests) {
-      if (r.id == id) return r;
-    }
-    return null;
+    final inMap = _requestsById[id];
+    if (cached != null && inMap != null) return inMap.mergePreferRicher(cached);
+    return cached ?? inMap;
   }
 
   List<TypedProposal> proposalsFor(String requestId) =>
       _proposalsCache[requestId] ?? const [];
 
+  void _upsertRequest(TypedCareRequest parsed, {bool isDetail = false}) {
+    if (parsed.id.isEmpty) return;
+    final current = _requestsById[parsed.id];
+    final merged = current == null ? parsed : current.mergePreferRicher(parsed);
+    _requestsById[parsed.id] = merged;
+    if (isDetail || merged.hasFullDetail) {
+      final cached = _detailsCache[parsed.id];
+      _detailsCache[parsed.id] = cached == null ? merged : cached.mergePreferRicher(merged);
+    }
+  }
+
+  void _rebuildSortedList() {
+    _allRequests = _requestsById.values.toList()
+      ..sort((a, b) => (b.createdAt ?? DateTime(2000)).compareTo(a.createdAt ?? DateTime(2000)));
+  }
+
   void _onRealtimeEvent(RealtimeEvent ev) {
     final reqId = ev.payload['requestId']?.toString() ?? ev.payload['request_id']?.toString();
-    // Trigger targeted silent refresh of requests list + affected detail/proposals
-    refreshAll(silent: true);
+    final evVer = int.tryParse('${ev.payload['entityVersion'] ?? ev.payload['version'] ?? ''}');
     if (reqId != null && reqId.isNotEmpty) {
-      if (_detailsCache.containsKey(reqId) ||
-          ev.type.startsWith('request.') ||
-          ev.type.startsWith('visit.')) {
-        loadRequestDetail(reqId);
+      final current = requestById(reqId);
+      if (current != null && evVer != null && evVer < current.version) {
+        return;
       }
       if (ev.type.contains('proposal')) {
         loadProposals(reqId);
       }
+      if (ev.type.startsWith('request.') ||
+          ev.type.startsWith('visit.') ||
+          ev.type.startsWith('marketplace.') ||
+          ev.type.startsWith('payment.')) {
+        loadRequestDetail(reqId, force: true);
+        if (current == null || ev.type == 'request.created' || ev.type == 'request.cancelled') {
+          refreshActiveOnly();
+        }
+        return;
+      }
     }
+    refreshActiveOnly();
   }
 
-  Future<void> refreshAll({bool silent = false}) async {
+  /// Refreshes active requests/unpaid bills/pending reviews without refetching full history.
+  Future<void> refreshActiveOnly() async {
     if (kDemoMode) return;
+    final gen = ++_refreshGeneration;
+    final sessGen = _sessionGeneration;
+    try {
+      final activeEnvelope = await api.getMap('/v1/me/active-request');
+      if (gen != _refreshGeneration || sessGen != _sessionGeneration) return;
+      _ingestActiveEnvelope(activeEnvelope);
+      _rebuildSortedList();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  void _ingestActiveEnvelope(Map<String, dynamic> activeEnvelope) {
+    final activeList = activeEnvelope['requests'] as List? ?? const [];
+    for (final raw in activeList) {
+      if (raw is Map) {
+        _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(raw), fullDetail: true));
+      }
+    }
+    final activeReq = activeEnvelope['request'];
+    if (activeEnvelope['hasActive'] == true && activeReq is Map) {
+      _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(activeReq), fullDetail: true));
+    }
+    for (final raw in (activeEnvelope['unpaidInvoices'] as List? ?? const [])) {
+      if (raw is Map) {
+        _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(raw)));
+      }
+    }
+    final rawReviews = activeEnvelope['pendingReviews'] as List? ?? const [];
+    _pendingReviews = [
+      for (final r in rawReviews)
+        if (r is Map) Map<String, dynamic>.from(r),
+    ];
+  }
+
+  Future<void> refreshAll({bool silent = false, bool force = false}) {
+    if (kDemoMode) return Future.value();
+    if (!force && _refreshInFlight != null) return _refreshInFlight!;
+    _refreshCancelToken?.cancel('superseded');
+    final cancelToken = CancelToken();
+    _refreshCancelToken = cancelToken;
+    final future = _doRefreshAll(silent: silent, cancelToken: cancelToken);
+    _refreshInFlight = future.whenComplete(() {
+      if (identical(_refreshInFlight, future)) _refreshInFlight = null;
+    });
+    return _refreshInFlight!;
+  }
+
+  Future<void> _doRefreshAll({required bool silent, required CancelToken cancelToken}) async {
+    final gen = ++_refreshGeneration;
+    final sessGen = _sessionGeneration;
     if (!silent) {
       loading = true;
       error = null;
@@ -94,77 +188,138 @@ class RequestsStore extends ChangeNotifier {
     }
     try {
       final results = await Future.wait([
-        api.getMap('/v1/me/active-request'),
-        api.getMap('/v1/requests/mine?limit=40'),
+        api.getMap('/v1/me/active-request', cancelToken: cancelToken),
+        api.getMap('/v1/requests/mine?limit=40', cancelToken: cancelToken),
       ]);
+      if (gen != _refreshGeneration || sessGen != _sessionGeneration || cancelToken.isCancelled) {
+        return;
+      }
 
       final activeEnvelope = results[0];
       final historyEnvelope = results[1];
-      final map = <String, TypedCareRequest>{};
 
-      final activeReq = activeEnvelope['request'];
-      if (activeEnvelope['hasActive'] == true && activeReq is Map) {
-        final parsed = TypedCareRequest.fromJson(Map<String, dynamic>.from(activeReq));
-        map[parsed.id] = parsed;
-      }
-
-      for (final raw in (activeEnvelope['unpaidInvoices'] as List? ?? const [])) {
-        if (raw is Map) {
-          final parsed = TypedCareRequest.fromJson(Map<String, dynamic>.from(raw));
-          map.putIfAbsent(parsed.id, () => parsed);
-        }
-      }
+      _ingestActiveEnvelope(activeEnvelope);
 
       for (final raw in (historyEnvelope['items'] as List? ?? const [])) {
         if (raw is Map) {
-          final parsed = TypedCareRequest.fromJson(Map<String, dynamic>.from(raw));
-          final existing = map[parsed.id];
-          // Prefer detailed entry if version is equal or higher
-          if (existing == null || parsed.version > existing.version) {
-            map[parsed.id] = parsed;
-          }
+          _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(raw)));
         }
       }
-
-      _allRequests = map.values.toList()
-        ..sort((a, b) => (b.createdAt ?? DateTime(2000)).compareTo(a.createdAt ?? DateTime(2000)));
+      _nextCursor = historyEnvelope['nextCursor']?.toString();
+      _rebuildSortedList();
       error = null;
     } catch (e) {
+      if (cancelToken.isCancelled || sessGen != _sessionGeneration) return;
       if (!silent) {
         error = explainError(e, fallback: 'تعذر تحديث قائمة الطلبات');
       }
     } finally {
-      loading = false;
-      notifyListeners();
+      if (gen == _refreshGeneration && sessGen == _sessionGeneration) {
+        loading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> loadMoreHistory() async {
+    final cursor = _nextCursor;
+    if (kDemoMode || loadingMore || cursor == null || cursor.isEmpty) return;
+    loadingMore = true;
+    notifyListeners();
+    final sessGen = _sessionGeneration;
+    try {
+      final historyEnvelope = await api.getMap(
+        '/v1/requests/mine?limit=40&cursor=${Uri.encodeQueryComponent(cursor)}',
+      );
+      if (sessGen != _sessionGeneration) return;
+      for (final raw in (historyEnvelope['items'] as List? ?? const [])) {
+        if (raw is Map) {
+          _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(raw)));
+        }
+      }
+      _nextCursor = historyEnvelope['nextCursor']?.toString();
+      _rebuildSortedList();
+    } catch (_) {
+    } finally {
+      if (sessGen == _sessionGeneration) {
+        loadingMore = false;
+        notifyListeners();
+      }
     }
   }
 
   void registerCreatedRequest(TypedCareRequest req) {
-    _detailsCache[req.id] = req;
-    _allRequests = [req, ..._allRequests.where((r) => r.id != req.id)];
+    _upsertRequest(req, isDetail: true);
+    _rebuildSortedList();
     notifyListeners();
     if (!kDemoMode) {
-      loadRequestDetail(req.id);
+      loadRequestDetail(req.id, force: true);
     }
   }
 
-  Future<TypedCareRequest?> loadRequestDetail(String requestId) async {
-    if (kDemoMode) return requestById(requestId);
-    try {
-      final res = await api.getMap('/v1/requests/$requestId');
-      final parsed = TypedCareRequest.fromJson(res);
-      _detailsCache[requestId] = parsed;
-      final idx = _allRequests.indexWhere((r) => r.id == requestId);
-      if (idx >= 0) {
-        _allRequests = [..._allRequests]..[idx] = parsed;
-      } else {
-        _allRequests = [parsed, ..._allRequests];
+  Future<TypedCareRequest?> loadRequestDetail(String requestId, {bool force = false}) {
+    if (kDemoMode) return Future.value(requestById(requestId));
+    if (!force && _detailInFlight.containsKey(requestId)) {
+      return _detailInFlight[requestId]!;
+    }
+    _detailCancelTokens[requestId]?.cancel('superseded');
+    final cancelToken = CancelToken();
+    _detailCancelTokens[requestId] = cancelToken;
+    final future = _doLoadRequestDetail(requestId, cancelToken);
+    _detailInFlight[requestId] = future.whenComplete(() {
+      if (identical(_detailInFlight[requestId], future)) {
+        _detailInFlight.remove(requestId);
       }
+    });
+    return _detailInFlight[requestId]!;
+  }
+
+  Future<TypedCareRequest?> _doLoadRequestDetail(String requestId, CancelToken cancelToken) async {
+    final gen = (_detailGeneration[requestId] ?? 0) + 1;
+    _detailGeneration[requestId] = gen;
+    final sessGen = _sessionGeneration;
+    try {
+      final res = await api.getMap('/v1/requests/$requestId', cancelToken: cancelToken);
+      if (gen != _detailGeneration[requestId] || sessGen != _sessionGeneration || cancelToken.isCancelled) {
+        return requestById(requestId);
+      }
+      final parsed = TypedCareRequest.fromJson(res, fullDetail: true);
+      final current = requestById(requestId);
+      if (current != null && parsed.version < current.version) {
+        return current;
+      }
+      _upsertRequest(parsed, isDetail: true);
+      _rebuildSortedList();
       notifyListeners();
-      return parsed;
+      return requestById(requestId);
     } catch (_) {
       return requestById(requestId);
     }
+  }
+
+  void resetForSessionChange() {
+    _sessionGeneration++;
+    _refreshGeneration++;
+    _refreshCancelToken?.cancel('session_changed');
+    _refreshCancelToken = null;
+    _refreshInFlight = null;
+    for (final c in _detailCancelTokens.values) {
+      c.cancel('session_changed');
+    }
+    _detailCancelTokens.clear();
+    _detailInFlight.clear();
+    _detailGeneration.clear();
+    _requestsById.clear();
+    _detailsCache.clear();
+    _proposalsCache.clear();
+    _lastCancellationAttemptKey.clear();
+    _pendingReviews = const [];
+    _nextCursor = null;
+    _allRequests = const [];
+    loading = false;
+    loadingMore = false;
+    error = null;
+    notifyListeners();
   }
 
   Future<List<TypedProposal>> loadProposals(String requestId) async {

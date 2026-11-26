@@ -246,6 +246,8 @@ class TypedCareRequest {
   final double? nurseLat;
   final double? nurseLng;
   final List<TypedCareRequestItem> items;
+  final List<String> allowedActions;
+  final bool hasFullDetail;
 
   const TypedCareRequest({
     required this.id,
@@ -275,7 +277,11 @@ class TypedCareRequest {
     this.nurseLat,
     this.nurseLng,
     this.items = const [],
+    this.allowedActions = const [],
+    this.hasFullDetail = false,
   });
+
+  bool get isTerminal => const {'COMPLETED', 'CANCELLED', 'EXPIRED'}.contains(status);
 
   bool get isActive => const {
     'SCHEDULED',
@@ -286,6 +292,7 @@ class TypedCareRequest {
     'EN_ROUTE',
     'ARRIVED',
     'IN_SERVICE',
+    'ESCALATED',
   }.contains(status);
 
   bool get hasAssignedNurse => const {
@@ -298,39 +305,190 @@ class TypedCareRequest {
   bool get isUnpaid =>
       status == 'COMPLETED' && (paymentStatus == 'DUE' || paymentStatus == 'PARTIAL');
 
-  factory TypedCareRequest.fromJson(Map<String, dynamic> j) => TypedCareRequest(
-    id: '${j['id'] ?? ''}',
-    status: '${j['status'] ?? ''}',
-    version: (num.tryParse('${j['version'] ?? 1}') ?? 1).toInt(),
-    priceAmount: (num.tryParse('${j['price_amount'] ?? 0}') ?? 0).round(),
-    currencyCode: '${j['currency_code'] ?? 'SYP_NEW'}',
-    bookingMode: '${j['booking_mode'] ?? 'INSTANT'}',
-    marketplaceStatus: j['marketplace_status']?.toString(),
-    clinicalApprovalStatus: j['clinical_approval_status']?.toString(),
-    paymentStatus: j['payment_status']?.toString(),
-    amountDue: j['amount_due'] != null ? (num.tryParse('${j['amount_due']}') ?? 0).round() : null,
-    tipAmount: (num.tryParse('${j['tip_amount'] ?? 0}') ?? 0).round(),
-    serviceTitle: '${j['service_title'] ?? ''}',
-    beneficiaryName: '${j['beneficiary_name'] ?? ''}',
-    addressText: j['address_text']?.toString(),
-    assignedNurseId: (j['assigned_nurse_id'] ?? j['nurse_id'])?.toString(),
-    assignmentId: j['assignment_id']?.toString(),
-    nurseName: j['nurse_name']?.toString(),
-    activeProposalsCount: (num.tryParse('${j['active_proposals_count'] ?? 0}') ?? 0).toInt(),
-    createdAt: DateTime.tryParse('${j['created_at'] ?? ''}'),
-    scheduledAt: DateTime.tryParse('${j['scheduled_at'] ?? ''}'),
-    openExpiresAt: DateTime.tryParse('${j['open_expires_at'] ?? ''}'),
-    searchExpiresAt: DateTime.tryParse('${j['search_expires_at'] ?? ''}'),
-    patientLat: double.tryParse('${j['patient_lat'] ?? ''}'),
-    patientLng: double.tryParse('${j['patient_lng'] ?? ''}'),
-    nurseLat: double.tryParse('${j['nurse_lat'] ?? ''}'),
-    nurseLng: double.tryParse('${j['nurse_lng'] ?? ''}'),
-    items: j['items'] is List
+  bool get isUnfulfilled => status == 'UNFULFILLED' || status == 'AWAITING_RECOVERY_CHOICE';
+
+  /// Merges [incoming] without letting stale versions or summary rows overwrite richer details.
+  TypedCareRequest mergePreferRicher(TypedCareRequest incoming) {
+    if (incoming.version < version) return this;
+    if (incoming.version == version && isTerminal && !incoming.isTerminal) return this;
+    final incomingWinsDetail = incoming.hasFullDetail || !hasFullDetail;
+    return TypedCareRequest(
+      id: incoming.id.isNotEmpty ? incoming.id : id,
+      status: incoming.status.isNotEmpty ? incoming.status : status,
+      version: incoming.version,
+      priceAmount: incoming.priceAmount != 0 ? incoming.priceAmount : priceAmount,
+      currencyCode: incoming.currencyCode.isNotEmpty ? incoming.currencyCode : currencyCode,
+      bookingMode: incoming.bookingMode.isNotEmpty ? incoming.bookingMode : bookingMode,
+      marketplaceStatus: incoming.marketplaceStatus ?? marketplaceStatus,
+      clinicalApprovalStatus: incoming.clinicalApprovalStatus ?? clinicalApprovalStatus,
+      paymentStatus: incoming.paymentStatus ?? paymentStatus,
+      amountDue: incoming.amountDue ?? amountDue,
+      tipAmount: incoming.tipAmount != 0 ? incoming.tipAmount : tipAmount,
+      serviceTitle: incoming.serviceTitle.isNotEmpty ? incoming.serviceTitle : serviceTitle,
+      beneficiaryName: incoming.beneficiaryName.isNotEmpty ? incoming.beneficiaryName : beneficiaryName,
+      addressText: incoming.addressText ?? addressText,
+      assignedNurseId: incoming.assignedNurseId ?? assignedNurseId,
+      assignmentId: incoming.assignmentId ?? assignmentId,
+      nurseName: incoming.nurseName ?? nurseName,
+      activeProposalsCount: incoming.activeProposalsCount > 0 ? incoming.activeProposalsCount : activeProposalsCount,
+      createdAt: incoming.createdAt ?? createdAt,
+      scheduledAt: incoming.scheduledAt ?? scheduledAt,
+      openExpiresAt: incoming.openExpiresAt ?? openExpiresAt,
+      searchExpiresAt: incoming.searchExpiresAt ?? searchExpiresAt,
+      patientLat: incoming.patientLat ?? patientLat,
+      patientLng: incoming.patientLng ?? patientLng,
+      nurseLat: incoming.nurseLat ?? nurseLat,
+      nurseLng: incoming.nurseLng ?? nurseLng,
+      items: (incoming.items.isNotEmpty && incomingWinsDetail)
+          ? incoming.items
+          : (items.isNotEmpty ? items : incoming.items),
+      allowedActions: incoming.allowedActions.isNotEmpty ? incoming.allowedActions : allowedActions,
+      hasFullDetail: hasFullDetail || incoming.hasFullDetail,
+    );
+  }
+
+  factory TypedCareRequest.fromJson(Map<String, dynamic> j, {bool fullDetail = false}) {
+    final parsedItems = j['items'] is List
         ? [
             for (final item in (j['items'] as List))
               if (item is Map) TypedCareRequestItem.fromJson(Map<String, dynamic>.from(item)),
           ]
+        : const <TypedCareRequestItem>[];
+    final hasRichFields = fullDetail ||
+        j['address_text'] != null ||
+        parsedItems.isNotEmpty ||
+        j['assignment_id'] != null;
+    return TypedCareRequest(
+      id: '${j['id'] ?? j['request_id'] ?? ''}',
+      status: '${j['status'] ?? j['request_status'] ?? ''}',
+      version: (num.tryParse('${j['version'] ?? 1}') ?? 1).toInt(),
+      priceAmount: (num.tryParse('${j['price_amount'] ?? 0}') ?? 0).round(),
+      currencyCode: '${j['currency_code'] ?? 'SYP_NEW'}',
+      bookingMode: '${j['booking_mode'] ?? 'INSTANT'}',
+      marketplaceStatus: j['marketplace_status']?.toString(),
+      clinicalApprovalStatus: j['clinical_approval_status']?.toString(),
+      paymentStatus: j['payment_status']?.toString(),
+      amountDue: j['amount_due'] != null ? (num.tryParse('${j['amount_due']}') ?? 0).round() : null,
+      tipAmount: (num.tryParse('${j['tip_amount'] ?? 0}') ?? 0).round(),
+      serviceTitle: '${j['service_title'] ?? ''}',
+      beneficiaryName: '${j['beneficiary_name'] ?? ''}',
+      addressText: j['address_text']?.toString(),
+      assignedNurseId: (j['assigned_nurse_id'] ?? j['nurse_id'])?.toString(),
+      assignmentId: j['assignment_id']?.toString(),
+      nurseName: j['nurse_name']?.toString(),
+      activeProposalsCount: (num.tryParse('${j['active_proposals_count'] ?? 0}') ?? 0).toInt(),
+      createdAt: DateTime.tryParse('${j['created_at'] ?? ''}'),
+      scheduledAt: DateTime.tryParse('${j['scheduled_at'] ?? ''}'),
+      openExpiresAt: DateTime.tryParse('${j['open_expires_at'] ?? ''}'),
+      searchExpiresAt: DateTime.tryParse('${j['search_expires_at'] ?? ''}'),
+      patientLat: double.tryParse('${j['patient_lat'] ?? ''}'),
+      patientLng: double.tryParse('${j['patient_lng'] ?? ''}'),
+      nurseLat: double.tryParse('${j['nurse_lat'] ?? ''}'),
+      nurseLng: double.tryParse('${j['nurse_lng'] ?? ''}'),
+      items: parsedItems,
+      allowedActions: j['allowedActions'] is List
+          ? (j['allowedActions'] as List).map((e) => e.toString()).toList()
+          : const [],
+      hasFullDetail: hasRichFields,
+    );
+  }
+}
+
+/// BUG-001: Strongly-typed nurse assignment recovery snapshot separating
+/// `assignmentStatus` (ACTIVE/RESERVED/RELEASED) from `requestStatus` (visit phase).
+class TypedAssignmentSnapshot {
+  final String assignmentId;
+  final String assignmentStatus;
+  final String requestId;
+  final String requestStatus;
+  final int version;
+  final bool departureWindowOpen;
+  final List<String> allowedActions;
+  final String? serviceTitle;
+  final String? beneficiaryName;
+  final String? patientName;
+  final String? addressText;
+  final String? bookingMode;
+  final double? patientLat;
+  final double? patientLng;
+  final DateTime? scheduledAt;
+  final List<Map<String, dynamic>>? items;
+
+  const TypedAssignmentSnapshot({
+    required this.assignmentId,
+    required this.assignmentStatus,
+    required this.requestId,
+    required this.requestStatus,
+    this.version = 1,
+    this.departureWindowOpen = false,
+    this.allowedActions = const [],
+    this.serviceTitle,
+    this.beneficiaryName,
+    this.patientName,
+    this.addressText,
+    this.bookingMode,
+    this.patientLat,
+    this.patientLng,
+    this.scheduledAt,
+    this.items,
+  });
+
+  factory TypedAssignmentSnapshot.fromJson(Map<String, dynamic> j) => TypedAssignmentSnapshot(
+    assignmentId: '${j['assignment_id'] ?? j['id'] ?? ''}',
+    assignmentStatus: '${j['assignment_status'] ?? ''}',
+    requestId: '${j['request_id'] ?? j['requestId'] ?? ''}',
+    requestStatus: '${j['request_status'] ?? j['status'] ?? ''}',
+    version: (num.tryParse('${j['version'] ?? 1}') ?? 1).toInt(),
+    departureWindowOpen: j['departure_window_open'] == true,
+    allowedActions: j['allowedActions'] is List
+        ? (j['allowedActions'] as List).map((e) => e.toString()).toList()
         : const [],
+    serviceTitle: j['service_title']?.toString(),
+    beneficiaryName: j['beneficiary_name']?.toString(),
+    patientName: j['patient_name']?.toString(),
+    addressText: j['address_text']?.toString(),
+    bookingMode: j['booking_mode']?.toString(),
+    patientLat: double.tryParse('${j['patient_lat'] ?? j['latitude'] ?? ''}'),
+    patientLng: double.tryParse('${j['patient_lng'] ?? j['longitude'] ?? ''}'),
+    scheduledAt: DateTime.tryParse('${j['scheduled_at'] ?? ''}'),
+    items: j['items'] is List
+        ? (j['items'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+        : null,
+  );
+}
+
+/// BUG-003: Typed unpaid invoice record returned by nurse recovery without conflating
+/// with an in-progress field visit.
+class TypedUnpaidInvoice {
+  final String requestId;
+  final String assignmentId;
+  final String invoiceId;
+  final String status;
+  final int remaining;
+  final String currencyCode;
+  final String? serviceTitle;
+  final String? beneficiaryName;
+
+  const TypedUnpaidInvoice({
+    required this.requestId,
+    required this.assignmentId,
+    required this.invoiceId,
+    required this.status,
+    required this.remaining,
+    this.currencyCode = 'SYP_NEW',
+    this.serviceTitle,
+    this.beneficiaryName,
+  });
+
+  factory TypedUnpaidInvoice.fromJson(Map<String, dynamic> j) => TypedUnpaidInvoice(
+    requestId: '${j['request_id'] ?? j['requestId'] ?? ''}',
+    assignmentId: '${j['assignment_id'] ?? j['assignmentId'] ?? ''}',
+    invoiceId: '${j['invoice_id'] ?? j['invoiceId'] ?? j['id'] ?? ''}',
+    status: '${j['status'] ?? 'ISSUED'}',
+    remaining: (num.tryParse('${j['remaining'] ?? 0}') ?? 0).round(),
+    currencyCode: '${j['currency_code'] ?? 'SYP_NEW'}',
+    serviceTitle: j['service_title']?.toString(),
+    beneficiaryName: j['beneficiary_name']?.toString(),
   );
 }
 
