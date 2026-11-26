@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { conflict, invalid, missing } from '../common/errors.js';
 import { DuesService } from '../pricing/fees.service.js';
+import { FinancialReservationsService } from '../wallet/financial-reservations.service.js';
 import type { CancelRequestDto } from './cancel-request.dto.js';
 
 import { closeOpenOffers } from '../dispatch/offer-outbox.js';
@@ -145,12 +146,7 @@ export async function cancelRequest(
   await client.query(`UPDATE marketplace_proposals
     SET status='INVALIDATED',invalidated_at=$2,updated_at=$2,invalidation_reason='REQUEST_CANCELLED'
     WHERE request_id=$1 AND status='PENDING'`, [requestId, snapshot.cancelled_at]);
-  await client.query(`WITH released AS (
-      UPDATE financial_reservations SET status='RELEASED',resolved_at=$2
-      WHERE reference_id=$1 AND status='HELD' RETURNING nurse_id,amount
-    ), totals AS (SELECT nurse_id,sum(amount) AS amount FROM released WHERE nurse_id IS NOT NULL GROUP BY nurse_id)
-    UPDATE nurse_financial_accounts a SET reserved_balance=greatest(0,a.reserved_balance-totals.amount),
-      updated_at=$2 FROM totals WHERE a.nurse_id=totals.nurse_id`, [requestId, snapshot.cancelled_at]);
+  await new FinancialReservationsService().releaseForRequest(client, requestId, 'PATIENT_CANCELLED', userId);
   await client.query(`UPDATE scheduled_visits SET released_at=coalesce(released_at,$2)
     WHERE request_id=$1`, [requestId, snapshot.cancelled_at]);
   await transitionRequest(client, {

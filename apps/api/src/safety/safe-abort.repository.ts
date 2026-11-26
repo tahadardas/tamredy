@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service.js';
+import { FinancialReservationsService } from '../wallet/financial-reservations.service.js';
 
 @Injectable()
 export class SafeAbortRepository {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly reservations: FinancialReservationsService = new FinancialReservationsService(),
+  ) {}
 
   transaction<T>(work: (client: PoolClient) => Promise<T>) {
     return this.db.transaction(work);
@@ -50,6 +54,7 @@ export class SafeAbortRepository {
       WHERE id=$1`, [assignment]);
     await client.query(`UPDATE care_requests SET status='ESCALATED',version=version+1,updated_at=now()
       WHERE id=$1`, [requestId]);
+    await this.reservations.releaseForRequest(client, requestId, 'SAFE_ABORT', actor);
     await client.query(`UPDATE nurses SET work_status='PAUSED',availability_intent='PAUSED',updated_at=now() WHERE id=$1`, [nurse]);
     await client.query(`INSERT INTO request_events(request_id,actor_user_id,event_type)
       VALUES($1,$2,'visit.interrupted')`, [requestId,actor]);

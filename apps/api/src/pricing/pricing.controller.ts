@@ -6,7 +6,8 @@ import { conflict, missing } from '../common/errors.js';
 import { estimateV2, payableTotal, ruleFromRow } from './pricing.js';
 import { FeesService } from './fees.service.js';
 import { AutoDiscountService } from './auto-discounts.service.js';
-import { PromoService, toRule } from './promo.service.js';
+import { PromoService } from './promo.service.js';
+import { PricingCompositionService } from './pricing-composition.service.js';
 import { BillingService } from './billing.service.js';
 
 class QuoteDto { @IsUUID() serviceId!: string; @IsOptional() @IsString() @MaxLength(40) promoCode?: string; }
@@ -42,18 +43,25 @@ function shape(r: any) {
 @Controller('v1') @UseGuards(AuthGuard)
 export class PricingController {
   constructor(private readonly db: DbService, private readonly promos: PromoService, private readonly fees: FeesService,
-    private readonly billing: BillingService, private readonly autos: AutoDiscountService) {}
+    private readonly billing: BillingService, private readonly autos: AutoDiscountService,
+    private readonly pricingComposition: PricingCompositionService = new PricingCompositionService(promos, fees, autos)) {}
 
-  /** Instant estimate before ordering (optionally with a promo code). */
+  /** Instant estimate before ordering (optionally with a promo code). Uses unified PricingCompositionService. */
   @Post('pricing/quote') async quote(@Request() r: AuthRequest, @Body() dto: QuoteDto) {
     requireRole(r.user!, 'PATIENT');
-    const s = (await this.db.query(`SELECT * FROM services WHERE id=$1 AND active=true AND dispatch_approved=true`, [dto.serviceId])).rows[0];
-    if (!s) missing();
-    const rule = ruleFromRow(s);
-    const promo = await this.promos.resolve(this.db, r.user!.id, dto.serviceId, rule.basePrice, dto.promoCode);
-    const auto = promo ? null : await this.autos.pick(this.db, r.user!.id);
-    return { currency: s.currency_code, promoCode: promo?.code ?? auto?.label ?? null, autoDiscount: auto ? auto.kind : null,
-      ...estimateV2(rule, promo ? toRule(promo) : auto, await this.fees.snapshot(this.db)) };
+    const composed = await this.pricingComposition.compose(this.db, {
+      patientUserId: r.user!.id,
+      serviceId: dto.serviceId,
+      promoCode: dto.promoCode,
+      consumePromoLock: false,
+    });
+    return {
+      currency: composed.currencyCode,
+      promoCode: composed.promo?.code ?? composed.autoDiscount?.label ?? null,
+      autoDiscount: composed.autoDiscount ? composed.autoDiscount.kind : null,
+      pricingVersion: composed.pricingVersion,
+      ...composed.estimate,
+    };
   }
 
   /** Save a company code (e.g. after install) so it applies automatically to the next order. */

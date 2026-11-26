@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { LedgerService, fromMinor, toMinor, type LedgerLegInput } from '../wallet/ledger.service.js';
+import { FinancialReservationsService } from '../wallet/financial-reservations.service.js';
 import { DuesService } from './fees.service.js';
 import { ReferralService } from './referral.service.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
@@ -28,6 +29,7 @@ export class BillingService {
     private readonly ledger: LedgerService,
     private readonly dues: DuesService,
     private readonly referrals: ReferralService,
+    private readonly reservations: FinancialReservationsService = new FinancialReservationsService(),
   ) {}
 
   async issueInvoice(
@@ -98,32 +100,63 @@ export class BillingService {
       idempotencyKey: `invoice:${requestId}`,currencyCode,legs,
     });
 
-    const reservations = await client.query(`SELECT id,nurse_id,amount,prepaid_amount,credit_amount
-      FROM financial_reservations
-      WHERE reference_id=$1 AND status='HELD' FOR UPDATE`, [requestId]);
-    for (const reservation of reservations.rows) {
-      await this.ledger.resolveReservation(client,reservation.id,'COMMITTED');
-      if (reservation.nurse_id) {
-        const reservedPrepaid=toMinor(reservation.prepaid_amount);
-        const finalCommission=toMinor(bill.commission);
-        const prepaidApplied=fromMinor(reservedPrepaid<finalCommission ? reservedPrepaid : finalCommission);
-        if (toMinor(prepaidApplied)>0n) {
-          await this.ledger.postTransaction(client,{
-            transactionType:'PREPAID_COMMISSION_APPLIED',referenceType:'INVOICE',referenceId:invoice.id,
-            idempotencyKey:`invoice-prepaid:${invoice.id}:${reservation.id}`,currencyCode,
-            legs:[
-              {accountId:`PREPAID_LIABILITY:${reservation.nurse_id}`,debitAmount:prepaidApplied,creditAmount:0},
-              {accountId:`NURSE_PAYABLE:${reservation.nurse_id}`,debitAmount:0,creditAmount:prepaidApplied},
-            ],
-          });
-        }
-        await client.query(`UPDATE nurse_financial_accounts SET
-          reserved_balance=greatest(0,reserved_balance-$2),
-          prepaid_balance=greatest(0,prepaid_balance-$3),updated_at=statement_timestamp()
-          WHERE nurse_id=$1`, [reservation.nurse_id,reservation.amount,prepaidApplied]);
-      }
-    }
+    await this.reservations.commitForInvoice(client, this.ledger, requestId, invoice.id, bill.commission, currencyCode);
     return { invoice, replayed: false };
+  }
+
+  /**
+   * BUG-013: Explicit operational closure when all visit items are non-COMPLETED
+   * (e.g., medical inability or patient refusal) so nurses never have to fabricate completion.
+   */
+  async settleNoServiceVisit(
+    client: PoolClient,
+    input: {
+      requestId: string;
+      visitId: string;
+      nurseId: string;
+      currencyCode: string;
+      actorUserId: string;
+      reason: string;
+    },
+  ) {
+    const released = await this.reservations.releaseForRequest(
+      client,
+      input.requestId,
+      'NO_SERVICE_DELIVERED',
+      input.actorUserId,
+    );
+    await client.query(
+      `UPDATE care_requests
+       SET gross_amount = 0,
+           discount_amount = 0,
+           surcharge_amount = 0,
+           distance_fee = 0,
+           tax_amount = 0,
+           amount_due = 0,
+           commission_amount = 0,
+           nurse_earning = 0,
+           owed_to_company = 0,
+           payment_status = 'PAID',
+           billed_at = statement_timestamp()
+       WHERE id = $1`,
+      [input.requestId],
+    );
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id, action, target_type, target_id, detail)
+       VALUES($1, 'visit.no_service_settled', 'care_request', $2, $3::jsonb)`,
+      [
+        input.actorUserId,
+        input.requestId,
+        JSON.stringify({
+          visitId: input.visitId,
+          nurseId: input.nurseId,
+          reason: input.reason,
+          currencyCode: input.currencyCode,
+          releasedReservationCount: released.releasedCount,
+        }),
+      ],
+    );
+    return { noServiceSettled: true, released };
   }
 
   async collectCash(
@@ -193,7 +226,7 @@ export class BillingService {
       paid_at=CASE WHEN $2='PAID' THEN statement_timestamp() ELSE NULL END,version=version+1,updated_at=statement_timestamp()
       WHERE id=$1`, [requestId,status === 'PAID' ? 'PAID' : 'PARTIAL']);
     if (status === 'PAID') {
-      await this.dues.enforce(client,row.nurse_id);
+      await this.dues.enforce(client,row.nurse_id, row.currency_code);
       await this.referrals.rewardIfFirstPaid(client,row.requester_user_id);
     }
     await client.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)

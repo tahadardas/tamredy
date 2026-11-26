@@ -7,16 +7,22 @@ import { CreateRequestDto } from '../common/dto.js';
 import { conflict, forbidden, invalid, missing } from '../common/errors.js';
 import { PageArgs, makePage } from '../common/pagination.js';
 import { PromoService, toRule } from '../pricing/promo.service.js';
-import { estimateV2, ruleFromRow } from '../pricing/pricing.js';
 import { FeesService } from '../pricing/fees.service.js';
 import { AutoDiscountService } from '../pricing/auto-discounts.service.js';
+import { PricingCompositionService } from '../pricing/pricing-composition.service.js';
 
 import { saveSchedule, validateAppointment, verifyScheduledSafety } from '../scheduling/scheduling.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class RequestsService {
-  constructor(private readonly db: DbService, private readonly promos: PromoService, private readonly fees: FeesService = new FeesService(), private readonly autos: AutoDiscountService = new AutoDiscountService()) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly promos: PromoService,
+    private readonly fees: FeesService = new FeesService(),
+    private readonly autos: AutoDiscountService = new AutoDiscountService(),
+    private readonly pricingComposition: PricingCompositionService = new PricingCompositionService(promos, fees, autos),
+  ) {}
   async create(userId: string, dto: CreateRequestDto, key: string) {
     if (!key || key.length > 128) invalid('Idempotency-Key required, maximum 128 chars');
     if (!dto.nonEmergencyConfirmed) invalid('Emergency triage declaration is mandatory');
@@ -27,7 +33,7 @@ export class RequestsService {
         ON CONFLICT (user_id,key) DO NOTHING`, [userId,key,digest]);
       const k = await client.query('SELECT * FROM request_create_keys WHERE user_id=$1 AND key=$2 FOR UPDATE',[userId,key]);
       if (k.rows[0].request_hash !== digest) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
-      if (k.rows[0].request_id) return this.findOne(userId, k.rows[0].request_id);
+      if (k.rows[0].request_id) return this.findOneWithRunner(client, userId, k.rows[0].request_id);
       const appointment = validateAppointment(dto.scheduledAt);
       if (dto.bookingMode === 'SCHEDULED' && !appointment) invalid('SCHEDULED_TIME_REQUIRED');
       if (dto.bookingMode !== undefined && dto.bookingMode !== 'SCHEDULED' && appointment) {
@@ -41,84 +47,36 @@ export class RequestsService {
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
       if (!beneficiary.rowCount) forbidden();
 
-      // Resolve all requested services (multi-service items or single service)
-      const rawItems: { serviceId: string; quantity: number }[] = [];
-      if (Array.isArray(dto.items) && dto.items.length > 0) {
-        for (const it of dto.items) {
-          if (it.serviceId) rawItems.push({ serviceId: it.serviceId, quantity: Math.max(1, Number(it.quantity) || 1) });
-        }
-      } else if (Array.isArray(dto.serviceIds) && dto.serviceIds.length > 0) {
-        for (const sid of dto.serviceIds) {
-          if (sid) rawItems.push({ serviceId: sid, quantity: 1 });
-        }
-      } else if (dto.serviceId) {
-        rawItems.push({ serviceId: dto.serviceId, quantity: 1 });
-      }
-
-      if (rawItems.length === 0) invalid('At least one service must be selected');
-      const mergedItems = new Map<string, number>();
-      for (const item of rawItems) {
-        const quantity = (mergedItems.get(item.serviceId) ?? 0) + item.quantity;
-        if (quantity > 10) invalid('SERVICE_QUANTITY_LIMIT_EXCEEDED');
-        mergedItems.set(item.serviceId,quantity);
-      }
-      rawItems.splice(0,rawItems.length,...[...mergedItems].map(([serviceId,quantity]) => ({serviceId,quantity})));
-      if (rawItems.length > 10) invalid('REQUEST_ITEM_LIMIT_EXCEEDED');
-
-      const serviceIds = [...new Set(rawItems.map(i => i.serviceId))];
-      const servicesRes = await client.query(
-        `SELECT * FROM services WHERE id = ANY($1::uuid[]) AND active=true AND dispatch_approved=true`,
-        [serviceIds]
-      );
-      if (servicesRes.rowCount !== serviceIds.length) {
-        invalid('One or more selected services are unavailable or not clinically approved');
-      }
-      if (new Set(servicesRes.rows.map(row=>row.currency_code)).size!==1) {
-        invalid('REQUEST_ITEMS_REQUIRE_SINGLE_CURRENCY');
-      }
-
-      const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
-      const anyRequiresPrescription = servicesRes.rows.some(r => r.requires_prescription);
-      const anyRequiresClinicalReview = servicesRes.rows.some(r => r.requires_clinical_review);
-      const needsClinicalApproval = anyRequiresPrescription || anyRequiresClinicalReview;
+      const composed = await this.pricingComposition.compose(client, {
+        patientUserId: userId,
+        items: dto.items,
+        serviceIds: dto.serviceIds,
+        serviceId: dto.serviceId,
+        promoCode: dto.promoCode,
+        consumePromoLock: true,
+      });
 
       if (appointment) {
-        for (const sid of serviceIds) {
+        for (const sid of composed.serviceIds) {
           await verifyScheduledSafety(client, sid, appointment);
         }
       }
 
-      let totalBasePrice = 0;
-      let totalExpectedMinutes = 0;
-      let weightedCommission = 0;
-
-      for (const it of rawItems) {
-        const s = serviceMap.get(it.serviceId)!;
-        const unitPrice = Number(s.price_amount);
-        totalBasePrice += unitPrice * it.quantity;
-        totalExpectedMinutes += (Number(s.expected_minutes) || 30) * it.quantity;
-        weightedCommission += unitPrice * it.quantity * Number(s.commission_bps ?? 2000);
-      }
-      const combinedCommissionBps = totalBasePrice > 0 ? Math.round(weightedCommission/totalBasePrice) : 0;
-
-      // Pick primary service (highest price)
-      const primaryService = servicesRes.rows.reduce((prev, curr) =>
-        Number(curr.price_amount) > Number(prev.price_amount) ? curr : prev
-      , servicesRes.rows[0]);
+      const {
+        canonicalItems,
+        primaryService,
+        combinedPricingRule: combinedRule,
+        totalBasePrice,
+        combinedCommissionBps,
+        promo,
+        autoDiscount: auto,
+        feeSnapshot,
+        clinicalRequirements,
+        currencyCode,
+        estimate,
+      } = composed;
       const primaryServiceId = primaryService.id;
-
-      const baseRule = ruleFromRow(primaryService);
-      const combinedRule = {
-        ...baseRule,
-        basePrice: totalBasePrice,
-        includedMinutes: rawItems.reduce((total,item)=>total
-          + ruleFromRow(serviceMap.get(item.serviceId)!).includedMinutes*item.quantity,0),
-        expectedMinutes: totalExpectedMinutes,
-      };
-
-      const feeSnapshot = await this.fees.snapshot(client);
-      const promo = await this.promos.resolve(client, userId, primaryServiceId, combinedRule.basePrice, dto.promoCode, true);
-      const auto = promo ? null : await this.autos.pick(client, userId);
+      const needsClinicalApproval = clinicalRequirements.requiresPrescription || clinicalRequirements.requiresClinicalReview;
 
       const isOpenMode = dto.bookingMode === 'OPEN';
       const bookingMode = isOpenMode ? 'OPEN' : (appointment ? 'SCHEDULED' : 'INSTANT');
@@ -147,7 +105,7 @@ export class RequestsService {
       )
       VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21)
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
-        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,primaryService.currency_code,combinedCommissionBps,
+        userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,currencyCode,combinedCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
         bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'INITIAL' : 'SEARCHING'),
         isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
@@ -156,8 +114,8 @@ export class RequestsService {
       const request = r.rows[0];
 
       // Save care_request_items snapshot for all selected services
-      for (const it of rawItems) {
-        const s = serviceMap.get(it.serviceId)!;
+      for (const it of canonicalItems) {
+        const s = it.row;
         await client.query(`
           INSERT INTO care_request_items(
             request_id, service_id, quantity, unit_price, expected_minutes,
@@ -168,8 +126,8 @@ export class RequestsService {
           request.id,
           it.serviceId,
           it.quantity,
-          s.price_amount,
-          (Number(s.expected_minutes) || 30) * it.quantity,
+          it.unitPrice,
+          it.expectedMinutes,
           JSON.stringify({
             basePrice: s.price_amount,
             currency: s.currency_code,
@@ -243,13 +201,24 @@ export class RequestsService {
           })),
         ]);
       }
-      return {...request,clinicalApprovalStatus:needsClinicalApproval?'PENDING':'NOT_REQUIRED',
+      return {
+        ...request,
+        clinicalApprovalStatus: needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED',
         ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),
-        estimate:estimateV2(combinedRule,promo?toRule(promo):auto,feeSnapshot),promoCode:promo?.code??auto?.label??null};
+        estimate,
+        promoCode: promo?.code ?? auto?.label ?? null,
+      };
     });
   }
   async findOne(userId: string, requestId: string) {
-    const found = await this.db.query(`SELECT cr.id,cr.requester_user_id,cr.beneficiary_id,cr.service_id,cr.status,cr.version,cr.price_amount,cr.currency_code,cr.created_at,
+    return this.findOneWithRunner(this.db, userId, requestId);
+  }
+  async findOneWithRunner(
+    q: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number | null }> },
+    userId: string,
+    requestId: string,
+  ) {
+    const found = await q.query(`SELECT cr.id,cr.requester_user_id,cr.beneficiary_id,cr.service_id,cr.status,cr.version,cr.price_amount,cr.currency_code,cr.created_at,
        cr.booking_mode, cr.marketplace_status, cr.published_at, cr.open_expires_at, cr.latest_acceptable_arrival_at,cr.clinical_approval_status,
        cr.address_text, cr.payment_status, cr.amount_due, cr.tip_amount, cr.search_expires_at,
        s.title_ar AS service_title, b.display_name AS beneficiary_name,
@@ -267,7 +236,7 @@ export class RequestsService {
        WHERE cr.id=$1 AND cr.requester_user_id=$2
        ORDER BY a.accepted_at DESC NULLS LAST LIMIT 1`,[requestId,userId]);
     if(!found.rowCount) missing();
-    const items = await this.db.query(`
+    const items = await q.query(`
       SELECT cri.id, cri.service_id, cri.quantity, cri.unit_price, cri.expected_minutes,
              cri.item_status, s.title_ar, s.code, s.requires_prescription
       FROM care_request_items cri

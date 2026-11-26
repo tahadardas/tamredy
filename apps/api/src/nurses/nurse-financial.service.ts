@@ -11,13 +11,14 @@ export class NurseFinancialService {
     return res.rows[0].id;
   }
 
-  /** Detailed financial summary for nurse dashboard */
+  /** Detailed financial summary for nurse dashboard with strict currency isolation (BUG-010) */
   async getFinancialSummary(nurseUserId: string) {
     const nurseId = await this.getNurseId(nurseUserId);
 
-    // 1. Earnings aggregations across time horizons
+    // 1. Earnings aggregations grouped strictly by currency
     const statsRes = await this.db.query(`
       SELECT
+        cr.currency_code,
         coalesce(sum(cr.nurse_earning), 0)::numeric(18,2) AS lifetime_net_earnings,
         coalesce(sum(cr.gross_amount), 0)::numeric(18,2) AS lifetime_gross,
         coalesce(sum(cr.commission_amount), 0)::numeric(18,2) AS lifetime_commission,
@@ -29,13 +30,24 @@ export class NurseFinancialService {
       JOIN visits v ON v.assignment_id = ra.id AND v.completed_at IS NOT NULL
       JOIN care_requests cr ON cr.id = ra.request_id AND cr.payment_status = 'PAID'
       WHERE ra.nurse_id = $1
+      GROUP BY cr.currency_code
     `, [nurseId]);
 
-    const stats = statsRes.rows[0];
+    const primaryCurrency = statsRes.rows[0]?.currency_code ?? 'SYP_NEW';
+    const stats = statsRes.rows.find(r => r.currency_code === primaryCurrency) ?? {
+      currency_code: primaryCurrency,
+      today_net_earnings: 0,
+      this_week_net_earnings: 0,
+      this_month_net_earnings: 0,
+      lifetime_net_earnings: 0,
+      lifetime_gross: 0,
+      completed_visits_count: 0,
+    };
 
-    // 2. Authoritative settlement position from immutable double-entry accounts.
+    // 2. Authoritative settlement position grouped strictly by currency from immutable double-entry accounts.
     const duesRes = await this.db.query(`
       SELECT
+        e.currency AS currency_code,
         coalesce(sum(CASE WHEN e.account_id='CASH_HELD_BY_NURSE:'||$1::text
           THEN e.debit_amount-e.credit_amount ELSE 0 END),0)::numeric(18,2) AS cash_held,
         coalesce(sum(CASE WHEN e.account_id='NURSE_PAYABLE:'||$1::text
@@ -43,13 +55,9 @@ export class NurseFinancialService {
         coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_FROM_NURSE'
           AND e.account_id='CASH_HELD_BY_NURSE:'||$1::text THEN e.credit_amount ELSE 0 END),0)::numeric(18,2) AS total_settled_amount
       FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
+      WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||$1::text, 'NURSE_PAYABLE:'||$1::text)
+      GROUP BY e.currency
     `, [nurseId]);
-
-    const cashHeld = Number(duesRes.rows[0].cash_held);
-    const nursePayable = Number(duesRes.rows[0].nurse_payable);
-    const totalAccrued = Math.max(0,cashHeld-nursePayable+Number(duesRes.rows[0].total_settled_amount));
-    const totalSettled = Number(duesRes.rows[0].total_settled_amount);
-    const outstandingDues = Math.max(0,cashHeld-nursePayable);
 
     // 3. Nurse financial account & credit limit
     const accRes = await this.db.query(`
@@ -58,15 +66,43 @@ export class NurseFinancialService {
       WHERE nurse_id = $1
     `, [nurseId]);
 
+    const hasFinancialAccount = accRes.rowCount > 0;
     const account = accRes.rows[0] ?? {
       financial_model: 'RECEIVABLES',
-      credit_limit: 100000,
+      credit_limit: 0,
       prepaid_balance: 0,
       reserved_balance: 0,
     };
-
     const creditLimit = Number(account.credit_limit);
-    const isLimitExceeded = outstandingDues >= creditLimit;
+
+    const balancesByCurrency = duesRes.rows.map(r => {
+      const cashHeld = Number(r.cash_held);
+      const nursePayable = Number(r.nurse_payable);
+      const settled = Number(r.total_settled_amount);
+      const outstandingDues = Math.max(0, cashHeld - nursePayable);
+      const accrued = Math.max(0, cashHeld - nursePayable + settled);
+      return {
+        currencyCode: String(r.currency_code),
+        cashHeld,
+        nursePayable,
+        totalAccrued: accrued,
+        totalSettled: settled,
+        outstandingDues,
+        creditLimit,
+        isLimitExceeded: creditLimit > 0 && outstandingDues >= creditLimit,
+      };
+    });
+
+    const primaryDues = balancesByCurrency.find(b => b.currencyCode === primaryCurrency) ?? {
+      currencyCode: primaryCurrency,
+      cashHeld: 0,
+      nursePayable: 0,
+      totalAccrued: 0,
+      totalSettled: 0,
+      outstandingDues: 0,
+      creditLimit,
+      isLimitExceeded: false,
+    };
 
     // 4. Recent visits breakdown
     const recentVisits = await this.db.query(`
@@ -84,8 +120,19 @@ export class NurseFinancialService {
     `, [nurseId]);
 
     return {
-      currencyCode: 'SYP_NEW',
+      hasFinancialAccount,
+      currencyCode: primaryCurrency,
       financialModel: account.financial_model,
+      balancesByCurrency,
+      earningsByCurrency: statsRes.rows.map(r => ({
+        currencyCode: String(r.currency_code),
+        today: Number(r.today_net_earnings),
+        thisWeek: Number(r.this_week_net_earnings),
+        thisMonth: Number(r.this_month_net_earnings),
+        lifetimeNet: Number(r.lifetime_net_earnings),
+        lifetimeGross: Number(r.lifetime_gross),
+        completedVisitsCount: Number(r.completed_visits_count),
+      })),
       earnings: {
         today: Number(stats.today_net_earnings),
         thisWeek: Number(stats.this_week_net_earnings),
@@ -95,12 +142,12 @@ export class NurseFinancialService {
         completedVisitsCount: stats.completed_visits_count,
       },
       receivables: {
-        totalAccrued,
-        totalSettled,
-        outstandingDues,
+        totalAccrued: primaryDues.totalAccrued,
+        totalSettled: primaryDues.totalSettled,
+        outstandingDues: primaryDues.outstandingDues,
         creditLimit,
-        isLimitExceeded,
-        limitUtilizationPercent: creditLimit > 0 ? Math.min(100, Math.round((outstandingDues / creditLimit) * 100)) : 0,
+        isLimitExceeded: primaryDues.isLimitExceeded,
+        limitUtilizationPercent: creditLimit > 0 ? Math.min(100, Math.round((primaryDues.outstandingDues / creditLimit) * 100)) : 0,
       },
       prepaid: {
         availableBalance: Number(account.prepaid_balance) - Number(account.reserved_balance),

@@ -38,8 +38,8 @@ export class FeesService {
 /** What each nurse owes the company (or the company owes her) from cash she collected. */
 @Injectable()
 export class DuesService {
-  /** Net settlement position from immutable double-entry accounts. */
-  async balance(q: Q, nurseId: string) {
+  /** BUG-010: Net settlement position grouped strictly per currency from immutable double-entry accounts. */
+  async balance(q: Q, nurseId: string, currencyCode = 'SYP_NEW') {
     const r = (await q.query(`SELECT
       coalesce(sum(CASE WHEN e.account_id='CASH_HELD_BY_NURSE:'||$1::text
         THEN e.debit_amount-e.credit_amount ELSE 0 END),0) AS cash_held,
@@ -51,17 +51,52 @@ export class DuesService {
         AND e.account_id='NURSE_PAYABLE:'||$1::text THEN e.debit_amount ELSE 0 END),0) AS to_nurse,
       (SELECT nurse_debt_limit FROM pricing_settings WHERE id=1) AS debt_limit
       FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
-      WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||$1::text,'NURSE_PAYABLE:'||$1::text)`, [nurseId])).rows[0];
+      WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||$1::text,'NURSE_PAYABLE:'||$1::text)
+        AND e.currency = $2`, [nurseId, currencyCode])).rows[0];
     const cashHeld = Number(r.cash_held), nursePayable = Number(r.nurse_payable);
     const fromNurse = Number(r.from_nurse), toNurse = Number(r.to_nurse), limit = Number(r.debt_limit);
     const balance = cashHeld - nursePayable;
     const owed = Math.max(0,balance);
-    return { owed, settledFromNurse: fromNurse, paidToNurse: toNurse, balance, limit, blocked: limit > 0 && balance > limit };
+    return { currencyCode, owed, settledFromNurse: fromNurse, paidToNurse: toNurse, balance, limit, blocked: limit > 0 && balance > limit };
+  }
+
+  async balancesByCurrency(q: Q, nurseId: string) {
+    const rows = (await q.query(`SELECT
+      e.currency AS currency_code,
+      coalesce(sum(CASE WHEN e.account_id='CASH_HELD_BY_NURSE:'||$1::text
+        THEN e.debit_amount-e.credit_amount ELSE 0 END),0) AS cash_held,
+      coalesce(sum(CASE WHEN e.account_id='NURSE_PAYABLE:'||$1::text
+        THEN e.credit_amount-e.debit_amount ELSE 0 END),0) AS nurse_payable,
+      coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_FROM_NURSE'
+        AND e.account_id='CASH_HELD_BY_NURSE:'||$1::text THEN e.credit_amount ELSE 0 END),0) AS from_nurse,
+      coalesce(sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_TO_NURSE'
+        AND e.account_id='NURSE_PAYABLE:'||$1::text THEN e.debit_amount ELSE 0 END),0) AS to_nurse,
+      (SELECT nurse_debt_limit FROM pricing_settings WHERE id=1) AS debt_limit
+      FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
+      WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||$1::text,'NURSE_PAYABLE:'||$1::text)
+      GROUP BY e.currency
+      ORDER BY e.currency`, [nurseId])).rows;
+    return rows.map(r => {
+      const cashHeld = Number(r.cash_held), nursePayable = Number(r.nurse_payable);
+      const balance = cashHeld - nursePayable;
+      const limit = Number(r.debt_limit);
+      return {
+        currencyCode: String(r.currency_code),
+        cashHeld,
+        nursePayable,
+        owed: Math.max(0, balance),
+        settledFromNurse: Number(r.from_nurse),
+        paidToNurse: Number(r.to_nurse),
+        balance,
+        limit,
+        blocked: limit > 0 && balance > limit,
+      };
+    });
   }
 
   /** Over the limit -> the nurse stops receiving requests until she settles with the company. */
-  async enforce(q: Q, nurseId: string): Promise<boolean> {
-    const b = await this.balance(q, nurseId);
+  async enforce(q: Q, nurseId: string, currencyCode = 'SYP_NEW'): Promise<boolean> {
+    const b = await this.balance(q, nurseId, currencyCode);
     if (!b.blocked) return false;
     await q.query(`UPDATE nurses SET availability_intent='OFFLINE',work_status=CASE WHEN work_status IN ('AVAILABLE','PAUSED') THEN 'OFFLINE' ELSE work_status END,updated_at=now() WHERE id=$1`, [nurseId]);
     return true;

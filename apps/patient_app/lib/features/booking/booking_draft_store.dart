@@ -1,8 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../catalog/catalog_store.dart';
+
+enum EstimateStatus {
+  verified,
+  unavailable,
+  stale,
+}
 
 class RegionArea {
   final String governorate;
@@ -90,7 +97,28 @@ class BookingDraftStore extends ChangeNotifier {
   String promoCode = '';
   String? promoFeedback;
   CatalogEstimateResult? estimate;
+  EstimateStatus estimateStatus = EstimateStatus.stale;
+  int _estimateGeneration = 0;
+  Timer? _estimateDebounce;
   bool estimating = false;
+
+  int get unverifiedLocalSubtotal {
+    var total = 0;
+    for (final entry in serviceQuantities.entries) {
+      final s = catalog.byId(entry.key);
+      if (s != null) total += s.priceAmount * entry.value;
+    }
+    return total;
+  }
+
+  int get unverifiedLocalMinutes {
+    var mins = 0;
+    for (final entry in serviceQuantities.entries) {
+      final s = catalog.byId(entry.key);
+      if (s != null) mins += s.expectedMinutes * entry.value;
+    }
+    return mins;
+  }
 
   // Step 2: Beneficiary & location
   List<TypedBeneficiary> beneficiaries = [];
@@ -209,10 +237,11 @@ class BookingDraftStore extends ChangeNotifier {
       ..clear()
       ..[svc.id] = 1;
     promoFeedback = null;
+    estimateStatus = EstimateStatus.stale;
     _invalidateSubmissionKey();
     _persistDraft();
     notifyListeners();
-    refreshEstimate();
+    refreshEstimate(immediate: true);
   }
 
   void setServiceQuantity(PatientService svc, int qty) {
@@ -225,47 +254,57 @@ class BookingDraftStore extends ChangeNotifier {
       serviceQuantities[svc.id] = qty.clamp(1, 10);
     }
     promoFeedback = null;
+    estimateStatus = EstimateStatus.stale;
     _invalidateSubmissionKey();
     _persistDraft();
     notifyListeners();
     refreshEstimate();
   }
 
-  Future<void> refreshEstimate() async {
+  Future<void> refreshEstimate({bool immediate = false}) async {
+    _estimateDebounce?.cancel();
     if (serviceQuantities.isEmpty) {
+      _estimateGeneration++;
       estimate = null;
+      estimateStatus = EstimateStatus.stale;
+      estimating = false;
       notifyListeners();
       return;
     }
+    if (!immediate) {
+      final completer = Completer<void>();
+      _estimateDebounce = Timer(const Duration(milliseconds: 280), () async {
+        await refreshEstimate(immediate: true);
+        if (!completer.isCompleted) completer.complete();
+      });
+      return completer.future;
+    }
+
+    final gen = ++_estimateGeneration;
     estimating = true;
+    estimateStatus = EstimateStatus.stale;
     notifyListeners();
     try {
-      estimate = await catalog.estimate(
-        quantities: serviceQuantities,
+      final result = await catalog.estimate(
+        quantities: Map<String, int>.from(serviceQuantities),
         promoCode: promoCode,
       );
-    } catch (_) {
-      // Fallback to local rule calculation if estimate call fails transiently
-      var base = 0;
-      var mins = 0;
-      for (final entry in serviceQuantities.entries) {
-        final s = catalog.byId(entry.key);
-        if (s != null) {
-          base += s.priceAmount * entry.value;
-          mins += s.expectedMinutes * entry.value;
-        }
+      if (gen != _estimateGeneration) return;
+      estimate = result;
+      estimateStatus = result != null ? EstimateStatus.verified : EstimateStatus.unavailable;
+    } catch (e) {
+      if (gen != _estimateGeneration) return;
+      // BUG-009: never forge a verified CatalogEstimateResult from local sums; preserve error state.
+      estimate = null;
+      estimateStatus = EstimateStatus.unavailable;
+      if (promoCode.trim().isNotEmpty) {
+        promoFeedback = explainError(e, fallback: 'تعذر التحقق من الكود أو السعر الرسمي حالياً');
       }
-      estimate = CatalogEstimateResult(
-        totalBasePrice: base,
-        totalExpectedMinutes: mins,
-        minEstimate: base,
-        expectedEstimate: base,
-        requiresPrescription: requiresPrescription,
-        requiresClinicalReview: requiresClinicalReview,
-      );
     } finally {
-      estimating = false;
-      notifyListeners();
+      if (gen == _estimateGeneration) {
+        estimating = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -273,26 +312,41 @@ class BookingDraftStore extends ChangeNotifier {
     final code = rawCode.trim().toUpperCase();
     promoCode = code;
     promoFeedback = null;
+    estimateStatus = EstimateStatus.stale;
     _invalidateSubmissionKey();
     if (code.isEmpty) {
-      await refreshEstimate();
+      await refreshEstimate(immediate: true);
       await _persistDraft();
       return;
     }
+    final gen = ++_estimateGeneration;
+    estimating = true;
+    notifyListeners();
     try {
-      estimate = await catalog.estimate(
-        quantities: serviceQuantities,
+      final result = await catalog.estimate(
+        quantities: Map<String, int>.from(serviceQuantities),
         promoCode: code,
       );
+      if (gen != _estimateGeneration) return;
+      estimate = result;
+      estimateStatus = result != null ? EstimateStatus.verified : EstimateStatus.unavailable;
       if ((estimate?.promoDiscount ?? 0) > 0 || estimate?.promoAppliedCode != null) {
         promoFeedback = 'تم تطبيق الكود ($code)';
       } else {
         promoFeedback = 'تم تسجيل الكود وسيُتحقق منه عند التثبيت';
       }
     } catch (e) {
-      promoFeedback = explainError(e, fallback: 'تعذر تطبيق كود الخصم');
+      if (gen != _estimateGeneration) return;
+      estimateStatus = EstimateStatus.unavailable;
+      promoFeedback = explainError(e, fallback: 'رمز الخصم غير صالح أو تعذر التحقق من السعر');
+    } finally {
+      if (gen == _estimateGeneration) {
+        estimating = false;
+        notifyListeners();
+      }
     }
     await _persistDraft();
+  }
     notifyListeners();
   }
 
@@ -616,6 +670,14 @@ class BookingDraftStore extends ChangeNotifier {
         return null;
       }
 
+      if (estimateStatus != EstimateStatus.verified) {
+        await refreshEstimate(immediate: true);
+        if (estimateStatus != EstimateStatus.verified) {
+          submitError = 'تعذر التحقق من السعر الرسمي من الخادم. أعد المحاولة قبل التثبيت.';
+          return null;
+        }
+      }
+
       _idempotencyKey ??= api.newIdempotencyKey();
       final payload = <String, dynamic>{
         'beneficiaryId': benId,
@@ -672,10 +734,13 @@ class BookingDraftStore extends ChangeNotifier {
   }
 
   Future<void> clearDraft() async {
+    _estimateDebounce?.cancel();
+    _estimateGeneration++;
     serviceQuantities.clear();
     promoCode = '';
     promoFeedback = null;
     estimate = null;
+    estimateStatus = EstimateStatus.stale;
     bookingMode = 'INSTANT';
     scheduledAt = null;
     stagedEvidence = null;
@@ -684,5 +749,11 @@ class BookingDraftStore extends ChangeNotifier {
     submitError = null;
     await api.writeLocal(_draftStorageKey, null);
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _estimateDebounce?.cancel();
+    super.dispose();
   }
 }

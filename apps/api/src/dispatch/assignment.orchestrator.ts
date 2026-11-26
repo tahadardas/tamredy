@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { conflict } from '../common/errors.js';
 import { transitionRequest, type RequestStatus, type RequestTransitionActor } from '../requests/request-lifecycle.js';
+import { FeesService } from '../pricing/fees.service.js';
+import { commissionFor } from '../pricing/pricing.js';
 import { closeOpenOffers } from './offer-outbox.js';
 import { NurseEligibilityEngine } from './nurse-eligibility.engine.js';
 
@@ -35,7 +37,10 @@ export interface AssignmentOutcome {
 
 @Injectable()
 export class AssignmentOrchestrator {
-  constructor(private readonly eligibility: NurseEligibilityEngine) {}
+  constructor(
+    private readonly eligibility: NurseEligibilityEngine,
+    private readonly fees: FeesService = new FeesService(),
+  ) {}
 
   async assignLocked(client: PoolClient, input: AssignInput): Promise<AssignmentOutcome> {
     const eligibility = await this.eligibility.evaluate(input.nurseId, input.request.id, {
@@ -46,19 +51,28 @@ export class AssignmentOrchestrator {
     }, client);
     if (!eligibility.eligible) conflict(eligibility.reasons[0]?.code ?? 'NURSE_NOT_ELIGIBLE');
 
-    const estimatedCommission = Math.round(Number(input.request.price_amount)
-      * Number(input.request.commission_bps) / 10_000);
+    const baseCommissionBps = Number(input.request.commission_bps ?? 2000);
+    const rep = await this.fees.reputation(client, input.nurseId);
+    const tiers = await this.fees.tiers(client);
+    const appliedCommissionBps = commissionFor(baseCommissionBps, tiers, rep.reputation, rep.reviews);
+    const currencyCode = input.request.currency_code || 'SYP_NEW';
+    const estimatedCommission = Math.round(Number(input.request.price_amount) * appliedCommissionBps / 10_000);
+
     const account = (await client.query(`SELECT * FROM nurse_financial_accounts
       WHERE nurse_id=$1 FOR UPDATE`, [input.nurseId])).rows[0];
+    if (estimatedCommission > 0 && !account) {
+      conflict('NURSE_FINANCIAL_ACCOUNT_REQUIRED');
+    }
+
     if (account && estimatedCommission > 0) {
       const held = (await client.query(`SELECT coalesce(sum(prepaid_amount),0) AS prepaid,
         coalesce(sum(credit_amount),0) AS credit FROM financial_reservations
-        WHERE nurse_id=$1 AND status='HELD'`, [input.nurseId])).rows[0];
+        WHERE nurse_id=$1 AND status='HELD' AND currency_code=$2`, [input.nurseId, currencyCode])).rows[0];
       const position = (await client.query(`SELECT greatest(coalesce(sum(CASE
         WHEN account_id=$1 THEN debit_amount-credit_amount
         WHEN account_id=$2 THEN debit_amount-credit_amount ELSE 0 END),0),0) AS dues
-        FROM financial_ledger_entries WHERE account_id IN ($1,$2)`,
-      [`CASH_HELD_BY_NURSE:${input.nurseId}`,`NURSE_PAYABLE:${input.nurseId}`])).rows[0];
+        FROM financial_ledger_entries WHERE account_id IN ($1,$2) AND currency=$3`,
+      [`CASH_HELD_BY_NURSE:${input.nurseId}`,`NURSE_PAYABLE:${input.nurseId}`, currencyCode])).rows[0];
       const prepaidAvailable = Math.max(0,Number(account.prepaid_balance)-Number(held.prepaid));
       const prepaidAmount = account.financial_model==='RECEIVABLES' ? 0 : Math.min(estimatedCommission,prepaidAvailable);
       const creditAmount = estimatedCommission-prepaidAmount;
@@ -72,7 +86,7 @@ export class AssignmentOrchestrator {
       ) VALUES($1,$2,$3,'HELD',$4,$5,$6,$7)
       ON CONFLICT(account_id,reference_id) DO NOTHING RETURNING id`, [
         `NURSE_FINANCIAL:${input.nurseId}`,estimatedCommission,input.request.id,input.nurseId,
-        prepaidAmount,creditAmount,input.request.currency_code,
+        prepaidAmount,creditAmount,currencyCode,
       ]);
       if (reservation.rowCount) {
         await client.query(`UPDATE nurse_financial_accounts
@@ -80,6 +94,15 @@ export class AssignmentOrchestrator {
         [account.id,estimatedCommission]);
       }
     }
+
+    const commissionSnapshot = {
+      baseCommissionBps,
+      appliedCommissionBps,
+      tierVersion: 1,
+      currencyCode,
+      reservationAmount: estimatedCommission,
+      pricingSnapshotVersion: input.request.version,
+    };
 
     let assignmentId: string;
     try {
@@ -89,15 +112,16 @@ export class AssignmentOrchestrator {
       const inserted = (await client.query<{ id: string }>(`
         INSERT INTO request_assignments(
           request_id,nurse_id,status,accepted_at,departure_due_at,
-          planned_start_at,planned_end_at,service_duration_minutes
+          planned_start_at,planned_end_at,service_duration_minutes,commission_policy_snapshot
         )
         SELECT $1,$2,CASE WHEN $3::boolean THEN 'ACTIVE' ELSE 'RESERVED' END,statement_timestamp(),
           CASE WHEN $3::boolean THEN statement_timestamp()+nullif(coalesce(
             (SELECT (value->>'departureReminderSeconds')::integer FROM app_settings WHERE key='dispatch'),0),0)
-            * interval '1 second' END,$4,$5,$6
+            * interval '1 second' END,$4,$5,$6,$7::jsonb
         RETURNING id
       `, [input.request.id,input.nurseId,input.reserveImmediately,
-        input.plannedStart?.toISOString() ?? null,input.plannedEnd?.toISOString() ?? null,durationMinutes])).rows[0];
+        input.plannedStart?.toISOString() ?? null,input.plannedEnd?.toISOString() ?? null,durationMinutes,
+        JSON.stringify(commissionSnapshot)])).rows[0];
       if (!inserted) conflict('ASSIGNMENT_CONFLICT');
       assignmentId=inserted.id;
     } catch (error) {

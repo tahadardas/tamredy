@@ -841,12 +841,30 @@ class _StepReview extends StatelessWidget {
                   'الموعد',
                   '${MaterialLocalizations.of(context).formatMediumDate(draft.scheduledAt!)} • ${TimeOfDay.fromDateTime(draft.scheduledAt!).format(context)}',
                 ),
-              if (est != null) ...[
+              if (draft.estimateStatus == EstimateStatus.verified && est != null) ...[
                 const Divider(),
                 KeyValueRow('المدة التقديرية', '${est.totalExpectedMinutes} دقيقة'),
-                KeyValueRow('الإجمالي التقديري', formatMoney(est.expectedEstimate)),
+                KeyValueRow('الإجمالي التقديري المعتمد', formatMoney(est.expectedEstimate)),
                 if (est.promoDiscount > 0)
                   KeyValueRow('الخصم', '−${formatMoney(est.promoDiscount)}'),
+              ] else if (draft.estimateStatus == EstimateStatus.stale || draft.estimating) ...[
+                const Divider(),
+                Text(
+                  'جاري التحقق من التسعير الرسمي...',
+                  style: aeroText(size: 12.5, weight: FontWeight.w700, color: tc.textSecondary),
+                ),
+              ] else ...[
+                const Divider(),
+                KeyValueRow('مجموع الخدمات الأولي (غير معتمد)', formatMoney(draft.unverifiedLocalSubtotal)),
+                const SizedBox(height: 4),
+                Text(
+                  'تعذر جلب التسعير الرسمي (الرسوم/الخصومات/المدة). أعد المحاولة لتأكيد السعر قبل الإرسال.',
+                  style: aeroText(size: 12, color: tc.warning),
+                ),
+                TextButton(
+                  onPressed: draft.estimating ? null : () => draft.refreshEstimate(immediate: true),
+                  child: const Text('إعادة التحقق من السعر الرسمي'),
+                ),
               ],
               const KeyValueRow('طريقة الدفع', 'نقداً للممرض عند إكمال الزيارة'),
             ],

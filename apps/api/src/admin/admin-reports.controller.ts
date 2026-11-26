@@ -176,7 +176,10 @@ export class AdminReportsController {
       await c.query(`UPDATE nurse_credentials SET review_status=$2,review_reason=$3,approved=$4,
         verified_at=CASE WHEN $4 THEN now() END,verified_by=CASE WHEN $4 THEN $5::uuid END WHERE id=$1`,
         [id, status, dto.reason ?? null, dto.decision === 'APPROVE', r.user!.id]);
-      if (dto.decision === 'APPROVE') await c.query('UPDATE nurses SET verified=true,updated_at=now() WHERE id=$1', [row.nurse_id]);
+      if (dto.decision === 'APPROVE') {
+        await c.query('UPDATE nurses SET verified=true,updated_at=now() WHERE id=$1', [row.nurse_id]);
+        await c.query('INSERT INTO nurse_financial_accounts(nurse_id) VALUES($1) ON CONFLICT(nurse_id) DO NOTHING', [row.nurse_id]);
+      }
       await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,$2,'nurse_credential',$3,$4::jsonb)`,
         [r.user!.id, `credential.${status.toLowerCase()}`, id, JSON.stringify({reason: dto.reason ?? null, nurseId: row.nurse_id})]);
       // Approval makes the nurse's login ready: make sure the account has a password (initial one, to be changed at first login).

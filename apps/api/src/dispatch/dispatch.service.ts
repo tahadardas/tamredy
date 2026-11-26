@@ -156,7 +156,7 @@ export class DispatchService {
       const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,currency_code,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
       const request=rr.rows[0];
       await c.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
-      const assignment=await c.query(`SELECT id,status,
+      const assignment=await c.query(`SELECT id,status,commission_policy_snapshot,
         planned_start_at IS NULL OR planned_start_at
           - travel_buffer_before_minutes*interval '1 minute'<=statement_timestamp() AS may_depart
         FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
@@ -223,34 +223,82 @@ export class DispatchService {
         const notes = await c.query(`SELECT 1 FROM clinical_visit_notes
           WHERE request_id=$1 AND status IN ('SUBMITTED','FINALIZED','AMENDED')`, [requestId]);
         if (!notes.rowCount) conflict('CLINICAL_VISIT_NOTE_REQUIRED');
-        const r=await c.query(`UPDATE visits SET completed_at=now(),outcome='COMPLETED' WHERE assignment_id=$1 AND started_at IS NOT NULL AND completed_at IS NULL`,[assignmentId]);
-        if(r.rowCount!==1) conflict('VISIT_NOT_STARTED');
-        await c.query(`UPDATE request_assignments SET status='RELEASED',released_at=now(),reason='COMPLETED' WHERE id=$1`,[assignmentId]);
-        // Full bill from the real time at the patient, using the pricing snapshot taken when the order was placed.
-        const t=await c.query(`SELECT id,EXTRACT(EPOCH FROM (completed_at-started_at)) AS secs,started_at
-          FROM visits WHERE assignment_id=$1`,[assignmentId]);
-        const pricing=request.pricing&&Object.keys(request.pricing).length?request.pricing:{basePrice:request.price_amount};
-        const rep=await this.fees.reputation(c,nurseId);
-        const bps=commissionFor(Number(request.commission_bps??2000),await this.fees.tiers(c),rep.reputation,rep.reviews); // top-rated nurses keep more
-        const delivered = (await c.query(`SELECT
-          coalesce(sum(unit_price*performed_quantity),0) AS base_price,
-          coalesce(sum(round(expected_minutes::numeric*performed_quantity/quantity)),0) AS included_minutes,
-          bool_and(performed_quantity=quantity AND item_status='COMPLETED') AS fully_performed
-          FROM care_request_items WHERE request_id=$1`, [requestId])).rows[0];
-        const rule=ruleFromRow(pricing);
-        if (!delivered.fully_performed) {
-          rule.basePrice=Number(delivered.base_price);
-          rule.includedMinutes=Math.max(1,Number(delivered.included_minutes));
-        }
-        const bill=computeBill(rule,Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
-          arrivedAt:new Date(t.rows[0]?.started_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
-        await c.query(`UPDATE care_requests SET service_minutes=$2,gross_amount=$3,discount_amount=$4,surcharge_amount=$5,distance_fee=$6,tax_amount=$7,
-          amount_due=$8::numeric,commission_bps_applied=$9,commission_amount=$10,nurse_earning=$11,owed_to_company=$12,
-          payment_status=CASE WHEN $8::numeric=0 THEN 'PAID' ELSE 'DUE' END,billed_at=now() WHERE id=$1`,
-          [requestId,bill.minutes,bill.gross,bill.discount,bill.surcharge,bill.distanceFee,bill.tax,bill.due,bill.commissionBps,bill.commission,bill.nurseEarning,bill.owedToCompany]);
-        await this.billing.issueInvoice(
-          c,requestId,t.rows[0].id,nurseId,request.currency_code ?? 'SYP_NEW',bill,pricing,
+
+        const outcomeItems = await c.query(
+          `SELECT id, item_status, status_reason
+           FROM care_request_items
+           WHERE request_id=$1
+           ORDER BY created_at, id
+           FOR UPDATE`,
+          [requestId],
         );
+        if (!outcomeItems.rowCount || outcomeItems.rows.some(item => item.item_status === 'PENDING')) {
+          conflict('REQUEST_ITEMS_REQUIRE_OUTCOME');
+        }
+
+        const hasCompletedItem = outcomeItems.rows.some(item => item.item_status === 'COMPLETED');
+        if (!hasCompletedItem) {
+          // BUG-013: explicit medical-inability / patient-refusal visit completion without false billing
+          const visitRow = await c.query(
+            `UPDATE visits
+             SET completed_at=now(), outcome='NOT_PERFORMED'
+             WHERE assignment_id=$1 AND started_at IS NOT NULL AND completed_at IS NULL
+             RETURNING id`,
+            [assignmentId],
+          );
+          if (visitRow.rowCount !== 1) conflict('VISIT_NOT_STARTED');
+          await c.query(
+            `UPDATE request_assignments
+             SET status='RELEASED', released_at=now(), reason='NO_SERVICE_DELIVERED'
+             WHERE id=$1`,
+            [assignmentId],
+          );
+          const noServiceReason = outcomeItems.rows.find(i => i.status_reason)?.status_reason ?? 'NO_SERVICE_DELIVERED';
+          await this.billing.settleNoServiceVisit(c, {
+            requestId,
+            visitId: visitRow.rows[0].id,
+            nurseId,
+            currencyCode: request.currency_code ?? 'SYP_NEW',
+            actorUserId: userId,
+            reason: noServiceReason,
+          });
+        } else {
+          const r=await c.query(`UPDATE visits SET completed_at=now(),outcome='COMPLETED' WHERE assignment_id=$1 AND started_at IS NOT NULL AND completed_at IS NULL`,[assignmentId]);
+          if(r.rowCount!==1) conflict('VISIT_NOT_STARTED');
+          await c.query(`UPDATE request_assignments SET status='RELEASED',released_at=now(),reason='COMPLETED' WHERE id=$1`,[assignmentId]);
+          // Full bill from the real time at the patient, using the pricing snapshot and commission policy snapshot taken at assignment.
+          const t=await c.query(`SELECT id,EXTRACT(EPOCH FROM (completed_at-started_at)) AS secs,started_at
+            FROM visits WHERE assignment_id=$1`,[assignmentId]);
+          const pricing=request.pricing&&Object.keys(request.pricing).length?request.pricing:{basePrice:request.price_amount};
+          const policySnapshot = assignment.rows[0]?.commission_policy_snapshot as { appliedCommissionBps?: number } | null;
+          let bps: number;
+          if (policySnapshot && typeof policySnapshot.appliedCommissionBps === 'number') {
+            // BUG-012: apply locked commission snapshot captured at assignment instead of retroactively changing tiers
+            bps = policySnapshot.appliedCommissionBps;
+          } else {
+            const rep=await this.fees.reputation(c,nurseId);
+            bps=commissionFor(Number(request.commission_bps??2000),await this.fees.tiers(c),rep.reputation,rep.reviews);
+          }
+          const delivered = (await c.query(`SELECT
+            coalesce(sum(unit_price*performed_quantity),0) AS base_price,
+            coalesce(sum(round(expected_minutes::numeric*performed_quantity/quantity)),0) AS included_minutes,
+            bool_and(performed_quantity=quantity AND item_status='COMPLETED') AS fully_performed
+            FROM care_request_items WHERE request_id=$1`, [requestId])).rows[0];
+          const rule=ruleFromRow(pricing);
+          if (!delivered.fully_performed) {
+            rule.basePrice=Number(delivered.base_price);
+            rule.includedMinutes=Math.max(1,Number(delivered.included_minutes));
+          }
+          const bill=computeBill(rule,Number(t.rows[0]?.secs??0),{promo:request.promo_snapshot,fees:pricing.fees??null,
+            arrivedAt:new Date(t.rows[0]?.started_at??Date.now()),travelMeters:Number(request.travel_distance_m??0),commissionBps:bps});
+          await c.query(`UPDATE care_requests SET service_minutes=$2,gross_amount=$3,discount_amount=$4,surcharge_amount=$5,distance_fee=$6,tax_amount=$7,
+            amount_due=$8::numeric,commission_bps_applied=$9,commission_amount=$10,nurse_earning=$11,owed_to_company=$12,
+            payment_status=CASE WHEN $8::numeric=0 THEN 'PAID' ELSE 'DUE' END,billed_at=now() WHERE id=$1`,
+            [requestId,bill.minutes,bill.gross,bill.discount,bill.surcharge,bill.distanceFee,bill.tax,bill.due,bill.commissionBps,bill.commission,bill.nurseEarning,bill.owedToCompany]);
+          await this.billing.issueInvoice(
+            c,requestId,t.rows[0].id,nurseId,request.currency_code ?? 'SYP_NEW',bill,pricing,
+          );
+        }
       }
       await transitionRequest(c, {
         requestId,

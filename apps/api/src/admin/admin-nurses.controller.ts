@@ -108,6 +108,7 @@ export class AdminNursesController {
         [d.phone, d.displayName, hashPassword(password), r.user!.id])).rows[0];
       const n = (await c.query(`INSERT INTO nurses(user_id,nurse_no,governorate_id,area_id,specialty,national_id_enc,notes) VALUES($1,coalesce($2,nextval('nurse_no_seq')),$3,$4,$5,$6,$7) RETURNING id,nurse_no`,
         [u.id, d.nurseNo ?? null, d.governorateId ?? null, d.areaId ?? null, d.specialty ?? null, d.nationalId ? this.docs.encryptText(d.nationalId) : null, d.notes ?? null])).rows[0];
+      await c.query(`INSERT INTO nurse_financial_accounts(nurse_id) VALUES($1) ON CONFLICT(nurse_id) DO NOTHING`, [n.id]);
       await this.audit(c, r.user!.id, 'nurse.created', n.id, { phone: d.phone, nurseNo: n.nurse_no });
       return { id: n.id, nurseNo: n.nurse_no, temporaryPassword: password, note: 'Shown once.' };
     });

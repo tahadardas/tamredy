@@ -4,8 +4,9 @@ import { DbService } from '../db/db.service.js';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { ReferenceCacheService } from '../cache/reference-cache.service.js';
 import { FeesService } from '../pricing/fees.service.js';
-import { PromoService, toRule } from '../pricing/promo.service.js';
-import { estimateV2, ruleFromRow } from '../pricing/pricing.js';
+import { PromoService } from '../pricing/promo.service.js';
+import { PricingCompositionService } from '../pricing/pricing-composition.service.js';
+import { AutoDiscountService } from '../pricing/auto-discounts.service.js';
 import { conflict, invalid, missing } from '../common/errors.js';
 
 class CreateBeneficiaryDto {
@@ -35,6 +36,11 @@ export class CatalogController {
     private readonly cache: ReferenceCacheService,
     private readonly fees: FeesService = new FeesService(),
     private readonly promos: PromoService = new PromoService(db),
+    private readonly pricingComposition: PricingCompositionService = new PricingCompositionService(
+      promos,
+      fees,
+      new AutoDiscountService(),
+    ),
   ) {}
 
   /** Service categories: visible to all users */
@@ -90,87 +96,45 @@ export class CatalogController {
     return this.cache.getOrLoad('services:public', () => fetchServices(), 300);
   }
 
-  /** Multi-service estimate calculator: computes combined duration, items, base pricing, and fees */
+  /** BUG-007 / BUG-008: Authenticated personalized multi-service estimate using the shared PricingCompositionService */
   @Post('catalog/estimate')
-  async estimateServices(@Body() body: MultiServiceEstimateDto) {
-    const rawItems: { serviceId: string; quantity: number }[] = [];
-    if (Array.isArray(body.items) && body.items.length > 0) {
-      for (const it of body.items) {
-        if (it.serviceId) rawItems.push({ serviceId: it.serviceId, quantity: Math.max(1, Number(it.quantity) || 1) });
-      }
-    } else if (Array.isArray(body.serviceIds) && body.serviceIds.length > 0) {
-      for (const sid of body.serviceIds) {
-        if (sid) rawItems.push({ serviceId: sid, quantity: 1 });
-      }
-    }
-
-    if (rawItems.length === 0) {
-      invalid('At least one serviceId must be provided');
-    }
-
-    const uniqueIds = [...new Set(rawItems.map(i => i.serviceId))];
-    const servicesRes = await this.db.query(
-      `SELECT * FROM services WHERE id = ANY($1::uuid[]) AND active = true AND dispatch_approved = true`,
-      [uniqueIds]
-    );
-
-    if (servicesRes.rowCount !== uniqueIds.length) {
-      invalid('One or more selected services are unavailable');
-    }
-
-    const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
-    let totalBasePrice = 0;
-    let totalExpectedMinutes = 0;
-    const requiredSkills = new Set<string>();
-    let requiresPrescription = false;
-    let requiresClinicalReview = false;
-
-    const breakdown = rawItems.map(it => {
-      const s = serviceMap.get(it.serviceId)!;
-      const unitPrice = Number(s.price_amount);
-      const subtotal = unitPrice * it.quantity;
-      const expectedMinutes = (Number(s.expected_minutes) || 30) * it.quantity;
-      totalBasePrice += subtotal;
-      totalExpectedMinutes += expectedMinutes;
-      if (s.requires_prescription) requiresPrescription = true;
-      if (s.requires_clinical_review) requiresClinicalReview = true;
-      if (Array.isArray(s.required_skills)) {
-        for (const sk of s.required_skills) requiredSkills.add(sk);
-      }
-      return {
-        serviceId: s.id,
-        code: s.code,
-        titleAr: s.title_ar,
-        quantity: it.quantity,
-        unitPrice,
-        subtotal,
-        expectedMinutes,
-      };
+  @UseGuards(AuthGuard)
+  async estimateServices(@Request() r: AuthRequest, @Body() body: MultiServiceEstimateDto) {
+    requireRole(r.user!, 'PATIENT');
+    const composed = await this.pricingComposition.compose(this.db, {
+      patientUserId: r.user!.id,
+      items: body.items,
+      serviceIds: body.serviceIds,
+      promoCode: body.promoCode,
+      consumePromoLock: false,
     });
 
-    const primaryService = servicesRes.rows.reduce((prev, curr) =>
-      Number(curr.price_amount) > Number(prev.price_amount) ? curr : prev
-    , servicesRes.rows[0]);
-
-    const combinedRule = {
-      ...ruleFromRow(primaryService),
-      basePrice: totalBasePrice,
-      expectedMinutes: totalExpectedMinutes,
-    };
-
-    const feeSnapshot = await this.fees.snapshot(this.db);
-    const promo = body.promoCode ? await this.promos.resolve(this.db, 'anonymous', primaryService.id, totalBasePrice, body.promoCode, false).catch(() => null) : null;
-    const est = estimateV2(combinedRule, promo ? toRule(promo) : null, feeSnapshot);
+    const breakdown = composed.canonicalItems.map(item => ({
+      serviceId: item.serviceId,
+      code: item.code,
+      titleAr: item.titleAr,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
+      expectedMinutes: item.expectedMinutes,
+    }));
 
     return {
       breakdown,
-      totalBasePrice,
-      totalExpectedMinutes,
-      currencyCode: primaryService.currency_code ?? 'SYP_NEW',
-      requiresPrescription,
-      requiresClinicalReview,
-      requiredSkills: Array.from(requiredSkills),
-      estimate: est,
+      canonicalItems: breakdown,
+      totalBasePrice: composed.totalBasePrice,
+      includedMinutes: composed.includedMinutes,
+      totalExpectedMinutes: composed.totalExpectedMinutes,
+      currencyCode: composed.currencyCode,
+      combinedPricingRule: composed.combinedPricingRule,
+      requiresPrescription: composed.clinicalRequirements.requiresPrescription,
+      requiresClinicalReview: composed.clinicalRequirements.requiresClinicalReview,
+      requiredSkills: composed.clinicalRequirements.requiredSkills,
+      clinicalRequirements: composed.clinicalRequirements,
+      pricingVersion: composed.pricingVersion,
+      promoCode: composed.estimate.promoCode,
+      autoDiscount: composed.estimate.autoDiscount,
+      estimate: composed.estimate,
       singleTravelFeeGuaranteed: true,
     };
   }
