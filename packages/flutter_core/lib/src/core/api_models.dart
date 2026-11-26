@@ -18,6 +18,40 @@ enum SessionInitState {
   failed,
 }
 
+/// Server runtime capabilities exposed via `/v1/capabilities` (BUG-047).
+class ServerCapabilities {
+  final bool scheduledVisitsEnabled;
+  final bool openMarketplaceEnabled;
+  final bool openDispatchEnabled;
+  final bool liveLocationRedisEnabled;
+  final bool guardianNightPolicyEnabled;
+  final bool walletProviderEnabled;
+  final bool ordersAccepting;
+  final String? pausedMessage;
+
+  const ServerCapabilities({
+    this.scheduledVisitsEnabled = false,
+    this.openMarketplaceEnabled = true,
+    this.openDispatchEnabled = false,
+    this.liveLocationRedisEnabled = false,
+    this.guardianNightPolicyEnabled = false,
+    this.walletProviderEnabled = false,
+    this.ordersAccepting = true,
+    this.pausedMessage,
+  });
+
+  factory ServerCapabilities.fromJson(Map<String, dynamic> j) => ServerCapabilities(
+    scheduledVisitsEnabled: j['scheduledVisitsEnabled'] == true,
+    openMarketplaceEnabled: j['openMarketplaceEnabled'] != false,
+    openDispatchEnabled: j['openDispatchEnabled'] == true,
+    liveLocationRedisEnabled: j['liveLocationRedisEnabled'] == true,
+    guardianNightPolicyEnabled: j['guardianNightPolicyEnabled'] == true,
+    walletProviderEnabled: j['walletProviderEnabled'] == true,
+    ordersAccepting: j['ordersAccepting'] != false,
+    pausedMessage: j['pausedMessage']?.toString(),
+  );
+}
+
 /// Categorized API failure reasons (Phase 1, Section 6).
 enum ApiErrorKind {
   offline,

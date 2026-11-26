@@ -642,7 +642,10 @@ class _StepModeSchedule extends StatelessWidget {
           selected: draft.bookingMode == 'SCHEDULED',
           icon: Icons.calendar_month_rounded,
           title: 'حجز موعد لاحق',
-          subtitle: 'اختر التاريخ والساعة المناسبة للزيارة، وسنؤكد الممرض قبل الموعد.',
+          subtitle: draft.capabilities.scheduledVisitsEnabled
+              ? 'اختر التاريخ والساعة المناسبة للزيارة، وسنؤكد الممرض قبل الموعد.'
+              : 'غير متاح حالياً في هذا التشغيل (مفعّل فقط عند إتاحة الزيارات المجدولة من الخادم).',
+          enabled: draft.capabilities.scheduledVisitsEnabled,
           onTap: () => draft.setBookingMode('SCHEDULED'),
         ),
         if (draft.bookingMode == 'OPEN') ...[
@@ -749,6 +752,7 @@ class _ModeTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final bool enabled;
   final VoidCallback onTap;
 
   const _ModeTile({
@@ -756,43 +760,49 @@ class _ModeTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.enabled = true,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final tc = context.tamColors;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: selected ? tc.primaryTint.withValues(alpha: tc.isDark ? 0.25 : 0.45) : tc.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: selected ? tc.primary : tc.border, width: selected ? 1.6 : 1),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              Icon(icon, color: selected ? tc.primary : tc.textSecondary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: aeroText(size: 14.5, weight: FontWeight.w800, color: tc.textPrimary)),
-                    const SizedBox(height: 2),
-                    Text(subtitle, style: aeroText(size: 12, color: tc.textSecondary, height: 1.4)),
-                  ],
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.55,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: selected ? tc.primaryTint.withValues(alpha: tc.isDark ? 0.25 : 0.45) : tc.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: selected ? tc.primary : tc.border, width: selected ? 1.6 : 1),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: enabled ? onTap : null,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Icon(icon, color: selected ? tc.primary : tc.textSecondary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: aeroText(size: 14.5, weight: FontWeight.w800, color: tc.textPrimary)),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: aeroText(size: 12, color: tc.textSecondary, height: 1.4)),
+                    ],
+                  ),
                 ),
-              ),
-              Icon(
-                selected ? Icons.radio_button_checked : Icons.radio_button_off,
-                color: selected ? tc.primary : tc.textSecondary,
-              ),
-            ],
+                Icon(
+                  enabled
+                      ? (selected ? Icons.radio_button_checked : Icons.radio_button_off)
+                      : Icons.lock_outline_rounded,
+                  color: selected ? tc.primary : tc.textSecondary,
+                ),
+              ],
+            ),
           ),
         ),
       ),

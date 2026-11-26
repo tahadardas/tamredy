@@ -24,6 +24,14 @@ export class DbService implements OnModuleDestroy {
   query<T extends QueryResultRow = any>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
     return this.pool.query<T>(sql, params);
   }
+  poolStats() {
+    return {
+      max: Number(process.env.DATABASE_POOL_MAX ?? 20),
+      totalCount: this.pool.totalCount,
+      idleCount: this.pool.idleCount,
+      waitingCount: this.pool.waitingCount,
+    };
+  }
   async transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {

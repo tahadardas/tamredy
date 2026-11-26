@@ -142,6 +142,9 @@ class BookingDraftStore extends ChangeNotifier {
   Map<String, dynamic>? schedulingPolicy;
   StagedEvidence? stagedEvidence;
   bool prescriptionConfirmed = false;
+  ServerCapabilities capabilities = const ServerCapabilities(
+    scheduledVisitsEnabled: kDemoMode,
+  );
 
   // Step 4: Submission state & BUG-026 clinical evidence retry state
   String? _idempotencyKey;
@@ -592,7 +595,21 @@ class BookingDraftStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateCapabilities(ServerCapabilities next) {
+    capabilities = next;
+    if (!capabilities.scheduledVisitsEnabled && bookingMode == 'SCHEDULED') {
+      bookingMode = 'INSTANT';
+      scheduledAt = null;
+      _invalidateSubmissionKey();
+      _persistDraft();
+    }
+    notifyListeners();
+  }
+
   void setBookingMode(String mode) {
+    if (mode == 'SCHEDULED' && !capabilities.scheduledVisitsEnabled) {
+      return;
+    }
     bookingMode = mode;
     if (mode != 'SCHEDULED') scheduledAt = null;
     _invalidateSubmissionKey();

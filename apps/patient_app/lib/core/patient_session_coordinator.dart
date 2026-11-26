@@ -28,6 +28,9 @@ class PatientSessionCoordinator extends ChangeNotifier {
   bool _initialized = false;
   SessionInitState _initState = SessionInitState.idle;
   String? _initError;
+  ServerCapabilities capabilities = const ServerCapabilities(
+    scheduledVisitsEnabled: kDemoMode,
+  );
   bool marketingOptIn = false;
 
   SessionInitState get initState => _initState;
@@ -126,9 +129,10 @@ class PatientSessionCoordinator extends ChangeNotifier {
       await bookingDraft.restoreDraft();
       unawaited(PatientAlarm.requestPermissions());
 
-      // Critical path: catalog, active/recent requests, and active calls only
+      // Critical path: server capabilities, catalog, active/recent requests, and active calls only
       final criticalErrors = <Object>[];
       await Future.wait([
+        loadCapabilities(),
         catalog.load().catchError((Object e) {
           criticalErrors.add(e);
         }),
@@ -178,8 +182,23 @@ class PatientSessionCoordinator extends ChangeNotifier {
     await initAuthenticatedSession();
   }
 
+  Future<void> loadCapabilities() async {
+    if (kDemoMode) {
+      capabilities = const ServerCapabilities(scheduledVisitsEnabled: true);
+      bookingDraft.updateCapabilities(capabilities);
+      return;
+    }
+    try {
+      final raw = await api.getMap('/v1/capabilities');
+      capabilities = ServerCapabilities.fromJson(raw);
+      bookingDraft.updateCapabilities(capabilities);
+      notifyListeners();
+    } catch (_) {}
+  }
+
   Future<void> resyncAll() async {
     await Future.wait([
+      loadCapabilities(),
       requests.refreshAll(silent: true),
       conversations.loadConversations(silent: true),
       refreshUnreadNotifications(),

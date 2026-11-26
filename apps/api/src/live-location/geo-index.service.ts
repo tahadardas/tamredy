@@ -64,6 +64,16 @@ export class GeoIndexService implements OnModuleDestroy {
     }
   }
 
+  async healthStatus(): Promise<{ enabled: boolean; connected: boolean }> {
+    if (!this.redis) return { enabled: this.enabled, connected: false };
+    try {
+      await this.redis.ping();
+      return { enabled: true, connected: true };
+    } catch {
+      return { enabled: true, connected: false };
+    }
+  }
+
   async current(nurseId: string): Promise<PreviousLocation | null> {
     if (!this.redis) return null;
     const value = await this.redis.hgetall(`live:location:${nurseId}`);
