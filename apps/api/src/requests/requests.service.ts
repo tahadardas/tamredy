@@ -96,8 +96,10 @@ export class RequestsService {
 
       const now = new Date();
       const openDurationMins = dto.openDurationMinutes ?? 120;
-      const openExpiresAt = isOpenMode ? new Date(now.getTime() + openDurationMins * 60000) : null;
-      const latestArrivalAt = isOpenMode
+      const openExpiresAt = isOpenMode && !needsClinicalApproval
+        ? new Date(now.getTime() + openDurationMins * 60000)
+        : null;
+      const latestArrivalAt = isOpenMode && !needsClinicalApproval
         ? (dto.latestAcceptableArrivalAt ? new Date(dto.latestAcceptableArrivalAt) : new Date(openExpiresAt!.getTime() + 60 * 60000))
         : null;
 
@@ -111,15 +113,15 @@ export class RequestsService {
         requester_user_id, beneficiary_id, service_id, location, location_source, address_text,
         status, price_amount, currency_code, commission_bps, pricing, promo_id, promo_snapshot,
         booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at,
-        latest_acceptable_arrival_at, area_id, clinical_approval_status
+        latest_acceptable_arrival_at, area_id, clinical_approval_status, open_duration_minutes
       )
-      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21)
+      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21,$22)
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
         userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,currencyCode,combinedCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
         bookingMode, isOpenMode ? 'OPEN_FOR_PROPOSALS' : (appointment ? 'INITIAL' : 'SEARCHING'),
-        isOpenMode ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
-        latestArrivalAt?.toISOString() ?? null, areaId, needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED'
+        isOpenMode && !needsClinicalApproval ? now.toISOString() : null, openExpiresAt?.toISOString() ?? null,
+        latestArrivalAt?.toISOString() ?? null, areaId, needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED', openDurationMins
       ]);
       const request = r.rows[0];
 

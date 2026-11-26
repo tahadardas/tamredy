@@ -168,12 +168,38 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
                       Text(
                         req.clinicalApprovalStatus == 'PENDING'
                             ? 'المراجعة السريرية قيد الانتظار'
-                            : 'تعذر اعتماد المستندات السريرية',
-                        style: aeroText(size: 14.5, weight: FontWeight.w800, color: tc.warning),
+                            : 'تم رفض المستندات السريرية',
+                        style: aeroText(
+                          size: 14.5,
+                          weight: FontWeight.w800,
+                          color: req.clinicalApprovalStatus == 'REJECTED' ? tc.danger : tc.warning,
+                        ),
                       ),
                       const SizedBox(height: 6),
+                      if (widget.session.bookingDraft.pendingEvidenceRequestId == req.id &&
+                          widget.session.bookingDraft.stagedEvidence != null) ...[
+                        if (widget.session.bookingDraft.pendingEvidenceError != null)
+                          NoticeBox(widget.session.bookingDraft.pendingEvidenceError!),
+                        AeroButton(
+                          widget.session.bookingDraft.uploadingPendingEvidence
+                              ? 'جارٍ إعادة رفع المستند...'
+                              : 'إعادة رفع المستند المرفق مسبقاً',
+                          isLoading: widget.session.bookingDraft.uploadingPendingEvidence,
+                          onPressed: widget.session.bookingDraft.uploadingPendingEvidence
+                              ? null
+                              : () async {
+                                  final ok = await widget.session.bookingDraft.retryPendingEvidenceUpload();
+                                  if (ok && mounted) {
+                                    await widget.session.requests.loadRequestDetail(req.id, force: true);
+                                  }
+                                },
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       Text(
-                        'يرجى رفع صورة واضحة للوصفة الطبية أو التقرير ليتم استكمال البحث.',
+                        req.clinicalApprovalStatus == 'REJECTED'
+                            ? 'يرجى رفع مستند أوضح لإعادة التقديم للمراجعة، أو يمكنك إغلاق الطلب.'
+                            : 'يرجى رفع صورة واضحة للوصفة الطبية أو التقرير ليتم استكمال البحث.',
                         style: aeroText(size: 12.5, color: tc.textSecondary),
                       ),
                       const SizedBox(height: 10),
@@ -184,12 +210,16 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
                           ElevatedButton.icon(
                             onPressed: _busyAction ? null : () => _uploadEvidence('PRESCRIPTION'),
                             icon: const Icon(Icons.upload_file_rounded, size: 18),
-                            label: const Text('رفع وصفة طبية'),
+                            label: Text(req.clinicalApprovalStatus == 'REJECTED'
+                                ? 'إعادة رفع وصفة طبية'
+                                : 'رفع وصفة طبية'),
                           ),
                           OutlinedButton.icon(
                             onPressed: _busyAction ? null : () => _uploadEvidence('CLINICAL_REPORT'),
                             icon: const Icon(Icons.description_outlined, size: 18),
-                            label: const Text('رفع تقرير طبي'),
+                            label: Text(req.clinicalApprovalStatus == 'REJECTED'
+                                ? 'إعادة رفع تقرير طبي'
+                                : 'رفع تقرير طبي'),
                           ),
                         ],
                       ),

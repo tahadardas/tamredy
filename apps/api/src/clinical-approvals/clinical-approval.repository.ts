@@ -19,8 +19,10 @@ export class ClinicalApprovalRepository {
   }
 
   lock(client: PoolClient, requestId: string) {
-    return client.query(`SELECT r.*,cr.requester_user_id,cr.booking_mode,cr.status AS request_status
+    return client.query(`SELECT r.*,cr.requester_user_id,cr.booking_mode,cr.status AS request_status,
+      cr.version AS request_version,cr.open_duration_minutes,sv.appointment_at
       FROM request_clinical_reviews r JOIN care_requests cr ON cr.id=r.request_id
+      LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
       WHERE r.request_id=$1 FOR UPDATE OF r,cr`, [requestId]);
   }
 

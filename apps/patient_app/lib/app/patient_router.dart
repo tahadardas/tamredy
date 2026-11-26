@@ -67,6 +67,15 @@ class PatientRouter {
     TypedCareRequest req,
   ) async {
     final navState = Navigator.of(context);
+    // BUG-025: Clinical review gating always takes precedence before opening SearchingScreen or OpenProposalsScreen.
+    if (req.clinicalApprovalStatus == 'PENDING' || req.clinicalApprovalStatus == 'REJECTED') {
+      await navState.push(
+        MaterialPageRoute<void>(
+          builder: (_) => RequestDetailScreen(session: session, requestId: req.id),
+        ),
+      );
+      return;
+    }
     if (req.status == 'OFFERING' && req.bookingMode != 'OPEN') {
       await navState.push(
         MaterialPageRoute<void>(

@@ -143,10 +143,13 @@ class BookingDraftStore extends ChangeNotifier {
   StagedEvidence? stagedEvidence;
   bool prescriptionConfirmed = false;
 
-  // Step 4: Submission state
+  // Step 4: Submission state & BUG-026 clinical evidence retry state
   String? _idempotencyKey;
   bool submitting = false;
   String? submitError;
+  String? pendingEvidenceRequestId;
+  String? pendingEvidenceError;
+  bool uploadingPendingEvidence = false;
 
   List<PatientService> get selectedServices {
     final result = <PatientService>[];
@@ -744,6 +747,10 @@ class BookingDraftStore extends ChangeNotifier {
       );
       await api.writeLocal(opStorageKey, null);
       final reqId = '${res['id'] ?? ''}';
+      final created = TypedCareRequest.fromJson(res, fullDetail: true);
+
+      // BUG-026: Separate request creation success from staged clinical evidence upload;
+      // never swallow upload errors or wipe stagedEvidence before upload succeeds.
       if (stagedEvidence != null && reqId.isNotEmpty) {
         try {
           await api.uploadClinicalEvidence(
@@ -752,12 +759,19 @@ class BookingDraftStore extends ChangeNotifier {
             stagedEvidence!.bytes,
             stagedEvidence!.filename,
           );
-        } catch (_) {
-          // Evidence can still be uploaded from Request Detail / Tracking if transient fail occurs
+          pendingEvidenceRequestId = null;
+          pendingEvidenceError = null;
+        } catch (e) {
+          pendingEvidenceRequestId = reqId;
+          pendingEvidenceError = explainError(
+            e,
+            fallback: 'تم إنشاء الطلب بنجاح، لكن تعذر رفع الوصفة/التقرير. يمكنك إعادة المحاولة دون إنشاء طلب جديد.',
+          );
+          await _clearOrderSelectionPreserveEvidence();
+          return created;
         }
       }
 
-      final created = TypedCareRequest.fromJson(res);
       await clearDraft();
       return created;
     } catch (e) {
@@ -772,6 +786,44 @@ class BookingDraftStore extends ChangeNotifier {
     }
   }
 
+  Future<bool> retryPendingEvidenceUpload() async {
+    final reqId = pendingEvidenceRequestId;
+    final ev = stagedEvidence;
+    if (kDemoMode || reqId == null || ev == null || uploadingPendingEvidence) return false;
+    uploadingPendingEvidence = true;
+    pendingEvidenceError = null;
+    notifyListeners();
+    try {
+      await api.uploadClinicalEvidence(reqId, ev.evidenceType, ev.bytes, ev.filename);
+      pendingEvidenceRequestId = null;
+      stagedEvidence = null;
+      return true;
+    } catch (e) {
+      pendingEvidenceError = explainError(e, fallback: 'تعذر رفع المستند السريري، أعد المحاولة');
+      return false;
+    } finally {
+      uploadingPendingEvidence = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _clearOrderSelectionPreserveEvidence() async {
+    _estimateDebounce?.cancel();
+    _estimateGeneration++;
+    serviceQuantities.clear();
+    promoCode = '';
+    promoFeedback = null;
+    estimate = null;
+    estimateStatus = EstimateStatus.stale;
+    bookingMode = 'INSTANT';
+    scheduledAt = null;
+    prescriptionConfirmed = false;
+    _idempotencyKey = null;
+    submitError = null;
+    await api.writeLocal(_draftStorageKey, null);
+    notifyListeners();
+  }
+
   Future<void> clearDraft() async {
     _estimateDebounce?.cancel();
     _estimateGeneration++;
@@ -783,6 +835,8 @@ class BookingDraftStore extends ChangeNotifier {
     bookingMode = 'INSTANT';
     scheduledAt = null;
     stagedEvidence = null;
+    pendingEvidenceRequestId = null;
+    pendingEvidenceError = null;
     prescriptionConfirmed = false;
     _idempotencyKey = null;
     submitError = null;

@@ -4,6 +4,7 @@ import { DocStore } from '../admin/doc-store.js';
 import { conflict, missing } from '../common/errors.js';
 import { ClinicalApprovalRepository } from './clinical-approval.repository.js';
 import type { ClinicalDecisionDto, ClinicalEvidenceDto } from './clinical-approval.dto.js';
+import { transitionRequest } from '../requests/request-lifecycle.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
@@ -15,10 +16,15 @@ export class ClinicalApprovalService {
   ) {}
 
   async upload(patientUserId: string, requestId: string, dto: ClinicalEvidenceDto, file: {buffer:Buffer;originalname:string}) {
-    const request = (await this.db.query(`SELECT id,clinical_approval_status FROM care_requests
+    const request = (await this.db.query(`SELECT id,clinical_approval_status,status FROM care_requests
       WHERE id=$1 AND requester_user_id=$2`, [requestId,patientUserId])).rows[0];
     if (!request) missing();
-    if (request.clinical_approval_status !== 'PENDING') conflict('CLINICAL_REVIEW_NOT_PENDING');
+    if (!['PENDING', 'REJECTED'].includes(request.clinical_approval_status)) {
+      conflict('CLINICAL_REVIEW_NOT_PENDING');
+    }
+    if (['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(request.status)) {
+      conflict('REQUEST_TERMINAL_STATE');
+    }
     const saved = await this.documents.save(`clinical-${requestId}`,file,'OTHER');
     try {
       return await this.db.transaction(async client => {
@@ -26,6 +32,21 @@ export class ClinicalApprovalService {
           request_id,uploaded_by,evidence_type,storage_key,original_filename,mime_type,file_size_bytes,sha256
         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,request_id,evidence_type,original_filename,mime_type,file_size_bytes,created_at`,
         [requestId,patientUserId,dto.evidenceType,saved.storageKey,file.originalname,saved.mime,saved.size,saved.sha256])).rows[0];
+        if (request.clinical_approval_status === 'REJECTED') {
+          await client.query(
+            `UPDATE request_clinical_reviews SET status='PENDING', version=version+1 WHERE request_id=$1`,
+            [requestId],
+          );
+          await client.query(
+            `UPDATE care_requests SET clinical_approval_status='PENDING', version=version+1, updated_at=statement_timestamp() WHERE id=$1`,
+            [requestId],
+          );
+          await client.query(
+            `INSERT INTO clinical_review_events(request_id,actor_user_id,previous_status,next_status,note)
+             VALUES($1,$2,'REJECTED','PENDING','Patient resubmitted clinical evidence')`,
+            [requestId, patientUserId],
+          );
+        }
         await client.query(`INSERT INTO clinical_access_audit(request_id,evidence_id,actor_user_id,action)
           VALUES($1,$2,$3,'UPLOAD_EVIDENCE')`, [requestId,evidence.id,patientUserId]);
         return evidence;
@@ -90,7 +111,8 @@ export class ClinicalApprovalService {
       if (status === 'APPROVED') {
         if (review.booking_mode === 'OPEN') {
           const policy = (await client.query("SELECT value FROM app_settings WHERE key='booking_policies'")).rows[0]?.value;
-          const durationMinutes = Number(policy?.openRequestDurationMinutes) || 120;
+          // BUG-024: honor patient's chosen open_duration_minutes, only falling back to default policy
+          const durationMinutes = Number(review.open_duration_minutes) || Number(policy?.openRequestDurationMinutes) || 120;
           await client.query(`UPDATE care_requests SET published_at=statement_timestamp(),
             open_expires_at=statement_timestamp()+$2::integer*interval '1 minute',
             latest_acceptable_arrival_at=statement_timestamp()+($2::integer+60)*interval '1 minute'
@@ -105,12 +127,36 @@ export class ClinicalApprovalService {
               recipientRole: 'PATIENT',
               targetApp: 'PATIENT_APP',
               requestId,
+              entityVersion: Number(review.request_version) + 1,
               skipPush: true,
             })),
           ]);
+        } else if (review.request_status === 'SCHEDULED' && review.appointment_at && new Date(review.appointment_at).getTime() <= Date.now()) {
+          // BUG-024: scheduled slot elapsed during clinical review -> require rescheduling instead of dispatching a passed slot
+          await client.query(`DELETE FROM scheduled_visits WHERE request_id=$1`, [requestId]);
+          await transitionRequest(client, {
+            requestId,
+            fromStatus: 'SCHEDULED',
+            toStatus: 'UNFULFILLED',
+            currentVersion: Number(review.request_version) + 1,
+            actor: 'ADMIN',
+            actorUserId,
+            reason: 'SCHEDULED_TIME_PASSED_DURING_REVIEW',
+          });
         } else if (review.request_status === 'OFFERING') {
+          const dispatchPolicy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
+          if (dispatchPolicy?.openEnabled === true && process.env.OPEN_DISPATCH_ENABLED === 'true') {
+            await client.query(`UPDATE care_requests SET
+              search_started_at=statement_timestamp(),
+              search_expires_at=statement_timestamp()+$2::integer*interval '1 second'
+              WHERE id=$1`, [requestId, dispatchPolicy?.offerDurationSeconds ?? 60]);
+          }
           await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1) ON CONFLICT(request_id) DO NOTHING`, [requestId]);
         }
+      } else {
+        // BUG-025: REJECTED clinical review must stop dispatch & open offers cleanly
+        await client.query(`DELETE FROM dispatch_jobs WHERE request_id=$1`, [requestId]);
+        await client.query(`UPDATE care_requests SET marketplace_status='INITIAL', open_expires_at=NULL WHERE id=$1`, [requestId]);
       }
       await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
         VALUES('request.clinical_review_changed',$1,$2::jsonb)`,
@@ -122,7 +168,8 @@ export class ClinicalApprovalService {
           recipientRole: 'PATIENT',
           targetApp: 'PATIENT_APP',
           requestId,
-          extra: { decision: status },
+          entityVersion: Number(review.request_version) + 1,
+          extra: { decision: status, note: dto.note.trim() },
         })),
       ]);
       return {requestId,status};
