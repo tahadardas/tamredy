@@ -286,6 +286,12 @@ class TamreedyApi {
 
   Future<String?> getCachedRole() => _storage.read(key: 'cached_user_role');
 
+  Future<String?> readLocal(String key) => _storage.read(key: 'pref_$key');
+
+  Future<void> writeLocal(String key, String? value) => value == null
+      ? _storage.delete(key: 'pref_$key')
+      : _storage.write(key: 'pref_$key', value: value);
+
   Future<void> _saveTokens(Map<String, dynamic> t) async {
     await _storage.write(key: 'access_token', value: t['accessToken'] as String);
     await _storage.write(key: 'refresh_token', value: t['refreshToken'] as String);

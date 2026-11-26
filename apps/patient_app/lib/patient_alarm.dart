@@ -1,19 +1,41 @@
+import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:tamreedy_core/tamreedy_core.dart';
 
-const patientAlertChannelId = 'tamreedy_patient_alerts_v1';
-const patientUpdatesChannelId = 'tamreedy_patient_updates_v1';
+const patientCallChannelId = 'tamreedy_patient_calls_v3';
+const patientUpdatesChannelId = 'tamreedy_patient_updates_v3';
 const patientAlertSound = RawResourceAndroidNotificationSound('tamreedy_alert');
 
-/// Loud, insistent alert with full-screen wake-up intent for the Patient App
-/// when a nurse submits a proposal or accepts/updates an active visit.
+/// Patient App notification & call alert handler (Tamreedy 3.0).
+///
+/// Enforces:
+/// - Role isolation (`PATIENT` / `PATIENT_APP` only).
+/// - `eventId` deduplication and expiry checks.
+/// - Clear separation between insistent call alarms (`call.incoming`)
+///   and standard high-priority updates (proposals, assignment, visit progress, billing, chat).
 class PatientAlarm {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
-  static void Function()? onTap;
+  static NotificationCoordinator? coordinator;
+  static void Function(Map<String, dynamic> data)? onTapData;
+
+  static final Set<String> _handledEventIds = <String>{};
+  static final List<String> _handledOrder = <String>[];
+
+  static bool _markHandled(String eventId) {
+    if (eventId.isEmpty) return true;
+    if (_handledEventIds.contains(eventId)) return false;
+    _handledEventIds.add(eventId);
+    _handledOrder.add(eventId);
+    if (_handledOrder.length > 256) {
+      _handledEventIds.remove(_handledOrder.removeAt(0));
+    }
+    return true;
+  }
 
   static Future<void> init() async {
     if (_ready || kIsWeb || !Platform.isAndroid) return;
@@ -23,20 +45,32 @@ class PatientAlarm {
       ),
       onDidReceiveNotificationResponse: (r) {
         cancelAll();
-        if (r.actionId != 'mute_alarm') {
-          onTap?.call();
+        if (r.actionId == 'mute_alarm') return;
+        Map<String, dynamic> data = const {};
+        final payload = r.payload;
+        if (payload != null && payload.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(payload);
+            if (decoded is Map) {
+              data = Map<String, dynamic>.from(decoded);
+            }
+          } catch (_) {}
         }
+        if (data.isNotEmpty && coordinator != null) {
+          coordinator!.routeFromTap(data);
+        }
+        onTapData?.call(data);
       },
     );
+
     final android = _plugin
         .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
+            AndroidFlutterLocalNotificationsPlugin>();
     await android?.createNotificationChannel(
       AndroidNotificationChannel(
-        patientAlertChannelId,
-        'تنبيهات عروض الممرضين',
-        description: 'رنين وتنبيه فوري عند وصول عرض جديد أو قبول الطلب',
+        patientCallChannelId,
+        'المكالمات الواردة',
+        description: 'رنين وتنبيه فوري عند ورود مكالمة صوتية من الممرض',
         importance: Importance.max,
         playSound: true,
         sound: patientAlertSound,
@@ -48,8 +82,8 @@ class PatientAlarm {
     await android?.createNotificationChannel(
       const AndroidNotificationChannel(
         patientUpdatesChannelId,
-        'تحديثات حالة الزيارة',
-        description: 'إشعارات اعتيادية لمسار الزيارة والمدفوعات بدون رنين متكرر',
+        'تحديثات الطلب والزيارة',
+        description: 'عروض الممرضين وتقدم الزيارة والفواتير والمحادثات',
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
@@ -60,18 +94,19 @@ class PatientAlarm {
 
   static Future<void> requestPermissions() async {
     if (kIsWeb || !Platform.isAndroid) return;
+    await init();
     final android = _plugin
         .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
+            AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
     await android?.requestFullScreenIntentPermission();
   }
 
-  static Future<void> showAlert({
+  static Future<void> showCallAlert({
     required String id,
     required String title,
     required String body,
+    Map<String, dynamic> data = const {},
     int timeoutSeconds = 45,
   }) async {
     if (kIsWeb || !Platform.isAndroid) return;
@@ -87,12 +122,12 @@ class PatientAlarm {
         body,
         NotificationDetails(
           android: AndroidNotificationDetails(
-            patientAlertChannelId,
-            'تنبيهات عروض الممرضين',
-            channelDescription: 'رنين وتنبيه فوري عند وصول عرض جديد أو قبول الطلب',
+            patientCallChannelId,
+            'المكالمات الواردة',
+            channelDescription: 'رنين وتنبيه فوري عند ورود مكالمة صوتية من الممرض',
             importance: Importance.max,
             priority: Priority.max,
-            category: AndroidNotificationCategory.alarm,
+            category: AndroidNotificationCategory.call,
             fullScreenIntent: true,
             autoCancel: true,
             timeoutAfter: timeoutSeconds * 1000,
@@ -104,16 +139,17 @@ class PatientAlarm {
             actions: const [
               AndroidNotificationAction(
                 'mute_alarm',
-                'إيقاف الرنين',
+                'كتم الرنين',
                 cancelNotification: true,
                 showsUserInterface: false,
               ),
             ],
           ),
         ),
+        payload: jsonEncode(data),
       );
     } catch (e) {
-      debugPrint('patient alarm not shown: $e');
+      debugPrint('patient call alarm not shown: $e');
     }
   }
 
@@ -121,6 +157,7 @@ class PatientAlarm {
     required String id,
     required String title,
     required String body,
+    Map<String, dynamic> data = const {},
   }) async {
     if (kIsWeb || !Platform.isAndroid) return;
     await init();
@@ -136,34 +173,70 @@ class PatientAlarm {
         const NotificationDetails(
           android: AndroidNotificationDetails(
             patientUpdatesChannelId,
-            'تحديثات حالة الزيارة',
-            channelDescription: 'إشعارات اعتيادية لمسار الزيارة والمدفوعات بدون رنين متكرر',
+            'تحديثات الطلب والزيارة',
+            channelDescription: 'عروض الممرضين وتقدم الزيارة والفواتير والمحادثات',
             importance: Importance.high,
             priority: Priority.high,
             autoCancel: true,
             playSound: true,
           ),
         ),
+        payload: jsonEncode(data),
       );
     } catch (e) {
       debugPrint('patient notification not shown: $e');
     }
   }
 
-  static Future<void> handlePush(Map<String, dynamic> data) async {
-    final type = '${data['type'] ?? ''}';
-    final isAlarm =
-        '${data['alarm']}' == '1' ||
-        type == 'marketplace.proposal.created' ||
-        type == 'request.assigned' ||
-        type == 'call.incoming';
-    final title = '${data['title'] ?? (type == 'call.incoming' ? 'مكالمة صوتية واردة' : isAlarm ? 'وصلك عرض تمريض جديد!' : 'تحديث على طلبك')}';
-    final body = '${data['body'] ?? (type == 'call.incoming' ? 'افتح التطبيق للرد على المكالمة' : isAlarm ? 'افتح التطبيق لاستعراض العرض وقبول الممرض' : 'افتح التطبيق لمتابعة التفاصيل')}';
-    final id = '${data['callId'] ?? data['proposalId'] ?? data['messageId'] ?? data['requestId'] ?? DateTime.now().millisecondsSinceEpoch}';
-    if (isAlarm) {
-      await showAlert(id: id, title: title, body: body);
+  static Future<void> handlePush(
+    Map<String, dynamic> data, {
+    String? titleOverride,
+    String? bodyOverride,
+  }) async {
+    final role = '${data['recipientRole'] ?? ''}'.toUpperCase();
+    final targetApp = '${data['targetApp'] ?? ''}'.toUpperCase();
+    if (role.isNotEmpty && role != 'PATIENT') return;
+    if (targetApp.isNotEmpty && targetApp != 'PATIENT_APP') return;
+
+    final expiresAt = DateTime.tryParse('${data['expiresAt'] ?? ''}');
+    if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) return;
+
+    final eventId = '${data['eventId'] ?? data['id'] ?? ''}';
+    if (!_markHandled(eventId)) return;
+
+    final type = '${data['eventType'] ?? data['type'] ?? ''}';
+    final isCallAlarm = type == 'call.incoming' || '${data['priority'] ?? ''}'.toUpperCase() == 'ALARM';
+
+    final title = titleOverride ??
+        data['title']?.toString() ??
+        switch (type) {
+          'call.incoming' => 'مكالمة صوتية واردة',
+          'marketplace.proposal.created' => 'عرض جديد من ممرض',
+          'request.assigned' => 'تم إسناد الطلب لممرض',
+          'visit.depart' => 'الممرض في الطريق إليك',
+          'visit.arrive' => 'وصل الممرض إلى موقعك',
+          'visit.start' => 'بدأت الزيارة التمريضية',
+          'visit.complete' => 'تم إنهاء الزيارة',
+          'chat.message' => 'رسالة جديدة في المحادثة',
+          _ => 'تحديث على طلبك',
+        };
+    final body = bodyOverride ??
+        data['body']?.toString() ??
+        switch (type) {
+          'call.incoming' => 'اضغط للرد على المكالمة الآن',
+          'marketplace.proposal.created' => 'راجع العرض المقدم وقارن وقت الوصول',
+          'chat.message' => 'افتح المحادثة لقراءة الرسالة',
+          _ => 'افتح تطبيق تمريضي لمتابعة التفاصيل',
+        };
+
+    final notifKey = eventId.isNotEmpty
+        ? eventId
+        : '${data['callId'] ?? data['proposalId'] ?? data['requestId'] ?? DateTime.now().millisecondsSinceEpoch}';
+
+    if (isCallAlarm) {
+      await showCallAlert(id: notifKey, title: title, body: body, data: data);
     } else {
-      await showStandardNotification(id: id, title: title, body: body);
+      await showStandardNotification(id: notifKey, title: title, body: body, data: data);
     }
   }
 
@@ -178,7 +251,11 @@ Future<void> patientBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp();
   } catch (_) {
-    // Firebase options may not be configured in dev builds.
+    // Firebase options may not be configured in local/dev builds.
   }
-  await PatientAlarm.handlePush(message.data);
+  await PatientAlarm.handlePush(
+    message.data,
+    titleOverride: message.notification?.title,
+    bodyOverride: message.notification?.body,
+  );
 }
