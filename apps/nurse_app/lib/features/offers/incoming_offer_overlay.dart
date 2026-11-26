@@ -152,11 +152,17 @@ class _IncomingOfferOverlayState extends State<IncomingOfferOverlay> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('صافي حصتك التقديرية',
-                                  style: aeroText(size: 13.5, color: Colors.white.withValues(alpha: 0.8))),
-                              Text(
-                                formatMoney(offer.nurseShare),
-                                style: aeroText(size: 20, weight: FontWeight.w800, color: const Color(0xFF2DD4BF)),
+                              Expanded(
+                                child: Text('صافي حصتك التقديرية',
+                                    style: aeroText(size: 13.5, color: Colors.white.withValues(alpha: 0.8))),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  formatMoney(offer.nurseShare),
+                                  textAlign: TextAlign.end,
+                                  style: aeroText(size: 19, weight: FontWeight.w800, color: const Color(0xFF2DD4BF)),
+                                ),
                               ),
                             ],
                           ),
@@ -164,8 +170,11 @@ class _IncomingOfferOverlayState extends State<IncomingOfferOverlay> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('المدة المتوقعة',
-                                  style: aeroText(size: 13, color: Colors.white.withValues(alpha: 0.75))),
+                              Expanded(
+                                child: Text('المدة المتوقعة',
+                                    style: aeroText(size: 13, color: Colors.white.withValues(alpha: 0.75))),
+                              ),
+                              const SizedBox(width: 8),
                               Text('${offer.expectedMinutes} دقيقة',
                                   style: aeroText(size: 14, weight: FontWeight.w700, color: Colors.white)),
                             ],

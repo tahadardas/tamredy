@@ -60,7 +60,9 @@ class _ServiceOutcomesScreenState extends State<ServiceOutcomesScreen> {
     });
     try {
       Map<String, dynamic> savedMap = const {};
-      final rawSaved = await widget.session.api.readLocal(_draftKey);
+      final rawSaved = await widget.session.api
+          .readLocal(_draftKey)
+          .timeout(const Duration(milliseconds: 250), onTimeout: () => null);
       if (rawSaved != null && rawSaved.isNotEmpty) {
         final dec = jsonDecode(rawSaved);
         if (dec is Map) savedMap = Map<String, dynamic>.from(dec);

@@ -317,20 +317,19 @@ class _HeroBookingCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(99),
-                ),
-                child: Text(
-                  'خدمة تمريض منزلي 24/7',
-                  style: aeroText(size: 11.5, weight: FontWeight.w700, color: Colors.white),
-                ),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(99),
               ),
-            ],
+              child: Text(
+                'خدمة تمريض منزلي 24/7',
+                style: aeroText(size: 11.5, weight: FontWeight.w700, color: Colors.white),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           Text(

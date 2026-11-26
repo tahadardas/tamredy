@@ -311,7 +311,9 @@ class BookingDraftStore extends ChangeNotifier {
 
   Future<void> loadBeneficiaries() async {
     if (kDemoMode) {
-      beneficiaries = const [TypedBeneficiary(id: 'demo-ben-1', displayName: 'المستخدم الحالي', relationship: 'SELF')];
+      if (beneficiaries.isEmpty) {
+        beneficiaries = const [TypedBeneficiary(id: 'demo-ben-1', displayName: 'المستخدم الحالي', relationship: 'SELF')];
+      }
       selectedBeneficiaryId ??= beneficiaries.first.id;
       notifyListeners();
       return;

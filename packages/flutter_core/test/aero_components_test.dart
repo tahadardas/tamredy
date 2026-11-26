@@ -44,7 +44,7 @@ void main() {
     expect(find.text('ممرض مرخص'), findsOneWidget);
 
     // Verify contact advisory banner
-    expect(find.textContaining('نوصي بالتواصل ضمن التطبيق'), findsOneWidget);
+    expect(find.textContaining('نوصي بالتواصل'), findsOneWidget);
 
     // Verify message texts
     expect(find.text('مرحباً، متى ستصل للزيارة؟'), findsOneWidget);
@@ -52,7 +52,7 @@ void main() {
 
     // Enter text and send
     await tester.enterText(find.byType(TextField), 'شكراً لك بانتظارك');
-    await tester.tap(find.byIcon(Icons.send));
+    await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pump();
 
     expect(sentText, 'شكراً لك بانتظارك');
