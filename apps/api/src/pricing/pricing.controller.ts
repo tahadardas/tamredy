@@ -57,10 +57,10 @@ export class PricingController {
     });
     return {
       currency: composed.currencyCode,
-      promoCode: composed.promo?.code ?? composed.autoDiscount?.label ?? null,
-      autoDiscount: composed.autoDiscount ? composed.autoDiscount.kind : null,
       pricingVersion: composed.pricingVersion,
       ...composed.estimate,
+      promoCode: composed.promo?.code ?? composed.autoDiscount?.label ?? null,
+      autoDiscount: composed.autoDiscount ? composed.autoDiscount.kind : null,
     };
   }
 

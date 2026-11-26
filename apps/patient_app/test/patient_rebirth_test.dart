@@ -147,5 +147,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('حجز زيارة تمريضية'), findsOneWidget);
     expect(find.text('خالد أحمد'), findsOneWidget);
+    // Flush the 280ms BookingDraftStore estimate debounce timer before binding invariants run
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
   });
 }

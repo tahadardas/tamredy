@@ -162,7 +162,11 @@ export class RequestsService {
       if (needsClinicalApproval) {
         await client.query(`INSERT INTO request_clinical_reviews(
           request_id,required_prescription,required_clinical_review
-        ) VALUES($1,$2,$3)`, [request.id,anyRequiresPrescription,anyRequiresClinicalReview]);
+        ) VALUES($1,$2,$3)`, [
+          request.id,
+          clinicalRequirements.requiresPrescription,
+          clinicalRequirements.requiresClinicalReview,
+        ]);
         if (appointment) await saveSchedule(client,request.id,appointment);
       }
 

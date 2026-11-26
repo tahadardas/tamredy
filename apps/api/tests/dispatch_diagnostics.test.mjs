@@ -5,7 +5,7 @@ import { pushCopy, alarmMessage, FcmClient } from '../../worker/dist/push.js';
 test('FCM push copy provides informative non-sensitive Arabic alerts', () => {
   const offer = pushCopy('offer.created', { requestId: 'req-1', offerId: 'off-1' });
   assert.ok(offer);
-  assert.equal(offer.title, 'طلب جديد قريب منك');
+  assert.equal(offer.title, 'طلب تمريض جديد قريب منك');
   assert.match(offer.body, /افتـ?ح/);
 
   const assigned = pushCopy('request.assigned', { requestId: 'req-1' });
@@ -14,7 +14,7 @@ test('FCM push copy provides informative non-sensitive Arabic alerts', () => {
 
   const unfulfilled = pushCopy('request.unfulfilled', { requestId: 'req-1' });
   assert.ok(unfulfilled);
-  assert.equal(unfulfilled.title, 'تعذر العثور على ممرض');
+  assert.equal(unfulfilled.title, 'تعذر إيجاد ممرض حاليًا');
 });
 
 test('Alarm message enforces HIGH priority and bounded TTL for immediate ring', () => {

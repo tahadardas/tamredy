@@ -6,6 +6,8 @@ class RealtimeEvent {
   final Map<String, dynamic> payload;
   final DateTime receivedAt;
 
+  String get id => eventId;
+
   const RealtimeEvent({
     required this.eventId,
     required this.type,
@@ -17,11 +19,23 @@ class RealtimeEvent {
 /// Broadcasts deduplicated realtime domain events without forcing global UI reloads.
 class RealtimeEventBus {
   final _controller = StreamController<RealtimeEvent>.broadcast();
+  final _connectionController = StreamController<bool>.broadcast();
   final _seenIds = <String>{};
   final _seenOrder = <String>[];
   static const int _maxSeen = 1024;
+  bool _connected = false;
 
   Stream<RealtimeEvent> get stream => _controller.stream;
+  bool get isConnected => _connected;
+  Stream<bool> get connectionStateStream => _connectionController.stream;
+
+  void setConnected(bool connected) {
+    if (_connected == connected) return;
+    _connected = connected;
+    if (!_connectionController.isClosed) {
+      _connectionController.add(connected);
+    }
+  }
 
   Stream<RealtimeEvent> whereType(Set<String> types) =>
       _controller.stream.where((e) => types.contains(e.type));
@@ -60,5 +74,6 @@ class RealtimeEventBus {
 
   void dispose() {
     _controller.close();
+    _connectionController.close();
   }
 }

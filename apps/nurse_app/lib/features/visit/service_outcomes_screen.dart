@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -68,8 +69,12 @@ class _ServiceOutcomesScreenState extends State<ServiceOutcomesScreen> {
         if (dec is Map) savedMap = Map<String, dynamic>.from(dec);
       }
 
-      if (!kDemoMode && widget.session.visit.assignmentId != null) {
+      if (!kDemoMode &&
+          widget.session.visit.assignmentId != null &&
+          widget.session.visit.items.isEmpty) {
         await widget.session.visit.refreshAssignmentDetail();
+      } else if (!kDemoMode && widget.session.visit.assignmentId != null) {
+        unawaited(widget.session.visit.refreshAssignmentDetail().catchError((_) {}));
       }
       final items = widget.session.visit.items;
       _drafts = [

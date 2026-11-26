@@ -109,6 +109,7 @@ class LiveChannel {
     _socket = s;
     s.onConnect((_) {
       connected = true;
+      eventBus?.setConnected(true);
       api.markOnline();
     });
     // Reconcile over REST only on socket (re)connection handshake.
@@ -140,10 +141,13 @@ class LiveChannel {
 
     s.onDisconnect((reason) async {
       connected = false;
+      eventBus?.setConnected(false);
       api.markReconnecting();
       if (reason == 'io server disconnect') await _reauth();
     });
     s.onConnectError((_) {
+      connected = false;
+      eventBus?.setConnected(false);
       api.markReconnecting();
       _reauth();
     });

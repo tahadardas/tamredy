@@ -9,7 +9,7 @@ export async function migrateBillingFixtures(pg) {
   await pg.exec('CREATE EXTENSION IF NOT EXISTS pgcrypto');
   const folder=new URL('../../../../infra/db/migrations/',import.meta.url);
   for(const file of ['042_competitive_expansion_catalog_and_items','045_health_records_and_clinical_observations',
-    '047_financial_ledger_and_multi_model','055_financial_source_of_truth']) {
+    '047_financial_ledger_and_multi_model','055_financial_source_of_truth','065_financial_commission_snapshot_and_backfill']) {
     await pg.exec(readFileSync(new URL(file+'.sql',folder),'utf8'));
   }
   await pg.exec(`ALTER TABLE request_assignments

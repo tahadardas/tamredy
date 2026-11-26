@@ -16,8 +16,11 @@ const pg = new PGlite();
 const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(Point,4326\)/g, 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
 await pg.exec(strip(readFileSync(resolve(root, 'infra/db/migrations/001_core.sql'), 'utf8')));
 await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/004_auth_otp_refresh.sql'), 'utf8'));
+await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/005_password_accounts_push.sql'), 'utf8'));
 await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/019_device_sessions_and_persistent_auth.sql'), 'utf8'));
 await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/025_manual_password_recovery.sql'), 'utf8'));
+await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/063_notifications_routing_and_device_tokens.sql'), 'utf8'));
+await pg.exec(readFileSync(resolve(root, 'infra/db/migrations/067_device_session_generation.sql'), 'utf8'));
 
 // Minimal DbService stand-in: one connection, serialised transactions.
 let chain = Promise.resolve();

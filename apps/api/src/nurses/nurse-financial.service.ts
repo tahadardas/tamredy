@@ -66,7 +66,7 @@ export class NurseFinancialService {
       WHERE nurse_id = $1
     `, [nurseId]);
 
-    const hasFinancialAccount = accRes.rowCount > 0;
+    const hasFinancialAccount = (accRes.rowCount ?? 0) > 0;
     const account = accRes.rows[0] ?? {
       financial_model: 'RECEIVABLES',
       credit_limit: 0,

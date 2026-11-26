@@ -518,7 +518,7 @@ class _UnpaidInvoicesSection extends StatelessWidget {
                 onTap: () async {
                   await session.visit.openUnpaidInvoice(invoices[i]);
                   if (context.mounted) {
-                    await NurseRouter.openVisitWorkspace(context, session);
+                    NurseRouter.openVisitWorkspace(context, session);
                   }
                 },
               ),

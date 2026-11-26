@@ -173,7 +173,9 @@ class NurseProfileScreen extends StatelessWidget {
                               divider: false,
                               onTap: () async {
                                 if (session.visit.hasActiveWork ||
-                                    (guardianEnabled && session.guardian.sosPending)) {
+                                    (guardianEnabled &&
+                                        (session.guardian.sosUnconfirmed ||
+                                            (session.guardian.event != null && !session.guardian.eventClosed)))) {
                                   TamToast.show(
                                     context,
                                     'لا يمكن تسجيل الخروج أثناء وجود زيارة نشطة أو بلاغ أمان قيد المتابعة.',

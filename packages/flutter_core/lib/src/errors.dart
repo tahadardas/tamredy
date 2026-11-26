@@ -203,3 +203,11 @@ ApiFailure mapApiFailure(Object e, {String? fallback}) {
 /// Turns any failure into a short, clear Arabic sentence (never a raw exception or an English message).
 String explainError(Object e, {String? fallback}) =>
     mapApiFailure(e, fallback: fallback).messageAr;
+
+/// Returns true only for transient transport/server-availability failures suitable for safe idempotent retry.
+bool isTransientError(Object e) {
+  final failure = mapApiFailure(e);
+  return failure.kind == ApiErrorKind.offline ||
+      failure.kind == ApiErrorKind.timeout ||
+      failure.kind == ApiErrorKind.serverUnavailable;
+}

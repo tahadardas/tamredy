@@ -131,30 +131,37 @@ export class DispatchService {
     const result = await this.db.query(`SELECT n.id AS nurse_id,
         coalesce(r.search_max_location_seconds, 120) AS max_age_s,
         coalesce(r.search_max_accuracy_meters, 100) AS max_acc_m,
+        nl.recorded_at AS pg_recorded_at, nl.accuracy_m AS pg_accuracy_m,
+        ST_Y(nl.location::geometry) AS pg_nurse_lat, ST_X(nl.location::geometry) AS pg_nurse_lng,
         ST_Y(r.location::geometry) AS patient_lat, ST_X(r.location::geometry) AS patient_lng
       FROM request_assignments a
       JOIN care_requests r ON r.id=a.request_id AND r.status='ASSIGNED'
       JOIN nurses n ON n.id=a.nurse_id AND n.user_id=$1
+      LEFT JOIN nurse_locations nl ON nl.nurse_id=n.id
       WHERE a.id=$2 AND a.status IN ('ACTIVE','RESERVED')`, [userId, assignmentId]);
     const row = result.rows[0];
     if (!row) return null;
     const liveLoc = this.liveLocationRead
       ? await this.liveLocationRead.getNurseLocation(row.nurse_id).catch(() => null)
       : null;
-    if (!liveLoc) return null;
-    const ageMs = Date.now() - liveLoc.recordedAt.getTime();
-    if (ageMs > Number(row.max_age_s) * 1000 || liveLoc.accuracyMeters > Number(row.max_acc_m)) return null;
+    const lat = liveLoc?.latitude ?? (row.pg_nurse_lat !== null && row.pg_nurse_lat !== undefined ? Number(row.pg_nurse_lat) : null);
+    const lng = liveLoc?.longitude ?? (row.pg_nurse_lng !== null && row.pg_nurse_lng !== undefined ? Number(row.pg_nurse_lng) : null);
+    const recordedAt = liveLoc?.recordedAt ?? (row.pg_recorded_at ? new Date(row.pg_recorded_at) : null);
+    const accuracyMeters = liveLoc?.accuracyMeters ?? (row.pg_accuracy_m !== null && row.pg_accuracy_m !== undefined ? Number(row.pg_accuracy_m) : null);
+    if (lat === null || lng === null || !recordedAt || accuracyMeters === null) return null;
+    const ageMs = Date.now() - recordedAt.getTime();
+    if (ageMs > Number(row.max_age_s) * 1000 || accuracyMeters > Number(row.max_acc_m)) return null;
     try {
       const route = await this.routes.compute(
-        { lat: liveLoc.latitude, lng: liveLoc.longitude },
+        { lat, lng },
         { lat: Number(row.patient_lat), lng: Number(row.patient_lng) },
       );
       if (!Number.isSafeInteger(route.durationSeconds) || route.durationSeconds < 1 || route.durationSeconds > 86400) return null;
       return {
         duration: route.durationSeconds,
         provider: this.routes.provider,
-        recordedAt: liveLoc.recordedAt.toISOString(),
-        fromRedis: liveLoc.source === 'redis',
+        recordedAt: recordedAt.toISOString(),
+        fromRedis: liveLoc?.source === 'redis',
       };
     } catch {
       return null;

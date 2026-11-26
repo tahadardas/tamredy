@@ -2,14 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { doDispatch } from '../src/dispatch.ts';
 import { pushDeliverBatch } from '../src/push.ts';
 
 test('alerts all eligible nurses in each wave and stops widening after assignment', async t => {
-  const db = new PGlite();
+  const db = new PGlite({ extensions: { pgcrypto } });
   t.after(() => db.close());
+  await db.exec('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
   // Exercise the production SQL with distances represented as meters on one axis.
-  for (const migration of ['001_core', '005_password_accounts_push', '006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '016_expand_dispatch_waves_limit', '018_dispatch_diagnostics_and_deliveries', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate', '059_wallet_ledger', '063_push_device_session_isolation']) {
+  for (const migration of ['001_core', '004_auth_otp_refresh', '005_password_accounts_push', '006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '016_expand_dispatch_waves_limit', '018_dispatch_diagnostics_and_deliveries', '019_device_sessions_and_persistent_auth', '021_open_dispatch_and_cancellation_foundation', '042_competitive_expansion_catalog_and_items', '045_health_records_and_clinical_observations', '047_financial_ledger_and_multi_model', '055_financial_source_of_truth', '056_clinical_approval_gate', '063_notifications_routing_and_device_tokens', '067_device_session_generation']) {
     const sql = readFileSync(new URL(`../../../infra/db/migrations/${migration}.sql`, import.meta.url), 'utf8')
       .replace(/CREATE EXTENSION[^;]*;/g, '')
       .replace(/geography\(Point,4326\)/g, 'double precision')
@@ -56,6 +58,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
       $$;
     CREATE FUNCTION ST_DWithin(double precision, double precision, double precision)
       RETURNS boolean LANGUAGE sql AS $$ SELECT abs($1 - $2) <= $3 $$;
+    ${readFileSync(new URL('../../../infra/db/migrations/022_open_dispatch_eligibility.sql', import.meta.url), 'utf8')}
     CREATE TABLE app_settings (key text PRIMARY KEY, value jsonb);
     INSERT INTO app_settings VALUES ('dispatch', '{"waves":[{"radiusM":3000,"seconds":15,"limit":1},{"radiusM":6000,"seconds":15,"limit":1},{"radiusM":10000,"seconds":20,"limit":1}]}');
     CREATE TABLE marketing_features (key text PRIMARY KEY, enabled boolean);
@@ -65,7 +68,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
       SELECT id,'أحمد','GRANTED' FROM users;
     INSERT INTO services(code,title_ar,price_amount) VALUES ('visit','زيارة تمريضية',100);
     INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,price_amount,currency_code,commission_bps)
-      SELECT b.owner_user_id,b.id,s.id,0,'MANUAL_PIN','دمشق',100,'SYP_NEW',2000 FROM beneficiaries b CROSS JOIN services s;
+      SELECT b.owner_user_id,b.id,s.id,0,'MANUAL_PIN','دمشق',100,'SYP_NEW',2000 FROM beneficiaries b CROSS JOIN services s WHERE s.code='visit';
     INSERT INTO dispatch_jobs(request_id) SELECT id FROM care_requests;
     INSERT INTO users(phone_e164,role) VALUES
       ('near-a','NURSE'), ('near-b','NURSE'), ('middle','NURSE'), ('far','NURSE'), ('stale','NURSE'), ('outside','NURSE');
@@ -81,9 +84,9 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
     INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit,prepaid_balance)
       SELECT id,'RECEIVABLES',100000,0 FROM nurses;
     INSERT INTO nurse_skills(nurse_id,service_id,approved) SELECT n.id,s.id,true FROM nurses n CROSS JOIN services s;
-    INSERT INTO device_sessions(id,user_id,active_role,app_type)
-      SELECT gen_random_uuid(),id,'NURSE','NURSE_APP' FROM users WHERE role='NURSE';
-    INSERT INTO device_tokens(user_id,token,platform,session_id,role_scope,app_type)
+    INSERT INTO device_sessions(id,user_id,device_id,app_kind)
+      SELECT gen_random_uuid(),id,'dev-'||phone_e164,'nurse' FROM users WHERE role='NURSE';
+    INSERT INTO device_tokens(user_id,token,platform,session_id,role,app_type)
       SELECT u.id,u.phone_e164 || repeat('x',30),'android',ds.id,'NURSE','NURSE_APP'
       FROM users u JOIN device_sessions ds ON ds.user_id=u.id WHERE u.role='NURSE';
   `);

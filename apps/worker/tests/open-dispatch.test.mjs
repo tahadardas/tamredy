@@ -2,18 +2,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { doDispatch } from '../src/dispatch.ts';
 
 const scripts = new URL('../../../infra/db/migrations/', import.meta.url);
 const migration = (name) => readFileSync(new URL(`${name}.sql`, scripts), 'utf8');
 
 test('open dispatch wakes for new eligible nurses, deduplicates, and enforces the fixed deadline', async (t) => {
-  const db = new PGlite();
+  const db = new PGlite({ extensions: { pgcrypto } });
   t.after(() => db.close());
+  await db.exec('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
   await db.exec(migration('001_core').replace(/CREATE EXTENSION[^;]*;/g, '')
     .replaceAll('geography(Point,4326)', 'double precision')
     .replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
-  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation', '056_clinical_approval_gate', '059_wallet_ledger']) {
+  for (const name of ['006_pricing_promos_rewards', '007_fees_tiers_dues_referrals', '021_open_dispatch_and_cancellation_foundation', '042_competitive_expansion_catalog_and_items', '045_health_records_and_clinical_observations', '047_financial_ledger_and_multi_model', '055_financial_source_of_truth', '056_clinical_approval_gate']) {
     await db.exec(migration(name));
   }
   await db.exec(`
@@ -66,7 +68,7 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
       price_amount,currency_code,commission_bps,search_started_at,search_expires_at,search_radius_meters,
       search_max_heartbeat_seconds,search_max_location_seconds,search_max_accuracy_meters)
     SELECT b.owner_user_id,b.id,s.id,0,'MANUAL_PIN','دمشق',100,'SYP',2000,now()-interval '1 minute',
-      now()+interval '1 minute',3000,60,120,100 FROM beneficiaries b CROSS JOIN services s;
+      now()+interval '1 minute',3000,60,120,100 FROM beneficiaries b CROSS JOIN services s WHERE s.code='TEST';
     INSERT INTO dispatch_jobs(request_id) SELECT id FROM care_requests;
     INSERT INTO users(phone_e164,role)
       SELECT 'test-nurse-'||i,'NURSE' FROM generate_series(1,102) i;

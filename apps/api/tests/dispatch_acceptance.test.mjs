@@ -40,7 +40,19 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   await pg.exec(read('050_smart_booking_and_open_marketplace'));
   await pg.exec(read('052_request_lifecycle_integrity'));
   await migrateBillingFixtures(pg);
+  await pg.exec(
+    read('044_smart_scheduling_and_recurring')
+      .replace(/CREATE EXTENSION[^;]*;/g, '')
+      .replace(/geography\(Point,\s*4326\)/g, 'double precision'),
+  );
+  await pg.exec(
+    read('054_scheduling_reservations')
+      .replace(/CREATE EXTENSION[^;]*;/g, '')
+      .replace(/ALTER TABLE request_assignments ADD CONSTRAINT ex_nurse_assignment_planned_overlap[\s\S]*?DEFERRABLE INITIALLY IMMEDIATE;/g, '')
+      .replace(/ALTER TABLE nurse_calendar_blocks ADD CONSTRAINT ex_nurse_calendar_block_overlap[\s\S]*?DEFERRABLE INITIALLY IMMEDIATE;/g, ''),
+  );
   await pg.exec(read('056_clinical_approval_gate'));
+  await pg.exec(read('065_financial_commission_snapshot_and_backfill'));
   await pg.exec(`
     CREATE TABLE user_blocks(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), blocker_user_id uuid, blocked_user_id uuid, revoked_at timestamptz);
     INSERT INTO users(phone_e164,role) VALUES ('patient-1','PATIENT'),('nurse-1','NURSE');
@@ -56,6 +68,8 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
       SELECT id,service_id,price_amount FROM care_requests;
     INSERT INTO nurses(user_id,verified,availability_intent,work_status,last_heartbeat_at)
       SELECT id,true,'AVAILABLE','AVAILABLE',now() FROM users WHERE role='NURSE';
+    INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit,prepaid_balance)
+      SELECT id,'RECEIVABLES',100000,0 FROM nurses ON CONFLICT DO NOTHING;
     INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved)
       SELECT id,'test',now()+interval '1 day',true FROM nurses;
     INSERT INTO nurse_skills(nurse_id,service_id,approved) SELECT n.id,s.id,true FROM nurses n CROSS JOIN services s;
@@ -108,7 +122,7 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
     departure_due_at=now()-interval '1 minute' WHERE id=$1`,[first.assignmentId]);
   assert.equal(await notifyDelayedDepartures(db),true);
   assert.equal(await notifyDelayedDepartures(db),false);
-  assert.equal((await query("SELECT 1 FROM outbox_events WHERE event_type='visit.departure_delayed'")).rowCount,1);
+  assert.equal((await query("SELECT 1 FROM outbox_events WHERE event_type='visit.departure_delayed' AND payload->>'recipientRole'='NURSE'")).rowCount,1);
   const departed = await dispatch.transition(nurse, first.assignmentId, 'depart');
   assert.equal(departed.status, 'EN_ROUTE');
   const replay = await dispatch.accept(nurse, offer);
@@ -131,7 +145,9 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
   await assert.rejects(cancel({...payload,reasonCode:'OTHER',policyAcknowledged:true}),
     error => error.getResponse().code === 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
   const events = (await query("SELECT payload FROM outbox_events WHERE event_type='request.cancelled'")).rows;
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 2);
+  assert.equal(events.filter(e => e.payload?.recipientRole === 'NURSE').length, 1);
+  assert.equal(events.filter(e => e.payload?.recipientRole === 'PATIENT').length, 1);
   assert.doesNotMatch(JSON.stringify(events),/HEALTH_CIRCUMSTANCE_CHANGED|تفاصيل اختبار خاصة/);
   assert.equal((await query("SELECT status FROM request_assignments")).rows[0].status,'RELEASED');
   const commitment = new CommitmentService(db);

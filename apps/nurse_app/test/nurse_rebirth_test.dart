@@ -5,6 +5,7 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 import 'package:tamreedy_nurse_app/app/nurse_router.dart';
 import 'package:tamreedy_nurse_app/app/nurse_shell.dart';
 import 'package:tamreedy_nurse_app/core/nurse_session_coordinator.dart';
+import 'package:tamreedy_nurse_app/features/offers/incoming_offer_overlay.dart';
 import 'package:tamreedy_nurse_app/features/visit/service_outcomes_screen.dart';
 import 'package:tamreedy_nurse_app/features/visit/visit_store.dart';
 
@@ -43,7 +44,25 @@ void main() {
     // Nurse navigates away from Home to Financial Center (tab 3)
     NurseRouter.currentTab.value = 3;
 
-    await tester.pumpWidget(_wrapRtl(NurseShell(session: session)));
+    await tester.pumpWidget(
+      _wrapRtl(
+        Stack(
+          children: [
+            NurseShell(session: session),
+            ListenableBuilder(
+              listenable: session.offers,
+              builder: (_, _) {
+                final offer = session.offers.activeOffer;
+                if (offer == null) return const SizedBox.shrink();
+                return Positioned.fill(
+                  child: IncomingOfferOverlay(session: session, offer: offer),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
     await tester.pump();
     expect(find.text('المركز المالي والمستحقات'), findsOneWidget);
     expect(find.text('قبول الطلب والبدء'), findsNothing);
@@ -59,7 +78,11 @@ void main() {
     // Declining closes the overlay immediately
     await tester.tap(find.text('تجاهل العرض'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('قبول الطلب والبدء'), findsNothing);
+    session.offers.clearOffer();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   test('NurseFinanceStore never fabricates hardcoded balances before server load', () {
@@ -95,7 +118,14 @@ void main() {
     await tester.pump();
 
     // Tapping submit immediately fails validation because status was NOT defaulted to COMPLETED
-    await tester.tap(find.text('حفظ النتائج وإنهاء الزيارة'));
+    final submitFinder = find.text('حفظ النتائج وإنهاء الزيارة');
+    await tester.dragUntilVisible(
+      submitFinder,
+      find.byType(CustomScrollView).first,
+      const Offset(0, -200),
+    );
+    await tester.pump();
+    await tester.tap(submitFinder);
     await tester.pump();
     expect(find.text('يرجى تحديد نتيجة التنفيذ لهذه الخدمة'), findsOneWidget);
   });

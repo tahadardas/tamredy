@@ -277,7 +277,7 @@ class OfferStore extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      if (!kDemoMode) {
+      if (!kDemoMode && offer.offerId != 'demo-offer-1') {
         await api.post('/v1/nurse/offers/${offer.offerId}/decline', {});
       }
       _closedOfferIds.add(offer.offerId);

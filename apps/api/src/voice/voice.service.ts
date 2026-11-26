@@ -291,7 +291,7 @@ export class VoiceService {
       try {
         const inserted = await client.query(
           `INSERT INTO voice_call_events(session_id,actor_user_id,event_type,event_data,event_id,sequence_number)
-           VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(event_id) DO NOTHING RETURNING id`,
+           VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(event_id) WHERE event_id IS NOT NULL DO NOTHING RETURNING id`,
           [callId, senderUserId, dto.eventType, serialized, dto.eventId, dto.sequenceNumber],
         );
         if (!inserted.rowCount) {

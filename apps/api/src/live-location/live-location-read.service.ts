@@ -48,18 +48,15 @@ export class LiveLocationReadService {
     if (redisFailed && process.env.LOCATION_POSTGRES_FALLBACK_ENABLED === 'false') {
       throw new ServiceUnavailableException({ code: 'LIVE_LOCATION_UNAVAILABLE' });
     }
-    const runner = client ?? this.db;
-    const r = await runner.query(
-      `SELECT ST_Y(location::geometry) AS latitude,
+    const sql = `SELECT ST_Y(location::geometry) AS latitude,
               ST_X(location::geometry) AS longitude,
               accuracy_m,
               recorded_at,
               captured_at,
               sequence_number
        FROM nurse_locations
-       WHERE nurse_id = $1`,
-      [nurseId],
-    );
+       WHERE nurse_id = $1`;
+    const r = client ? await client.query(sql, [nurseId]) : await this.db.query(sql, [nurseId]);
     if (!r.rowCount) return null;
     const row = r.rows[0];
     if (row.latitude === null || row.longitude === null || !row.recorded_at) return null;

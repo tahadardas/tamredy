@@ -352,7 +352,6 @@ class BookingDraftStore extends ChangeNotifier {
       }
     }
     await _persistDraft();
-  }
     notifyListeners();
   }
 
@@ -365,7 +364,7 @@ class BookingDraftStore extends ChangeNotifier {
       loadSchedulingPolicy(),
     ]);
     if (serviceQuantities.isNotEmpty && estimate == null) {
-      await refreshEstimate();
+      await refreshEstimate(immediate: true);
     }
   }
 
