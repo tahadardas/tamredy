@@ -1,0 +1,369 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:tamreedy_core/tamreedy_core.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../core/nurse_session_coordinator.dart';
+import '../../guardian.dart';
+import '../communication/nurse_chat_screen.dart';
+import '../safety/guardian_sheet.dart';
+import 'clinical_notes_screen.dart';
+import 'post_visit_report_screen.dart';
+import 'service_outcomes_screen.dart';
+import 'visit_store.dart';
+
+class VisitWorkspaceScreen extends StatelessWidget {
+  final NurseSessionCoordinator session;
+
+  const VisitWorkspaceScreen({super.key, required this.session});
+
+  Future<void> _showArrivalOverrideDialog(BuildContext context, VisitStore store) async {
+    var reason = '';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDlg) => AlertDialog(
+          title: const Text('توثيق سبب الوصول خارج النطاق'),
+          content: TextField(
+            maxLength: 500,
+            maxLines: 3,
+            decoration: const InputDecoration(hintText: 'اذكر سبب عدم تطابق GPS مع العنوان'),
+            onChanged: (v) => setDlg(() => reason = v.trim()),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('إلغاء')),
+            TextButton(
+              onPressed: reason.length < 5 ? null : () => Navigator.of(dialogContext).pop(reason),
+              child: const Text('تأكيد الوصول'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) {
+      await store.arrive(overrideReason: result);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+
+    return ListenableBuilder(
+      listenable: session.visit,
+      builder: (context, _) {
+        final v = session.visit;
+        final phase = v.phase;
+
+        if (phase == NurseVisitPhase.idle) {
+          return TamScaffold(
+            title: 'تفاصيل الزيارة',
+            subtitle: 'لا توجد زيارة نشطة حالياً',
+            showBack: true,
+            children: [
+              if (v.cancellationNotice != null) NoticeBox(v.cancellationNotice!),
+              const TamEmptyState(
+                icon: Icons.check_circle_outline_rounded,
+                title: 'اكتملت المهمة أو أُغلقت',
+                message: 'يمكنك العودة للوحة الممرض واستقبال طلبات جديدة.',
+              ),
+              PrimaryButton('العودة للوحة الممرض', onPressed: () => Navigator.of(context).maybePop()),
+            ],
+          );
+        }
+
+        if (phase == NurseVisitPhase.completed) {
+          return _CompletedCollectionView(session: session);
+        }
+
+        final header = switch (phase) {
+          NurseVisitPhase.assigned => ('تم إسناد الزيارة', 'أكّد الانطلاق عند بدء التوجه للمريض'),
+          NurseVisitPhase.enRoute => ('في الطريق إلى المريض', 'تتم مشاركة موقعك المباشر أثناء القيادة'),
+          NurseVisitPhase.arrived => ('وصلت إلى موقع الزيارة', 'ابدأ الزيارة التمريضية عند الجاهزية'),
+          NurseVisitPhase.inService => ('الزيارة قيد التنفيذ', 'وثّق العلامات الحيوية ونتائج الخدمات'),
+          _ => ('إدارة الزيارة', ''),
+        };
+
+        return TamScaffold(
+          title: header.$1,
+          subtitle: header.$2,
+          showBack: true,
+          onRefresh: v.restoreActiveAssignment,
+          children: [
+            if (v.error != null) NoticeBox(v.error!),
+            TamStepper(
+              steps: const ['إسناد', 'في الطريق', 'وصول', 'تنفيذ', 'إنهاء'],
+              currentStep: switch (phase) {
+                NurseVisitPhase.assigned => 0,
+                NurseVisitPhase.enRoute => 1,
+                NurseVisitPhase.arrived => 2,
+                NurseVisitPhase.inService => 3,
+                _ => 4,
+              },
+            ),
+            const SizedBox(height: TamSpacing.md),
+            if (phase != NurseVisitPhase.inService && v.destination != null) ...[
+              TamMap(
+                height: 270,
+                patient: v.destination,
+                nurse: v.nursePos,
+                route: v.route,
+              ),
+              const SizedBox(height: 12),
+            ],
+            TamCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(v.serviceTitle ?? 'زيارة تمريضية',
+                      style: aeroText(size: 16, weight: FontWeight.w800, color: tc.textPrimary)),
+                  const SizedBox(height: 6),
+                  if (v.beneficiaryName != null) KeyValueRow('المستفيد', v.beneficiaryName!),
+                  if (v.addressText != null) KeyValueRow('العنوان', v.addressText!),
+                  if (phase == NurseVisitPhase.enRoute && v.route != null)
+                    KeyValueRow('الوصول المقدر', '${v.route!.etaLabel} • ${v.route!.distanceLabel}'),
+                ],
+              ),
+            ),
+            if (v.destination != null && phase != NurseVisitPhase.inService)
+              OutlinedButton.icon(
+                onPressed: () => launchUrl(
+                  Uri.parse(
+                    'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${v.destination!.latitude},${v.destination!.longitude}',
+                  ),
+                  mode: LaunchMode.externalApplication,
+                ),
+                icon: const Icon(Icons.navigation_outlined),
+                label: const Text('فتح الملاحة في خرائط جوجل'),
+              ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: SoftButton(
+                    'محادثة المريض',
+                    onPressed: v.requestId == null
+                        ? null
+                        : () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => NurseChatScreen(
+                                  session: session,
+                                  requestId: v.requestId!,
+                                  patientName: v.patientName ?? 'المريض',
+                                ),
+                              ),
+                            ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SoftButton(
+                    'اتصال صوتي آمن',
+                    onPressed: v.requestId == null
+                        ? null
+                        : () => session.callManager.startOutgoing(
+                              requestId: v.requestId!,
+                              peerName: v.patientName ?? 'المريض',
+                              peerRole: 'المريض / المستفيد',
+                            ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (phase == NurseVisitPhase.assigned)
+              AeroButton(
+                'بدأت التوجه إلى المريض',
+                isLoading: v.busy,
+                onPressed: v.busy ? null : v.depart,
+              )
+            else if (phase == NurseVisitPhase.enRoute) ...[
+              AeroButton(
+                'أكّد الوصول إلى الموقع',
+                isLoading: v.busy,
+                onPressed: v.busy ? null : () => v.arrive(),
+              ),
+              if (v.arrivalOverrideAvailable) ...[
+                const SizedBox(height: 8),
+                SoftButton(
+                  'توثيق استثناء الموقع (GPS)',
+                  onPressed: v.busy ? null : () => _showArrivalOverrideDialog(context, v),
+                ),
+              ],
+            ] else if (phase == NurseVisitPhase.arrived)
+              AeroButton(
+                'بدء تنفيذ الزيارة',
+                isLoading: v.busy,
+                onPressed: v.busy ? null : v.startService,
+              )
+            else if (phase == NurseVisitPhase.inService) ...[
+              PrimaryButton(
+                'توثيق العلامات الحيوية والملاحظات',
+                onPressed: v.requestId == null
+                    ? null
+                    : () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => NurseClinicalNotesScreen(
+                              session: session,
+                              requestId: v.requestId!,
+                              patientName: v.patientName ?? 'المريض',
+                            ),
+                          ),
+                        ),
+              ),
+              AeroButton(
+                'توثيق نتائج الخدمات وإنهاء الزيارة',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ServiceOutcomesScreen(session: session),
+                  ),
+                ),
+              ),
+            ],
+            if (guardianEnabled) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: tc.danger),
+                onPressed: () => openGuardianSheet(context, session),
+                icon: const Icon(Icons.shield_outlined),
+                label: const Text('مركز الأمان أو إنهاء المهمة اضطرارياً'),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _CompletedCollectionView extends StatefulWidget {
+  final NurseSessionCoordinator session;
+  const _CompletedCollectionView({required this.session});
+
+  @override
+  State<_CompletedCollectionView> createState() => _CompletedCollectionViewState();
+}
+
+class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
+  final _amountCtrl = TextEditingController();
+  String? _fieldError;
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _collect() async {
+    FocusScope.of(context).unfocus();
+    final amt = int.tryParse(_amountCtrl.text.trim());
+    if (amt == null || amt <= 0) {
+      setState(() => _fieldError = 'أدخل مبلغاً نقدياً صحيحاً أكبر من صفر');
+      return;
+    }
+    setState(() => _fieldError = null);
+    final paid = await widget.session.visit.collectCash(amt);
+    if (paid && mounted) {
+      _amountCtrl.clear();
+      await widget.session.finance.refresh();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tc = context.tamColors;
+    final v = widget.session.visit;
+    final bill = v.bill;
+    final paid = bill?.status == 'PAID';
+
+    return TamScaffold(
+      title: 'إنهاء الزيارة والتحصيل',
+      subtitle: paid ? 'تم التحصيل بالكامل بنجاح' : 'تحصيل القيمة النقدية من المريض',
+      showBack: true,
+      onRefresh: v.loadBill,
+      children: [
+        if (bill == null)
+          const TamSkeleton.card(height: 160)
+        else ...[
+          TamCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  paid ? 'تم استلام كامل المبلغ' : 'المبلغ المطلوب تحصيله من المريض',
+                  style: aeroText(size: 13, color: tc.textSecondary),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  formatMoney(bill.payable),
+                  style: aeroText(size: 28, weight: FontWeight.w800, color: tc.primary),
+                ),
+                const Divider(height: 20),
+                KeyValueRow('مدة الزيارة', '${bill.minutes} دقيقة'),
+                KeyValueRow('المستلم حتى الآن', formatMoney(bill.collected)),
+                KeyValueRow('المتبقي', formatMoney(bill.remaining)),
+                KeyValueRow('صافي حصتك من الزيارة', formatMoney(bill.nurseEarning)),
+                if (bill.tip > 0) KeyValueRow('إكرامية المريض (لك كاملة)', formatMoney(bill.tip)),
+              ],
+            ),
+          ),
+          if (!paid)
+            TamCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('تسجيل المبلغ المستلم نقداً',
+                      style: aeroText(size: 15, weight: FontWeight.w800)),
+                  if (bill.remaining > 0) ...[
+                    const SizedBox(height: 8),
+                    ActionChip(
+                      avatar: Icon(Icons.bolt_rounded, size: 16, color: tc.primary),
+                      label: Text('تعبئة كامل المتبقي (${formatMoney(bill.remaining)})'),
+                      onPressed: () {
+                        setState(() {
+                          _amountCtrl.text = '${bill.remaining}';
+                          _fieldError = null;
+                        });
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  TamTextField(
+                    controller: _amountCtrl,
+                    hint: 'أدخل المبلغ بالليرة السورية',
+                    errorText: _fieldError,
+                    keyboardType: TextInputType.number,
+                    textDirection: TextDirection.ltr,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 12),
+                  AeroButton.teal(
+                    'تأكيد استلام المبلغ',
+                    isLoading: v.collecting,
+                    onPressed: v.collecting ? null : _collect,
+                  ),
+                ],
+              ),
+            ),
+          if (v.collectionMessage != null) NoticeBox(v.collectionMessage!),
+          if (paid) ...[
+            SoftButton(
+              'كتابة تقرير ما بعد الزيارة (داخلي)',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => PostVisitReportScreen(session: widget.session),
+                ),
+              ),
+            ),
+            AeroButton(
+              'العودة إلى وضع الاستعداد',
+              onPressed: () {
+                v.finishAndReturnAvailable();
+                Navigator.of(context).popUntil((r) => r.isFirst);
+              },
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+}
