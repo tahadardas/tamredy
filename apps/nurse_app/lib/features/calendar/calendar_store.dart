@@ -9,6 +9,15 @@ class CalendarStore extends ChangeNotifier {
   bool loading = false;
   String? error;
   List<Map<String, dynamic>> items = const [];
+  int _sessionGen = 0;
+
+  void resetForSessionChange() {
+    _sessionGen++;
+    items = const [];
+    loading = false;
+    error = null;
+    notifyListeners();
+  }
 
   Future<void> load() async {
     if (kDemoMode) {
@@ -16,6 +25,7 @@ class CalendarStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final gen = _sessionGen;
     loading = true;
     error = null;
     notifyListeners();
@@ -24,6 +34,7 @@ class CalendarStore extends ChangeNotifier {
       final from = DateTime(now.year, now.month, now.day).toIso8601String();
       final to = DateTime(now.year, now.month, now.day + 7).toIso8601String();
       final res = await api.getMap('/v1/nurse-calendar?from=$from&to=$to');
+      if (gen != _sessionGen) return;
       final combined = <Map<String, dynamic>>[];
 
       for (final raw in (res['visits'] as List? ?? const [])) {

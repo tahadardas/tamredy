@@ -25,8 +25,22 @@ class MarketplaceStore extends ChangeNotifier {
   List<Map<String, dynamic>> myProposals = const [];
   List<Map<String, dynamic>> completedHistory = const [];
 
+  int _sessionGen = 0;
+
+  void resetForSessionChange() {
+    _sessionGen++;
+    requests = const [];
+    myProposals = const [];
+    completedHistory = const [];
+    maxDistanceKm = null;
+    loading = false;
+    error = null;
+    notifyListeners();
+  }
+
   Future<void> refreshAll({bool silent = false}) async {
     if (kDemoMode) return;
+    final gen = _sessionGen;
     if (!silent) {
       loading = true;
       error = null;
@@ -38,17 +52,21 @@ class MarketplaceStore extends ChangeNotifier {
         api.getMyProposals().catchError((_) => const []),
         api.getList('/v1/nurse/me/history').catchError((_) => const []),
       ]);
+      if (gen != _sessionGen) return;
       requests = results[0].whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       myProposals = results[1].whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       completedHistory = results[2].whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       error = null;
     } catch (e) {
+      if (gen != _sessionGen) return;
       if (!silent) {
         error = explainError(e, fallback: 'تعذر تحميل السوق المفتوح');
       }
     } finally {
-      loading = false;
-      notifyListeners();
+      if (gen == _sessionGen) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 

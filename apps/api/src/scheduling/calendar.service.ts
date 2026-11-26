@@ -21,10 +21,15 @@ export class NurseCalendarService {
   async getSchedule(nurseUserId: string, fromIso: string, toIso: string) {
     const nurseId = await this.getNurseId(nurseUserId);
 
-    // 1. Confirmed visits in range
+    // 1. Confirmed visits in range (BUG-023: mask exact address outside allowed execution/departure window)
     const visits = await this.db.query(`
       SELECT cr.id AS request_id, cr.status, cr.price_amount, cr.currency_code,
-             cr.address_text, s.title_ar AS service_title, s.code AS service_code,
+             CASE WHEN ra.status='ACTIVE' OR (
+               ra.status='RESERVED' AND cr.status='ASSIGNED'
+               AND ra.planned_start_at - ra.travel_buffer_before_minutes*interval '1 minute' <= statement_timestamp()
+             ) THEN cr.address_text END AS address_text,
+             coalesce(ar.name_ar,'ضمن نطاق الخدمة') AS area_name,
+             s.title_ar AS service_title, s.code AS service_code,
              coalesce((cr.pricing->>'expectedMinutes')::int, 30) AS expected_minutes,
              sv.appointment_at, ra.accepted_at,
              b.display_name AS beneficiary_name
@@ -32,6 +37,7 @@ export class NurseCalendarService {
       JOIN care_requests cr ON cr.id = ra.request_id
       JOIN services s ON s.id = cr.service_id
       JOIN beneficiaries b ON b.id = cr.beneficiary_id
+      LEFT JOIN areas ar ON ar.id = cr.area_id
       LEFT JOIN scheduled_visits sv ON sv.request_id = cr.id
       WHERE ra.nurse_id = $1
         AND ra.status IN ('RESERVED','ACTIVE')

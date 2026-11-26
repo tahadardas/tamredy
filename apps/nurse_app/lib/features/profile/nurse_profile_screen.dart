@@ -172,6 +172,15 @@ class NurseProfileScreen extends StatelessWidget {
                               subtitle: 'إيقاف التوفر وفصل الجهاز عن الحساب',
                               divider: false,
                               onTap: () async {
+                                if (session.visit.hasActiveWork ||
+                                    (guardianEnabled && session.guardian.sosPending)) {
+                                  TamToast.show(
+                                    context,
+                                    'لا يمكن تسجيل الخروج أثناء وجود زيارة نشطة أو بلاغ أمان قيد المتابعة.',
+                                    tone: TamToastTone.warning,
+                                  );
+                                  return;
+                                }
                                 final ok = await showDialog<bool>(
                                   context: context,
                                   builder: (ctx) => AlertDialog(

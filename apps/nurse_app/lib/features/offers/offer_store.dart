@@ -27,6 +27,22 @@ class OfferStore extends ChangeNotifier {
   bool muted = false;
   String? error;
   Timer? _expiryTimer;
+  int _sessionGen = 0;
+
+  void resetForSessionChange() {
+    _sessionGen++;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    if (activeOffer != null) {
+      OfferAlarm.cancelOffer(activeOffer!.offerId);
+    }
+    activeOffer = null;
+    commitmentWarning = null;
+    acting = false;
+    muted = false;
+    error = null;
+    notifyListeners();
+  }
 
   void _onEvent(RealtimeEvent ev) {
     if (ev.type == 'offer.created') {

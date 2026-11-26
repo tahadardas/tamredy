@@ -4,7 +4,7 @@ import type { JwtPayload } from 'jsonwebtoken';
 const { verify } = jwt;
 import { DbService } from '../db/db.service.js';
 export type Role = 'PATIENT' | 'NURSE' | 'ADMIN' | 'CLINICAL_REVIEWER';
-export interface AuthUser { id: string; role: Role; deviceSessionId?: string; }
+export interface AuthUser { id: string; role: Role; deviceSessionId?: string; sessionGeneration?: number; }
 export interface AuthRequest { headers: { authorization?: string }; user?: AuthUser; url?: string }
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -31,10 +31,15 @@ export class AuthGuard implements CanActivate {
         (row.temporary_password_expires_at && new Date(row.temporary_password_expires_at) <= new Date())) {
       throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
     }
-    await requireActiveDeviceSession(this.db, row.id, payload.dsi);
+    await requireActiveDeviceSession(this.db, row.id, payload.dsi, payload.sgen);
     // Until the initial password is replaced, only the auth routes (me / change-password) work.
     if (row.must_change_password && !(request.url ?? '').startsWith('/v1/auth/')) throw new ForbiddenException({ code: 'PASSWORD_CHANGE_REQUIRED' });
-    request.user = { id: row.id, role: row.role as Role, deviceSessionId: typeof payload.dsi==='string' ? payload.dsi : undefined };
+    request.user = {
+      id: row.id,
+      role: row.role as Role,
+      deviceSessionId: typeof payload.dsi==='string' ? payload.dsi : undefined,
+      sessionGeneration: typeof payload.sgen === 'number' ? payload.sgen : undefined,
+    };
     return true;
   }
 }
@@ -42,6 +47,7 @@ export async function requireActiveDeviceSession(
   db: DbService,
   userId: string,
   sessionId: unknown,
+  sessionGeneration?: unknown,
 ): Promise<void> {
   if (sessionId === undefined || sessionId === null) {
     if (process.env.NODE_ENV === 'production' && process.env.ALLOW_LEGACY_UNBOUND_SESSIONS !== 'true') {
@@ -53,10 +59,18 @@ export async function requireActiveDeviceSession(
     throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
   }
   const result = await db.query(
-    'SELECT 1 FROM device_sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',
+    'SELECT session_generation FROM device_sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',
     [sessionId, userId],
   );
   if (!result.rows.length) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+  const dbGen = Number(result.rows[0].session_generation ?? 1);
+  if (sessionGeneration !== undefined && sessionGeneration !== null) {
+    if (Number(sessionGeneration) !== dbGen) {
+      throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+    }
+  } else if (dbGen > 1) {
+    throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+  }
 }
 export function requireRole(user: AuthUser, role: Role): void {
   if (user.role !== role) throw new ForbiddenException({code:'ROLE_NOT_ALLOWED'});

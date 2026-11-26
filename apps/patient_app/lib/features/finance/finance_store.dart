@@ -14,6 +14,16 @@ class FinanceStore extends ChangeNotifier {
   Map<String, dynamic>? referralInfo;
   bool loadingReferral = false;
 
+  void resetForSessionChange() {
+    walletStatus = null;
+    walletSummary = null;
+    walletError = null;
+    referralInfo = null;
+    loadingWallet = false;
+    loadingReferral = false;
+    notifyListeners();
+  }
+
   Future<BillInfo> loadBill(String requestId) async {
     if (kDemoMode) {
       return const BillInfo(

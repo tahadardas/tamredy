@@ -302,9 +302,28 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
+    widget.api.authSessionSignal.addListener(_onAuthSignalChanged);
     if (!kDemoMode) {
       _verifySession();
     }
+  }
+
+  @override
+  void dispose() {
+    widget.api.authSessionSignal.removeListener(_onAuthSignalChanged);
+    super.dispose();
+  }
+
+  void _onAuthSignalChanged() {
+    final sig = widget.api.authSessionSignal.value;
+    if (sig == null || !mounted) return;
+    Navigator.of(context, rootNavigator: false).popUntil((r) => r.isFirst);
+    setState(() {
+      _mustChange = false;
+      _status = sig == AuthSessionSignal.sessionRevoked
+          ? AuthGateStatus.reauthenticationRequired
+          : AuthGateStatus.signedOut;
+    });
   }
 
   Future<void> _verifySession() async {

@@ -374,6 +374,13 @@ class _RealtimeHostState extends State<RealtimeHost> with WidgetsBindingObserver
     super.initState();
     if (kDemoMode) return;
     WidgetsBinding.instance.addObserver(this);
+    widget.api.sessionScopeEpoch.addListener(_onSessionEpochChanged);
+    _startChannels();
+  }
+
+  void _startChannels() {
+    _live?.dispose();
+    _push?.dispose();
     _live = LiveChannel(
       api: widget.api,
       eventBus: widget.eventBus,
@@ -390,6 +397,18 @@ class _RealtimeHostState extends State<RealtimeHost> with WidgetsBindingObserver
     )..start();
   }
 
+  void _onSessionEpochChanged() {
+    if (!mounted || kDemoMode) return;
+    if (widget.api.authSessionSignal.value != null) {
+      _live?.dispose();
+      _live = null;
+      _push?.dispose();
+      _push = null;
+    } else {
+      _startChannels();
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -399,6 +418,7 @@ class _RealtimeHostState extends State<RealtimeHost> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    widget.api.sessionScopeEpoch.removeListener(_onSessionEpochChanged);
     WidgetsBinding.instance.removeObserver(this);
     _live?.dispose();
     _push?.dispose();

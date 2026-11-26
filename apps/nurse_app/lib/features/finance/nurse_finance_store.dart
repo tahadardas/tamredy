@@ -22,6 +22,25 @@ class NurseFinanceStore extends ChangeNotifier {
   int nurseOwedAmount = 0;
   List<Map<String, dynamic>> settlementHistory = const [];
   List<Map<String, dynamic>> ledgerEntries = const [];
+  int _sessionGen = 0;
+
+  void resetForSessionChange() {
+    _sessionGen++;
+    todayEarnings = null;
+    netDue = null;
+    monthVisits = null;
+    commission = null;
+    balance = null;
+    isBlocked = false;
+    settlementPending = null;
+    companyOwedAmount = 0;
+    nurseOwedAmount = 0;
+    settlementHistory = const [];
+    ledgerEntries = const [];
+    loading = false;
+    error = null;
+    notifyListeners();
+  }
 
   Future<void> refresh() async {
     if (kDemoMode) {
@@ -38,6 +57,7 @@ class NurseFinanceStore extends ChangeNotifier {
       return;
     }
 
+    final gen = _sessionGen;
     loading = true;
     error = null;
     notifyListeners();
@@ -47,6 +67,7 @@ class NurseFinanceStore extends ChangeNotifier {
         api.getMap('/v1/nurse/me/dues'),
         api.getMap('/v1/nurse/financial/ledger').catchError((_) => <String, dynamic>{}),
       ]);
+      if (gen != _sessionGen) return;
 
       final sum = results[0];
       final dues = results[1];

@@ -48,7 +48,17 @@ class ConversationsStore extends ChangeNotifier {
   String? error;
   List<ConversationSummary> conversations = const [];
 
+  int _sessionGen = 0;
+
   int get totalUnread => conversations.fold<int>(0, (acc, c) => acc + c.unreadCount);
+
+  void resetForSessionChange() {
+    _sessionGen++;
+    conversations = const [];
+    loading = false;
+    error = null;
+    notifyListeners();
+  }
 
   Future<void> loadConversations({bool silent = false}) async {
     if (kDemoMode) {
@@ -56,6 +66,7 @@ class ConversationsStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final gen = _sessionGen;
     if (!silent) {
       loading = true;
       error = null;
@@ -63,18 +74,22 @@ class ConversationsStore extends ChangeNotifier {
     }
     try {
       final raw = await api.getList('/v1/conversations');
+      if (gen != _sessionGen) return;
       conversations = [
         for (final row in raw)
           if (row is Map) ConversationSummary.fromJson(Map<String, dynamic>.from(row)),
       ];
       error = null;
     } catch (e) {
+      if (gen != _sessionGen) return;
       if (!silent) {
         error = explainError(e, fallback: 'تعذر تحميل المحادثات');
       }
     } finally {
-      loading = false;
-      notifyListeners();
+      if (gen == _sessionGen) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 

@@ -59,6 +59,14 @@ class AvailabilityStore extends ChangeNotifier {
 
   Future<void> syncNow() => manager.syncNow();
 
+  Future<void> resetForSessionChange() async {
+    await manager.setAvailability(false).catchError((_) {});
+    await api.writeLocal('nurse_last_availability_intent', null);
+    toggleError = null;
+    toggling = false;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     manager.removeListener(notifyListeners);

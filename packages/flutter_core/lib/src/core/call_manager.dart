@@ -676,6 +676,23 @@ class CallManager extends ChangeNotifier {
     }
   }
 
+  Future<void> resetForSessionChange() async {
+    if (isActive && _callId != null && !_isIncoming) {
+      await endOrCancel().catchError((_) {});
+    }
+    _resetMediaState();
+    await _disposeWebRtc();
+    _handledSignals.clear();
+    _pendingCandidates.clear();
+    _callId = null;
+    _requestId = null;
+    _phase = CallPhase.idle;
+    _error = null;
+    _overlayVisible = false;
+    _elapsedSeconds = 0;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     _busSub?.cancel();

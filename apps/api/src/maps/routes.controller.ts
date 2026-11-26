@@ -28,7 +28,8 @@ export class RoutesController {
         ST_Y(nl.location::geometry) AS nlat,ST_X(nl.location::geometry) AS nlng
       FROM request_assignments a JOIN nurses n ON n.id=a.nurse_id JOIN care_requests cr ON cr.id=a.request_id
       LEFT JOIN nurse_locations nl ON nl.nurse_id=n.id
-      WHERE a.id=$1 AND n.user_id=$2 AND a.status='ACTIVE'`, [id, r.user!.id]);
+      WHERE a.id=$1 AND n.user_id=$2 AND a.status='ACTIVE'
+        AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')`, [id, r.user!.id]);
     if (!q.rowCount) missing();
     const row = q.rows[0];
     if (row.nlat == null) conflict('NURSE_LOCATION_UNKNOWN');

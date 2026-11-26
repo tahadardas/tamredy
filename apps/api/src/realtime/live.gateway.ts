@@ -68,7 +68,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     if (!result.rowCount || (payload.av ?? null) !== (result.rows[0].auth_version ?? null)) {
       throw Error('inactive');
     }
-    await requireActiveDeviceSession(this.db, payload.sub, payload.dsi);
+    await requireActiveDeviceSession(this.db, payload.sub, payload.dsi, payload.sgen);
     return {role:result.rows[0].role};
   }
   async sendToUser(userId: string, type: string, payload: unknown) {

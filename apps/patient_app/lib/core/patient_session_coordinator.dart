@@ -181,9 +181,16 @@ class PatientSessionCoordinator extends ChangeNotifier {
 
   Future<void> signOut() async {
     _initialized = false;
-    await api.logout();
-    await bookingDraft.clearDraft();
     unreadNotifications.value = 0;
+    marketingOptIn = false;
+    await callManager.resetForSessionChange();
+    requests.resetForSessionChange();
+    conversations.resetForSessionChange();
+    finance.resetForSessionChange();
+    notifications.clearHistory();
+    await bookingDraft.clearDraft();
+    await api.logout();
+    notifyListeners();
   }
 
   @override

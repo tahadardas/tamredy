@@ -62,7 +62,7 @@ export class AuthService {
     @Optional() private readonly verificationProvider?: VerificationProvider,
   ) {}
 
-  /** Upserts device session for trusted persistent logins. */
+  /** BUG-022: Never reactivate a revoked device session; always mint a fresh session ID & increment generation. */
   async upsertDeviceSession(
     c: { query: (sql: string, p?: unknown[]) => Promise<any> },
     userId: string,
@@ -70,25 +70,46 @@ export class AuthService {
     deviceName?: string,
     platform?: string,
     appKind?: string,
-  ): Promise<string | undefined> {
+  ): Promise<{ id: string; generation: number } | undefined> {
     if (!deviceId) return undefined;
     try {
-      const res = await c.query(`
-        INSERT INTO device_sessions(user_id, device_id, device_name, platform, app_kind, last_seen_at)
-        VALUES($1, $2, $3, coalesce($4, 'android'), $5, now())
-        ON CONFLICT (user_id, device_id)
-        DO UPDATE SET
-          device_name = coalesce(EXCLUDED.device_name, device_sessions.device_name),
-          platform = coalesce(EXCLUDED.platform, device_sessions.platform),
-          app_kind = coalesce(EXCLUDED.app_kind, device_sessions.app_kind),
-          revoked_at = NULL,
-          last_seen_at = now()
-        RETURNING id
-      `, [userId, deviceId, deviceName ?? null, platform ?? 'android', appKind ?? null]);
-      return res.rows[0]?.id;
+      const existingActive = await c.query(
+        `SELECT id, session_generation FROM device_sessions
+         WHERE user_id = $1 AND device_id = $2 AND revoked_at IS NULL
+         ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+        [userId, deviceId],
+      );
+      if (existingActive.rowCount) {
+        const nextGen = Number(existingActive.rows[0].session_generation ?? 1) + 1;
+        // Revoke old session permanently and mint a fresh session row + incremented generation
+        await c.query(
+          `UPDATE device_sessions SET revoked_at = now() WHERE id = $1`,
+          [existingActive.rows[0].id],
+        );
+        const inserted = await c.query(
+          `INSERT INTO device_sessions(user_id, device_id, device_name, platform, app_kind, session_generation, last_seen_at)
+           VALUES($1, $2, $3, coalesce($4, 'android'), $5, $6, now())
+           RETURNING id, session_generation`,
+          [userId, deviceId, deviceName ?? null, platform ?? 'android', appKind ?? null, nextGen],
+        );
+        return { id: inserted.rows[0].id, generation: Number(inserted.rows[0].session_generation) };
+      }
+
+      const maxGenRow = (await c.query(
+        `SELECT coalesce(max(session_generation), 0)::int AS max_gen
+         FROM device_sessions WHERE user_id = $1 AND device_id = $2`,
+        [userId, deviceId],
+      )).rows[0];
+      const nextGen = Number(maxGenRow?.max_gen ?? 0) + 1;
+      const inserted = await c.query(
+        `INSERT INTO device_sessions(user_id, device_id, device_name, platform, app_kind, session_generation, last_seen_at)
+         VALUES($1, $2, $3, coalesce($4, 'android'), $5, $6, now())
+         RETURNING id, session_generation`,
+        [userId, deviceId, deviceName ?? null, platform ?? 'android', appKind ?? null, nextGen],
+      );
+      return { id: inserted.rows[0].id, generation: Number(inserted.rows[0].session_generation) };
     } catch {
       if (process.env.NODE_ENV === 'production') throw new Error('DEVICE_SESSION_PERSISTENCE_FAILED');
-      // Development-only compatibility while a local migration is pending.
       return undefined;
     }
   }
@@ -113,8 +134,8 @@ export class AuthService {
         throw new UnauthorizedException({ code: 'LOGIN_INVALID' });
       }
       await c.query('UPDATE users SET failed_logins=0,locked_until=NULL WHERE id=$1', [u.id]);
-      const dsi = await this.upsertDeviceSession(c, u.id, deviceMeta?.deviceId, deviceMeta?.deviceName, deviceMeta?.platform, u.role);
-      return { ...(await this.issue(c, u.id, u.role, randomUUID(), dsi)), mustChangePassword: !!u.must_change_password };
+      const sessionInfo = await this.upsertDeviceSession(c, u.id, deviceMeta?.deviceId, deviceMeta?.deviceName, deviceMeta?.platform, u.role);
+      return { ...(await this.issue(c, u.id, u.role, randomUUID(), sessionInfo)), mustChangePassword: !!u.must_change_password };
     });
   }
 
@@ -154,8 +175,8 @@ export class AuthService {
       const u = (await c.query('SELECT id,role,status FROM users WHERE phone_e164=$1', [phone])).rows[0];
       if (u.status !== 'ACTIVE') throw new ForbiddenException({ code: 'ACCOUNT_INACTIVE' });
       if (!['PATIENT', 'NURSE'].includes(u.role)) throw new ForbiddenException({ code: 'MFA_REQUIRED' });
-      const dsi = await this.upsertDeviceSession(c, u.id, deviceMeta?.deviceId, deviceMeta?.deviceName, deviceMeta?.platform, u.role);
-      return this.issue(c, u.id, u.role, randomUUID(), dsi);
+      const sessionInfo = await this.upsertDeviceSession(c, u.id, deviceMeta?.deviceId, deviceMeta?.deviceName, deviceMeta?.platform, u.role);
+      return this.issue(c, u.id, u.role, randomUUID(), sessionInfo);
     });
   }
 
@@ -182,10 +203,20 @@ export class AuthService {
 
       if (!r) throw new UnauthorizedException({ code: 'REFRESH_INVALID' });
 
-      // Check if associated device session was revoked
+      // Check if associated device session was revoked or superseded by a newer generation
+      let sgen: number | undefined = r.device_session_generation != null ? Number(r.device_session_generation) : undefined;
       if (r.device_session_id) {
-        const ds = (await c.query('SELECT revoked_at, device_id FROM device_sessions WHERE id=$1 AND user_id=$2', [r.device_session_id, r.user_id])).rows[0];
-        if (!ds || ds.revoked_at || !deviceId || deviceId !== ds.device_id) throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+        const ds = (await c.query(
+          'SELECT revoked_at, device_id, session_generation FROM device_sessions WHERE id=$1 AND user_id=$2 FOR SHARE',
+          [r.device_session_id, r.user_id],
+        )).rows[0];
+        if (!ds || ds.revoked_at || !deviceId || deviceId !== ds.device_id) {
+          throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+        }
+        if (sgen != null && Number(ds.session_generation) !== sgen) {
+          throw new UnauthorizedException({ code: 'SESSION_REVOKED' });
+        }
+        sgen = Number(ds.session_generation ?? 1);
       }
 
       if (r.used_at || r.revoked_at) {
@@ -203,7 +234,11 @@ export class AuthService {
       // Sliding session update: extend device session last_seen_at
       let dsi = r.device_session_id;
       if (deviceId && !dsi) {
-        dsi = (await this.upsertDeviceSession(c, u.id, deviceId, undefined, undefined, u.role)) ?? dsi;
+        const created = await this.upsertDeviceSession(c, u.id, deviceId, undefined, undefined, u.role);
+        if (created) {
+          dsi = created.id;
+          sgen = created.generation;
+        }
       } else if (dsi) {
         await c.query('UPDATE device_sessions SET last_seen_at=now() WHERE id=$1', [dsi]).catch(() => {});
       }
@@ -213,11 +248,11 @@ export class AuthService {
 
       await c.query('UPDATE refresh_tokens SET used_at=now(), replaced_by_hash=$2 WHERE id=$1', [r.id, nextHash]);
 
-      await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id)
-        VALUES($1,$2,$3,now()+($4||' days')::interval,$5)`,
-        [u.id, r.family_id, nextHash, String(REFRESH_TTL_DAYS), dsi]);
+      await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id,device_session_generation)
+        VALUES($1,$2,$3,now()+($4||' days')::interval,$5,$6)`,
+        [u.id, r.family_id, nextHash, String(REFRESH_TTL_DAYS), dsi, sgen ?? null]);
 
-      const accessToken = jwt.sign({ dsi, av: u.auth_version }, secret(), {
+      const accessToken = jwt.sign({ dsi, ...(sgen != null ? { sgen } : {}), av: u.auth_version }, secret(), {
         algorithm: 'HS256', subject: u.id, expiresIn: ACCESS_TTL_SECONDS,
         issuer: process.env.JWT_ISSUER ?? 'tamreedy-api', audience: process.env.JWT_AUDIENCE ?? 'tamreedy-mobile',
       });
@@ -245,14 +280,16 @@ export class AuthService {
     userId: string,
     role: string,
     family: string,
-    deviceSessionId?: string,
+    session?: string | { id: string; generation: number },
   ) {
+    const deviceSessionId = typeof session === 'string' ? session : session?.id;
+    const sgen = typeof session === 'object' ? session?.generation : undefined;
     const refreshToken = randomBytes(32).toString('base64url');
-    await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id)
-      VALUES($1,$2,$3,now()+($4||' days')::interval,$5)`,
-      [userId, family, hashToken(refreshToken), String(REFRESH_TTL_DAYS), deviceSessionId ?? null]);
+    await c.query(`INSERT INTO refresh_tokens(user_id,family_id,token_hash,expires_at,device_session_id,device_session_generation)
+      VALUES($1,$2,$3,now()+($4||' days')::interval,$5,$6)`,
+      [userId, family, hashToken(refreshToken), String(REFRESH_TTL_DAYS), deviceSessionId ?? null, sgen ?? null]);
     const { auth_version: av } = (await c.query('SELECT auth_version FROM users WHERE id=$1', [userId])).rows[0];
-    const accessToken = jwt.sign({ dsi: deviceSessionId, av }, secret(), {
+    const accessToken = jwt.sign({ dsi: deviceSessionId, ...(sgen != null ? { sgen } : {}), av }, secret(), {
       algorithm: 'HS256', subject: userId, expiresIn: ACCESS_TTL_SECONDS,
       issuer: process.env.JWT_ISSUER ?? 'tamreedy-api', audience: process.env.JWT_AUDIENCE ?? 'tamreedy-mobile',
     });

@@ -54,6 +54,8 @@ const String kAuthMode = String.fromEnvironment(
   defaultValue: 'password',
 );
 
+enum AuthSessionSignal { signedOut, sessionRevoked }
+
 /// Centralized API client for all Tamreedy mobile apps (Tamreedy 3.0).
 /// Features:
 /// - Shared HTTP Client with per-operation timeouts
@@ -109,6 +111,11 @@ class TamreedyApi {
   /// Tracks live connection health across HTTP & Realtime layers.
   final ValueNotifier<ConnectionHealth> connectionHealth =
       ValueNotifier<ConnectionHealth>(ConnectionHealth.online);
+
+  /// BUG-021: Central observable session scope & sign-out/revocation signal.
+  final ValueNotifier<int> sessionScopeEpoch = ValueNotifier<int>(0);
+  final ValueNotifier<AuthSessionSignal?> authSessionSignal =
+      ValueNotifier<AuthSessionSignal?>(null);
 
   /// Single Flight completer to prevent multiple concurrent refresh operations
   Completer<bool>? _refreshCompleter;
@@ -311,6 +318,9 @@ class TamreedyApi {
   Future<void> _saveTokens(Map<String, dynamic> t) async {
     await _storage.write(key: 'access_token', value: t['accessToken'] as String);
     await _storage.write(key: 'refresh_token', value: t['refreshToken'] as String);
+    _inFlightGets.clear();
+    authSessionSignal.value = null;
+    sessionScopeEpoch.value = sessionScopeEpoch.value + 1;
   }
 
   Future<bool> _refreshSingleFlight() async {
@@ -348,6 +358,9 @@ class TamreedyApi {
           await _storage.delete(key: 'access_token');
           await _storage.delete(key: 'refresh_token');
           await _storage.delete(key: 'cached_user_role');
+          _inFlightGets.clear();
+          sessionScopeEpoch.value = sessionScopeEpoch.value + 1;
+          authSessionSignal.value = AuthSessionSignal.sessionRevoked;
         }
       }
       _refreshCompleter!.complete(false);
@@ -483,7 +496,10 @@ class TamreedyApi {
     await _storage.delete(key: 'access_token');
     await _storage.delete(key: 'refresh_token');
     await _storage.delete(key: 'cached_user_role');
+    _inFlightGets.clear();
     mustChangePassword = false;
+    sessionScopeEpoch.value = sessionScopeEpoch.value + 1;
+    authSessionSignal.value = AuthSessionSignal.signedOut;
   }
 
   Future<void> saveAccessToken(String value) =>

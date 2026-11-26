@@ -228,10 +228,23 @@ class NurseSessionCoordinator extends ChangeNotifier {
 
   Future<void> signOut() async {
     _initialized = false;
-    if (guardianEnabled) guardian.location.stop();
-    await availability.setAvailability(false).catchError((_) {});
-    await api.logout();
+    profileVerified = kDemoMode;
+    nurseFullName = kDemoMode ? 'ممرض تجريبي' : '';
+    nurseNumber = '';
+    ratingAvg = 5.0;
+    approvedSkills = const [];
     unreadNotifications.value = 0;
+    if (guardianEnabled) guardian.location.stop();
+    await availability.resetForSessionChange();
+    await callManager.resetForSessionChange();
+    offers.resetForSessionChange();
+    marketplace.resetForSessionChange();
+    calendar.resetForSessionChange();
+    finance.resetForSessionChange();
+    visit.resetForSessionChange();
+    notifications.clearHistory();
+    await api.logout();
+    notifyListeners();
   }
 
   @override
