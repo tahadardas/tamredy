@@ -244,6 +244,22 @@ class TamreedyApi {
   Future<String?> accessToken() => _storage.read(key: 'access_token');
 
   Future<String?> deviceSessionId() async {
+    final payload = await _jwtClaims();
+    return payload != null && payload['dsi'] is String ? payload['dsi'] as String : null;
+  }
+
+  Future<String?> currentUserId() async {
+    final payload = await _jwtClaims();
+    return payload != null && payload['sub'] is String ? payload['sub'] as String : null;
+  }
+
+  Future<int?> sessionGeneration() async {
+    final payload = await _jwtClaims();
+    final gen = payload?['sgen'];
+    return gen is int ? gen : int.tryParse('$gen');
+  }
+
+  Future<Map<String, dynamic>?> _jwtClaims() async {
     final token = await accessToken();
     if (token == null) return null;
     final segments = token.split('.');
@@ -252,7 +268,7 @@ class TamreedyApi {
       final payload = jsonDecode(
         utf8.decode(base64Url.decode(base64Url.normalize(segments[1]))),
       );
-      return payload is Map && payload['dsi'] is String ? payload['dsi'] as String : null;
+      return payload is Map ? Map<String, dynamic>.from(payload) : null;
     } catch (_) {
       return null;
     }
@@ -667,11 +683,21 @@ class TamreedyApi {
   Future<List<dynamic>> getRequestProposals(String requestId) =>
       getList('/v1/requests/$requestId/proposals');
 
-  Future<Map<String, dynamic>> acceptProposal(String requestId, String proposalId) =>
+  Future<Map<String, dynamic>> acceptProposal(
+    String requestId,
+    String proposalId, {
+    int? requestVersion,
+    int? proposalVersion,
+    String? idempotencyKey,
+  }) =>
       post(
         '/v1/requests/$requestId/proposals/$proposalId/accept',
-        {},
-        {'Idempotency-Key': newIdempotencyKey()},
+        {
+          if (requestVersion != null) 'requestVersion': requestVersion,
+          if (proposalVersion != null) 'proposalVersion': proposalVersion,
+          if (idempotencyKey != null && idempotencyKey.isNotEmpty) 'idempotencyKey': idempotencyKey,
+        },
+        {'Idempotency-Key': (idempotencyKey != null && idempotencyKey.isNotEmpty) ? idempotencyKey : newIdempotencyKey()},
       );
 
   Future<Map<String, dynamic>> declineProposal(String requestId, String proposalId, {String? reason}) =>

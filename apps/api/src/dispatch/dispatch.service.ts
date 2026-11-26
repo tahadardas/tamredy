@@ -68,6 +68,16 @@ export class DispatchService {
       }
       if(request?.status !== 'OFFERING') conflict('REQUEST_ALREADY_ASSIGNED_OR_CLOSED');
       if(!offer || offer.status!=='OPEN' || !offer.unexpired) gone();
+      // BUG-018: pass expected instant visit window [now, now + expectedMinutes] so
+      // NurseEligibilityEngine + Exclusion Constraints enforce schedule conflicts uniformly.
+      const minsRow = (await c.query(
+        `SELECT coalesce(sum(expected_minutes), 30)::int AS total_mins
+         FROM care_request_items WHERE request_id=$1`,
+        [requestId],
+      )).rows[0];
+      const expectedMins = Math.max(15, Number(minsRow?.total_mins ?? 30));
+      const plannedStart = new Date();
+      const plannedEnd = new Date(plannedStart.getTime() + expectedMins * 60_000);
       const assigned = await this.assignments.assignLocked(c, {
         request,
         nurseId,
@@ -75,6 +85,8 @@ export class DispatchService {
         actorUserId: userId,
         source: 'INSTANT_OFFER',
         sourceId: offerId,
+        plannedStart,
+        plannedEnd,
         reserveImmediately: true,
       });
       const assignmentId=assigned.assignmentId;

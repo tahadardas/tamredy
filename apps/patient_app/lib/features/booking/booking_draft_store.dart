@@ -678,7 +678,6 @@ class BookingDraftStore extends ChangeNotifier {
         }
       }
 
-      _idempotencyKey ??= api.newIdempotencyKey();
       final payload = <String, dynamic>{
         'beneficiaryId': benId,
         'items': [
@@ -699,11 +698,51 @@ class BookingDraftStore extends ChangeNotifier {
           'openDurationMinutes': openDurationMinutes,
       };
 
+      // BUG-015: Persist PendingOperation (operationId, idempotencyKey, payloadHash,
+      // canonicalPayload, ownerUserId, createdAt, status) so phone reboot after lost
+      // commit response deterministically replays without duplicate request creation.
+      final ownerUserId = (await api.currentUserId()) ?? 'patient';
+      final canonicalPayload = jsonEncode(_canonicalize(payload));
+      final payloadHash = _fnv1a64Hex(canonicalPayload);
+      final opStorageKey = 'pending_create_op_$ownerUserId';
+      final existingRaw = await api.readLocal(opStorageKey);
+      String? persistedKey;
+      String? operationId;
+      if (existingRaw != null && existingRaw.isNotEmpty) {
+        try {
+          final prev = jsonDecode(existingRaw);
+          if (prev is Map &&
+              prev['ownerUserId'] == ownerUserId &&
+              prev['payloadHash'] == payloadHash &&
+              prev['status'] == 'PENDING') {
+            persistedKey = prev['idempotencyKey']?.toString();
+            operationId = prev['operationId']?.toString();
+          }
+        } catch (_) {}
+      }
+      _idempotencyKey = (persistedKey != null && persistedKey.isNotEmpty)
+          ? persistedKey
+          : (_idempotencyKey ?? api.newIdempotencyKey());
+      operationId ??= api.newIdempotencyKey();
+      await api.writeLocal(
+        opStorageKey,
+        jsonEncode({
+          'operationId': operationId,
+          'idempotencyKey': _idempotencyKey,
+          'payloadHash': payloadHash,
+          'canonicalPayload': canonicalPayload,
+          'ownerUserId': ownerUserId,
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+          'status': 'PENDING',
+        }),
+      );
+
       final res = await api.post(
         '/v1/requests',
         payload,
         {'Idempotency-Key': _idempotencyKey!},
       );
+      await api.writeLocal(opStorageKey, null);
       final reqId = '${res['id'] ?? ''}';
       if (stagedEvidence != null && reqId.isNotEmpty) {
         try {
@@ -755,5 +794,26 @@ class BookingDraftStore extends ChangeNotifier {
   void dispose() {
     _estimateDebounce?.cancel();
     super.dispose();
+  }
+
+  Object? _canonicalize(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((k) => '$k').toList()..sort();
+      return {for (final k in keys) k: _canonicalize(value[k])};
+    }
+    if (value is List) {
+      return value.map(_canonicalize).toList();
+    }
+    return value;
+  }
+
+  String _fnv1a64Hex(String input) {
+    var hash = BigInt.parse('14695981039346656037');
+    final prime = BigInt.parse('1099511628211');
+    final mask = (BigInt.one << 64) - BigInt.one;
+    for (final byte in utf8.encode(input)) {
+      hash = ((hash ^ BigInt.from(byte)) * prime) & mask;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
   }
 }

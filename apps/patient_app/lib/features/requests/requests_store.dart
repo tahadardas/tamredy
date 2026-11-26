@@ -38,6 +38,7 @@ class RequestsStore extends ChangeNotifier {
   final Map<String, TypedCareRequest> _detailsCache = {};
   final Map<String, List<TypedProposal>> _proposalsCache = {};
   final Map<String, String> _lastCancellationAttemptKey = {};
+  final Map<String, String> _proposalAcceptKeys = {};
   List<Map<String, dynamic>> _pendingReviews = const [];
   String? _nextCursor;
 
@@ -313,6 +314,7 @@ class RequestsStore extends ChangeNotifier {
     _detailsCache.clear();
     _proposalsCache.clear();
     _lastCancellationAttemptKey.clear();
+    _proposalAcceptKeys.clear();
     _pendingReviews = const [];
     _nextCursor = null;
     _allRequests = const [];
@@ -334,10 +336,42 @@ class RequestsStore extends ChangeNotifier {
     return list;
   }
 
-  Future<bool> acceptProposal(String requestId, String proposalId) async {
-    await api.acceptProposal(requestId, proposalId);
-    await Future.wait([loadRequestDetail(requestId), refreshAll(silent: true)]);
-    return true;
+  Future<bool> acceptProposal(
+    String requestId,
+    String proposalId, {
+    int? requestVersion,
+    int? proposalVersion,
+  }) async {
+    final req = requestById(requestId);
+    TypedProposal? matchingProposal;
+    for (final p in proposalsFor(requestId)) {
+      if (p.id == proposalId) {
+        matchingProposal = p;
+        break;
+      }
+    }
+    final effReqVer = requestVersion ?? req?.version;
+    final effPropVer = proposalVersion ?? matchingProposal?.proposalVersion;
+    final signature = '$requestId:$proposalId:$effReqVer:$effPropVer';
+    final idemKey = _proposalAcceptKeys.putIfAbsent(signature, () => api.newIdempotencyKey());
+    try {
+      await api.acceptProposal(
+        requestId,
+        proposalId,
+        requestVersion: effReqVer,
+        proposalVersion: effPropVer,
+        idempotencyKey: idemKey,
+      );
+      _proposalAcceptKeys.remove(signature);
+      await Future.wait([loadRequestDetail(requestId, force: true), refreshActiveOnly()]);
+      return true;
+    } catch (e) {
+      // On version conflict, refresh request & proposals immediately so patient reviews updated offer
+      if (e is ApiFailure && e.kind == ApiErrorKind.conflict) {
+        await Future.wait([loadRequestDetail(requestId, force: true), loadProposals(requestId)]);
+      }
+      rethrow;
+    }
   }
 
   Future<bool> declineProposal(String requestId, String proposalId, {String? reason}) async {

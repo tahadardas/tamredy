@@ -49,6 +49,11 @@ export class AcceptProposalDto {
   @IsOptional()
   @IsNumber()
   requestVersion?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  idempotencyKey?: string;
 }
 
 export class SwitchBookingModeDto {

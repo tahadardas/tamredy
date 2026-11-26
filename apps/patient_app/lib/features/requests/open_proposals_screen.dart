@@ -55,11 +55,17 @@ class _OpenProposalsScreenState extends State<OpenProposalsScreen> {
     }
   }
 
-  Future<void> _accept(String proposalId) async {
+  Future<void> _accept(TypedProposal proposal) async {
     if (_acceptingId != null) return;
-    setState(() => _acceptingId = proposalId);
+    setState(() => _acceptingId = proposal.id);
     try {
-      await widget.session.requests.acceptProposal(widget.requestId, proposalId);
+      final req = widget.session.requests.requestById(widget.requestId);
+      await widget.session.requests.acceptProposal(
+        widget.requestId,
+        proposal.id,
+        requestVersion: req?.version,
+        proposalVersion: proposal.proposalVersion,
+      );
       if (!mounted) return;
       TamToast.show(context, 'تم تأكيد اختيار الممرض بنجاح!', tone: TamToastTone.success);
       Navigator.of(context).pushReplacement(
@@ -74,7 +80,7 @@ class _OpenProposalsScreenState extends State<OpenProposalsScreen> {
       if (mounted) {
         TamToast.show(
           context,
-          explainError(e, fallback: 'تعذر قبول العرض، ربما انتهت صلاحيته'),
+          explainError(e, fallback: 'تم تحديث العرض أو لم يعد متاحاً؛ تم تحديث القائمة للمراجعة'),
           tone: TamToastTone.error,
         );
       }
@@ -242,7 +248,7 @@ class _OpenProposalsScreenState extends State<OpenProposalsScreen> {
                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               ),
-                              onPressed: (_acceptingId != null) ? null : () => _accept(p.id),
+                              onPressed: (_acceptingId != null) ? null : () => _accept(p),
                               child: Text(
                                 _acceptingId == p.id ? 'جارٍ التأكيد...' : 'قبول العرض',
                                 style: aeroText(size: 14, weight: FontWeight.w800, color: Colors.white),

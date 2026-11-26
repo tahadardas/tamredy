@@ -15,18 +15,22 @@ export class AssignmentService {
 
   /**
    * Atomically accepts a readiness proposal, assigning the request to the nurse.
-   * Enforces strict canonical lock ordering:
-   * 1. care_requests
-   * 2. marketplace_proposals
-   * 3. nurses
-   * Guarantees absolute prevention of double-assignment.
+   * BUG-017 / BUG-018: Enforces identical canonical lock ordering across all
+   * assignment paths:
+   * 1. care_requests (FOR UPDATE)
+   * 2. nurses (FOR UPDATE)
+   * 3. marketplace_proposals (FOR UPDATE)
+   * 4. nurse_financial_accounts (inside AssignmentOrchestrator)
+   * and supports idempotent replay + optimistic requestVersion/proposalVersion checks.
    */
   async acceptProposal(
     patientUserId: string,
     requestId: string,
     proposalId: string,
     dto?: AcceptProposalDto,
+    idempotencyKey?: string,
   ) {
+    const cleanKey = idempotencyKey?.trim() || dto?.idempotencyKey?.trim() || null;
     const outcome = await this.db.transaction(async client => {
       // 1. Lock Care Request
       const reqRes = await client.query(
@@ -44,6 +48,33 @@ export class AssignmentService {
         throw new ForbiddenException({ code: 'FORBIDDEN_NOT_REQUEST_OWNER' });
       }
 
+      // Idempotent replay check before status conflict checks
+      if (cleanKey) {
+        const replayedProp = await client.query(
+          `SELECT mp.id, mp.nurse_id, mp.proposed_arrival_at, ra.id AS assignment_id
+           FROM marketplace_proposals mp
+           JOIN request_assignments ra ON ra.request_id = mp.request_id AND ra.nurse_id = mp.nurse_id
+             AND ra.status IN ('RESERVED', 'ACTIVE')
+           WHERE mp.request_id = $1 AND mp.accepted_idempotency_key = $2`,
+          [requestId, cleanKey],
+        );
+        if (replayedProp.rowCount) {
+          const prev = replayedProp.rows[0];
+          if (prev.id !== proposalId) {
+            throw new ConflictException({ code: 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PROPOSAL' });
+          }
+          return {
+            assigned: true as const,
+            assignmentId: prev.assignment_id,
+            requestId,
+            proposalId: prev.id,
+            nurseId: prev.nurse_id,
+            expectedArrivalAt: prev.proposed_arrival_at,
+            replayed: true,
+          };
+        }
+      }
+
       if (request.status !== 'OPEN_FOR_PROPOSALS') {
         throw new ConflictException({
           code: 'REQUEST_ALREADY_ASSIGNED',
@@ -51,11 +82,30 @@ export class AssignmentService {
         });
       }
 
-      if (dto?.requestVersion && request.version !== dto.requestVersion) {
+      if (dto?.requestVersion != null && request.version !== dto.requestVersion) {
         throw new ConflictException({ code: 'REQUEST_VERSION_CONFLICT' });
       }
 
-      // 2. Lock Proposal
+      // 2. Lookup nurse_id without locking proposal first so canonical lock order holds:
+      //    care_requests -> nurses -> marketplace_proposals -> nurse_financial_accounts
+      const lookup = await client.query(
+        `SELECT nurse_id FROM marketplace_proposals WHERE id = $1 AND request_id = $2`,
+        [proposalId, requestId],
+      );
+      if (!lookup.rowCount) throw new NotFoundException({ code: 'PROPOSAL_NOT_FOUND' });
+
+      // 3. Lock Nurse BEFORE locking Proposal
+      const nurseRes = await client.query(
+        `SELECT n.id, n.user_id, n.verified, n.work_status
+         FROM nurses n
+         WHERE n.id = $1
+         FOR UPDATE`,
+        [lookup.rows[0].nurse_id],
+      );
+      if (!nurseRes.rowCount) throw new NotFoundException({ code: 'NURSE_NOT_FOUND' });
+      const nurse = nurseRes.rows[0];
+
+      // 4. Lock Proposal
       const propRes = await client.query(
         `SELECT id, request_id, nurse_id, status, proposed_arrival_at,
                 estimated_service_minutes, estimated_nurse_earning, proposal_version,
@@ -82,23 +132,12 @@ export class AssignmentService {
         });
       }
 
-      if (dto?.proposalVersion && proposal.proposal_version !== dto.proposalVersion) {
+      if (dto?.proposalVersion != null && proposal.proposal_version !== dto.proposalVersion) {
         throw new ConflictException({
           code: 'PROPOSAL_VERSION_CONFLICT',
           message: 'تم تحديث العرض من قبل الممرض، يرجى مراجعة تفاصيل العرض المحدث',
         });
       }
-
-      // 3. Lock Nurse
-      const nurseRes = await client.query(
-        `SELECT n.id, n.user_id, n.verified, n.work_status
-         FROM nurses n
-         WHERE n.id = $1
-         FOR UPDATE`,
-        [proposal.nurse_id],
-      );
-      if (!nurseRes.rowCount) throw new NotFoundException({ code: 'NURSE_NOT_FOUND' });
-      const nurse = nurseRes.rows[0];
 
       if (!nurse.verified) {
         throw new ConflictException({ code: 'NURSE_NOT_VERIFIED' });
@@ -160,6 +199,13 @@ export class AssignmentService {
         plannedEnd: proposedEnd,
         reserveImmediately: false,
       });
+
+      if (cleanKey) {
+        await client.query(
+          `UPDATE marketplace_proposals SET accepted_idempotency_key = $2 WHERE id = $1`,
+          [proposal.id, cleanKey],
+        );
+      }
 
       // 11. Record Request Event
       await client.query(

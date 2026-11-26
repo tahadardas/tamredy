@@ -33,7 +33,17 @@ export class RequestsService {
         ON CONFLICT (user_id,key) DO NOTHING`, [userId,key,digest]);
       const k = await client.query('SELECT * FROM request_create_keys WHERE user_id=$1 AND key=$2 FOR UPDATE',[userId,key]);
       if (k.rows[0].request_hash !== digest) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
-      if (k.rows[0].request_id) return this.findOneWithRunner(client, userId, k.rows[0].request_id);
+      if (k.rows[0].request_id) {
+        const replayed = await this.findOneWithRunner(client, userId, k.rows[0].request_id);
+        return {
+          ...replayed,
+          clinicalApprovalStatus: replayed.clinical_approval_status,
+          ...(replayed.scheduled_at ? { scheduledAt: replayed.scheduled_at } : {}),
+          estimate: null,
+          promoCode: null,
+          replayed: true,
+        };
+      }
       const appointment = validateAppointment(dto.scheduledAt);
       if (dto.bookingMode === 'SCHEDULED' && !appointment) invalid('SCHEDULED_TIME_REQUIRED');
       if (dto.bookingMode !== undefined && dto.bookingMode !== 'SCHEDULED' && appointment) {
@@ -201,12 +211,14 @@ export class RequestsService {
           })),
         ]);
       }
+      const canonical = await this.findOneWithRunner(client, userId, request.id);
       return {
-        ...request,
+        ...canonical,
         clinicalApprovalStatus: needsClinicalApproval ? 'PENDING' : 'NOT_REQUIRED',
         ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),
         estimate,
         promoCode: promo?.code ?? auto?.label ?? null,
+        replayed: false,
       };
     });
   }

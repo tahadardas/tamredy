@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { ProposalsService } from './proposals.service.js';
 import { AssignmentService } from './assignment.service.js';
@@ -34,9 +34,10 @@ export class ProposalsController {
     @Param('id') requestId: string,
     @Param('proposalId') proposalId: string,
     @Body() dto?: AcceptProposalDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     requireRole(r.user!, 'PATIENT');
-    return this.assignment.acceptProposal(r.user!.id, requestId, proposalId, dto);
+    return this.assignment.acceptProposal(r.user!.id, requestId, proposalId, dto, idempotencyKey);
   }
 
   /**

@@ -16,15 +16,16 @@ type Evidence = {
   thresholdMet: boolean;
 };
 
-export function cancellationClassification(evidence: Evidence, legacy: boolean) {
+export function cancellationClassification(evidence: Evidence, _legacy: boolean) {
   if (['SCHEDULED', 'OFFERING', 'OPEN_FOR_PROPOSALS', 'AWAITING_RECOVERY_CHOICE', 'UNFULFILLED'].includes(evidence.status)) {
     return 'BEFORE_ASSIGNMENT';
   }
   if (evidence.status === 'ASSIGNED') return 'BEFORE_DEPARTURE';
-  if (evidence.status !== 'EN_ROUTE') return 'LEGACY_UNCLASSIFIED';
+  if (evidence.status !== 'EN_ROUTE') return 'EN_ROUTE_UNCLASSIFIED';
   if (!evidence.departed || !evidence.etaAvailable) return 'ETA_UNAVAILABLE';
   if (evidence.thresholdMet) return 'NURSE_DELAY';
-  return legacy ? 'LEGACY_UNCLASSIFIED' : 'EN_ROUTE_COUNTED';
+  // BUG-020: legacy clients cannot bypass EN_ROUTE_COUNTED policy classification
+  return 'EN_ROUTE_COUNTED';
 }
 
 function response(row: Record<string, unknown>, replayed: boolean) {
@@ -118,25 +119,47 @@ export async function cancelRequest(
   if (!written.rowCount) conflict('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
 
   if (assignment) {
+    const activeOther = (await client.query(`
+      SELECT cr.status AS request_status
+      FROM request_assignments a
+      JOIN care_requests cr ON cr.id = a.request_id
+      WHERE a.nurse_id = $1 AND a.status = 'ACTIVE' AND a.id <> $2
+      LIMIT 1
+    `, [assignment.nurse_id, assignment.id])).rows[0];
+
     await client.query(`UPDATE request_assignments SET status='RELEASED',released_at=$2,reason='PATIENT_CANCELLED'
       WHERE id=$1 AND status IN ('RESERVED','ACTIVE')`, [assignment.id, snapshot.cancelled_at]);
-    const dues = await new DuesService().balance(client, assignment.nurse_id);
-    const pause = request.status === 'EN_ROUTE' && (await client.query(
-      "SELECT value->>'pauseAfterTravelCancellation' = 'true' AS enabled FROM app_settings WHERE key='dispatch'",
-    )).rows[0]?.enabled === true;
-    await client.query(`UPDATE nurses n SET availability_intent=CASE WHEN $5::boolean THEN 'PAUSED' ELSE n.availability_intent END,
-      work_status=CASE
-        WHEN $5::boolean OR n.availability_intent='PAUSED' THEN 'PAUSED'
-        WHEN n.verified AND n.availability_intent='AVAILABLE' AND NOT $3::boolean
-          AND n.last_heartbeat_at>$2::timestamptz-$4::int*interval '1 second'
-          AND EXISTS (SELECT 1 FROM users u WHERE u.id=n.user_id AND u.status='ACTIVE')
-          AND EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id=n.id AND nc.approved AND nc.expires_at>$2)
-          AND EXISTS (SELECT 1 FROM nurse_locations nl WHERE nl.nurse_id=n.id
-            AND nl.recorded_at>$2::timestamptz-interval '120 seconds')
-          AND NOT EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id=n.id AND a.status='ACTIVE')
-        THEN 'AVAILABLE' ELSE 'OFFLINE' END, updated_at=$2
-      WHERE n.id=$1`, [assignment.nurse_id, snapshot.cancelled_at, dues.blocked,
-      request.search_max_heartbeat_seconds ?? 120, pause]);
+
+    if (activeOther) {
+      // BUG-019: cancelling a separate RESERVED scheduled booking must preserve the nurse's active visit work_status
+      const derivedWorkStatus = activeOther.request_status === 'IN_SERVICE'
+        ? 'IN_SERVICE'
+        : (activeOther.request_status === 'EN_ROUTE' || activeOther.request_status === 'ARRIVED')
+          ? 'EN_ROUTE'
+          : 'RESERVED';
+      await client.query(
+        `UPDATE nurses SET work_status=$2, updated_at=$3 WHERE id=$1`,
+        [assignment.nurse_id, derivedWorkStatus, snapshot.cancelled_at],
+      );
+    } else {
+      const dues = await new DuesService().balance(client, assignment.nurse_id);
+      const pause = request.status === 'EN_ROUTE' && (await client.query(
+        "SELECT value->>'pauseAfterTravelCancellation' = 'true' AS enabled FROM app_settings WHERE key='dispatch'",
+      )).rows[0]?.enabled === true;
+      await client.query(`UPDATE nurses n SET availability_intent=CASE WHEN $5::boolean THEN 'PAUSED' ELSE n.availability_intent END,
+        work_status=CASE
+          WHEN $5::boolean OR n.availability_intent='PAUSED' THEN 'PAUSED'
+          WHEN n.verified AND n.availability_intent='AVAILABLE' AND NOT $3::boolean
+            AND n.last_heartbeat_at>$2::timestamptz-$4::int*interval '1 second'
+            AND EXISTS (SELECT 1 FROM users u WHERE u.id=n.user_id AND u.status='ACTIVE')
+            AND EXISTS (SELECT 1 FROM nurse_credentials nc WHERE nc.nurse_id=n.id AND nc.approved AND nc.expires_at>$2)
+            AND EXISTS (SELECT 1 FROM nurse_locations nl WHERE nl.nurse_id=n.id
+              AND nl.recorded_at>$2::timestamptz-interval '120 seconds')
+            AND NOT EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id=n.id AND a.status='ACTIVE')
+          THEN 'AVAILABLE' ELSE 'OFFLINE' END, updated_at=$2
+        WHERE n.id=$1`, [assignment.nurse_id, snapshot.cancelled_at, dues.blocked,
+        request.search_max_heartbeat_seconds ?? 120, pause]);
+    }
   }
   if (reason === 'SYSTEM_OR_LOCATION_ERROR') {
     await client.query(`INSERT INTO incidents(request_id,reported_by,severity,description)
