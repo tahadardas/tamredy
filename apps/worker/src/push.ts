@@ -1,41 +1,161 @@
 import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
-/** Push copy per outbox event type. Messages never contain names, addresses or
- *  medical details: the app fetches details over REST after opening. */
-export function pushCopy(type: string, payload: Record<string, any> = {}): { title: string; body: string } | null {
+export type RecipientRole = 'PATIENT' | 'NURSE' | 'ADMIN' | 'CLINICAL_REVIEWER';
+export type TargetApp = 'PATIENT_APP' | 'NURSE_APP' | 'ADMIN_WEB';
+
+export function targetAppForRole(role?: string): TargetApp | undefined {
+  if (role === 'NURSE') return 'NURSE_APP';
+  if (role === 'PATIENT') return 'PATIENT_APP';
+  if (role === 'ADMIN' || role === 'CLINICAL_REVIEWER') return 'ADMIN_WEB';
+  return undefined;
+}
+
+export function deepLinkForPush(
+  type: string,
+  role: string | undefined,
+  payload: Record<string, any> = {},
+): string {
+  const prefix = role === 'NURSE' ? 'tamreedy://nurse' : 'tamreedy://patient';
+  const reqId = payload.requestId ? String(payload.requestId) : '';
+  const asgnId = payload.assignmentId ? String(payload.assignmentId) : '';
+  const offerId = payload.offerId ? String(payload.offerId) : '';
+  const callId = payload.callId ? String(payload.callId) : '';
+  const convId = payload.conversationId ? String(payload.conversationId) : '';
+
+  if (type === 'call.incoming' && callId) return `${prefix}/calls/${callId}`;
+  if (type === 'chat.message' && convId) return `${prefix}/chat/${convId}`;
+  if (role === 'NURSE') {
+    if (type === 'offer.created' && offerId) return `${prefix}/offers/${offerId}`;
+    if (type.startsWith('marketplace.recovery')) return `${prefix}/marketplace`;
+    if (type === 'marketplace.proposal.accepted' || type === 'visit.departure_delayed') {
+      return asgnId ? `${prefix}/assignments/${asgnId}` : `${prefix}/home`;
+    }
+    if (type === 'payment.tip' && reqId) return `${prefix}/requests/${reqId}/bill`;
+    if (type.startsWith('safety.')) return `${prefix}/guardian`;
+    return reqId ? `${prefix}/requests/${reqId}` : `${prefix}/home`;
+  }
+  if (type === 'marketplace.proposal.created' || type === 'marketplace.proposal.withdrawn') {
+    return reqId ? `${prefix}/requests/${reqId}/proposals` : `${prefix}/requests`;
+  }
+  if (type === 'visit.complete' || type.startsWith('payment.')) {
+    return reqId ? `${prefix}/requests/${reqId}/bill` : `${prefix}/requests`;
+  }
+  return reqId ? `${prefix}/requests/${reqId}` : `${prefix}/home`;
+}
+
+/**
+ * Role-aware push copy per outbox event type.
+ * Messages never contain names, addresses or medical details: the app fetches details over REST after opening.
+ */
+export function pushCopy(
+  type: string,
+  payload: Record<string, any> = {},
+  role?: string,
+): { title: string; body: string } | null {
+  const effectiveRole = role ?? payload.recipientRole;
+
   switch (type) {
-    case 'winback.offer': return { title: 'اشتقنا لك 💙', body: `خصم ${payload.percent ?? ''}% على طلبك القادم — صالح لفترة محدودة.` };
-    case 'pack.granted': return { title: 'تم تفعيل باقتك', body: 'خصم باقتك يُطبَّق تلقائيًا على زياراتك القادمة.' };
+    case 'winback.offer':
+      return { title: 'اشتقنا لك 💙', body: `خصم ${payload.percent ?? ''}% على طلبك القادم — صالح لفترة محدودة.` };
+    case 'pack.granted':
+      return { title: 'تم تفعيل باقتك', body: 'خصم باقتك يُطبَّق تلقائيًا على زياراتك القادمة.' };
     case 'offer.closed':
-    case 'offer.expired': return { title: 'أُغلق العرض', body: 'لم يعد هذا العرض متاحًا.' };
-    case 'visit.interrupted': return { title: 'توقفت الزيارة', body: 'افتح التطبيق لمراجعة حالة الطلب.' };
-    case 'request.cancelled': return { title: 'أُلغيت الزيارة', body: 'افتح التطبيق لتحديث حالة الزيارة.' };
-    case 'cancellation.appeal.resolved': return { title: 'تمت مراجعة الاعتراض', body: 'افتح التطبيق للاطلاع على النتيجة.' };
-    case 'offer.created': return { title: 'طلب جديد قريب منك', body: 'لديك عرض محدود المدة، افتح التطبيق للقبول.' };
-    case 'request.assigned': return { title: 'تم قبول طلبك', body: 'تم إسناد طلبك إلى ممرض معتمد.' };
-    case 'visit.departure_delayed': return { title: 'تذكير ببدء التوجه', body: 'لديك زيارة مسندة بانتظار تأكيد الانطلاق.' };
-    case 'visit.depart': return { title: 'الممرض في الطريق', body: 'يمكنك متابعة وصوله من التطبيق.' };
-    case 'visit.arrive': return { title: 'وصل الممرض', body: 'الممرض عند موقع الزيارة.' };
-    case 'visit.complete': return { title: 'تمت الزيارة', body: 'المبلغ المطلوب جاهز في التطبيق.' };
-    case 'payment.partial': return { title: 'تم تسجيل دفعة جزئية', body: 'افتح التطبيق لمعرفة المبلغ المتبقي.' };
-    case 'payment.paid': return { title: 'تم الدفع بالكامل', body: 'شكرًا لك، يسعدنا تقييمك للخدمة.' };
-    case 'request.unfulfilled': return { title: 'تعذر العثور على ممرض', body: 'لم يتوفر ممرض الآن، يمكنك إعادة المحاولة.' };
-    case 'marketplace.proposal.created': return { title: 'عرض استعداد جديد', body: 'لديك عرض جديد لتنفيذ طلبك. يمكنك مراجعة مقدم الخدمة ووقت الوصول المقترح.' };
-    case 'marketplace.proposal.accepted': return { title: 'تم تأكيد زيارتك', body: 'وافق المريض على عرضك. يمكنك الاطلاع على بيانات الزيارة وتأكيد الانطلاق.' };
-    case 'marketplace.proposal.withdrawn': return { title: 'تم سحب العرض', body: 'قام الممرض بسحب عرضه السابق.' };
-    case 'marketplace.recovery.alert': return { title: 'فرص تمريضية متاحة', body: 'توجد طلبات تمريضية مفتوحة تتوافق مع اختصاصك ومناطق عملك.' };
-    case 'marketplace.request.published': return { title: 'طلب رعاية مفتوح', body: 'تم نشر طلب رعاية جديد في نطاقك، يمكنك إرسال عرض استعداد.' };
-    case 'request.instant.search.expired': return { title: 'لم نجد ممرضاً متاحاً حالياً', body: 'يمكنك إبقاء طلبك مفتوحاً ليستعرضه الممرضون المؤهلون.' };
-    case 'call.incoming': return { title: 'مكالمة صوتية واردة', body: 'يرجى الرد على المكالمة الصوتية عبر تطبيق تمريضي.' };
-    case 'chat.message': return { title: 'رسالة جديدة في المحادثة', body: (typeof payload.snippet === 'string' && payload.snippet.trim()) ? payload.snippet.trim() : 'لديك رسالة جديدة بخصوص الزيارة.' };
-    default: return null;
+    case 'offer.expired':
+      return effectiveRole === 'PATIENT'
+        ? null
+        : { title: 'أُغلق العرض', body: 'تم إسناد الطلب أو انتهت مهلة هذا العرض.' };
+    case 'visit.interrupted':
+      return effectiveRole === 'NURSE'
+        ? { title: 'تم إيقاف الزيارة', body: 'راجع مركز الأمان وحالة الزيارة في التطبيق.' }
+        : { title: 'توقفت الزيارة', body: 'افتح التطبيق لمراجعة حالة الطلب والتواصل مع الدعم.' };
+    case 'request.cancelled':
+      return effectiveRole === 'NURSE'
+        ? { title: 'ألغى المريض الطلب', body: 'تم إلغاء الزيارة من قبل المريض.' }
+        : { title: 'تم إلغاء الطلب', body: 'تم تحديث حالة طلبك إلى ملغى.' };
+    case 'cancellation.appeal.resolved':
+      return { title: 'تمت مراجعة الاعتراض', body: 'افتح التطبيق للاطلاع على النتيجة.' };
+    case 'offer.created':
+      if (effectiveRole === 'PATIENT') return null;
+      return { title: 'طلب تمريض جديد قريب منك', body: 'لديك عرض محدود المدة، افتح التطبيق للقبول.' };
+    case 'request.created':
+      return { title: 'تم إنشاء طلبك', body: 'جارٍ البحث عن أقرب ممرض مؤهل لخدمتك.' };
+    case 'request.assigned':
+      return effectiveRole === 'NURSE'
+        ? { title: 'تم إسناد الزيارة إليك', body: 'اطلع على تفاصيل الزيارة وابدأ التوجه في الوقت المحدد.' }
+        : { title: 'تم قبول طلبك', body: 'تم إسناد طلبك إلى ممرض معتمد، يمكنك متابعة وصوله الآن.' };
+    case 'visit.departure_delayed':
+      return effectiveRole === 'NURSE'
+        ? { title: 'تذكير ببدء التوجه', body: 'لديك زيارة مسندة بانتظار تأكيد الانطلاق.' }
+        : null;
+    case 'visit.depart':
+      return { title: 'الممرض في الطريق', body: 'بدأ الممرض التوجه إلى موقعك، تابع وصوله مباشرة.' };
+    case 'visit.arrive':
+      return { title: 'وصل الممرض', body: 'الممرض عند موقع الزيارة الآن.' };
+    case 'visit.start':
+      return { title: 'بدأت الزيارة', body: 'تم بدء تنفيذ الرعاية التمريضية.' };
+    case 'visit.complete':
+      return { title: 'انتهت الزيارة', body: 'تم إنهاء الزيارة وصدرت الفاتورة في التطبيق.' };
+    case 'payment.partial':
+    case 'payment.partially_paid':
+      return { title: 'تم تسجيل دفعة جزئية', body: 'افتح التطبيق لمعرفة المبلغ المتبقي.' };
+    case 'payment.paid':
+      return { title: 'تم تسجيل الدفع بالكامل', body: 'شكرًا لك، يمكنك تقييم الزيارة الآن.' };
+    case 'payment.tip':
+      return effectiveRole === 'NURSE'
+        ? { title: 'إكرامية جديدة', body: 'أضاف المريض إكرامية إلى الزيارة.' }
+        : null;
+    case 'request.unfulfilled':
+      return { title: 'تعذر إيجاد ممرض حاليًا', body: 'يمكنك إعادة المحاولة أو نشر الطلب في السوق المفتوح.' };
+    case 'request.schedule_released':
+      return { title: 'تذكير بالحجز المجدول', body: 'اقترب موعد زيارتك وجارٍ متابعة تجهيز الممرض.' };
+    case 'request.clinical_review_changed':
+      return payload.decision === 'REJECTED'
+        ? { title: 'نتيجة المراجعة الطبية', body: 'يرجى فتح التطبيق لمراجعة ملاحظات الفريق الطبي.' }
+        : { title: 'تمت الموافقة الطبية على طلبك', body: 'طلبك جاهز الآن وتم بدء البحث عن ممرض.' };
+    case 'marketplace.proposal.created':
+      if (effectiveRole === 'NURSE') return null;
+      return { title: 'وصلك عرض استعداد جديد', body: 'يمكنك مراجعة تفاصيل الممرض ووقت الوصول واختيار الأنسب.' };
+    case 'marketplace.proposal.accepted':
+      return { title: 'وافق المريض على عرضك', body: 'تم تأكيد زيارتك، يمكنك الاطلاع على التفاصيل وتأكيد الانطلاق.' };
+    case 'marketplace.proposal.withdrawn':
+      return { title: 'تم سحب عرض استعداد', body: 'قام الممرض بسحب عرضه، يمكنك مراجعة العروض الأخرى.' };
+    case 'marketplace.recovery.alert':
+      if (effectiveRole === 'PATIENT') return null;
+      return { title: 'طلبات متاحة في السوق المفتوح', body: 'توجد طلبات تمريضية مفتوحة تتوافق مع اختصاصك ومناطق عملك.' };
+    case 'marketplace.request.published':
+      return effectiveRole === 'NURSE'
+        ? { title: 'طلب رعاية مفتوح', body: 'تم نشر طلب رعاية جديد في نطاقك، يمكنك إرسال عرض استعداد.' }
+        : { title: 'تم نشر طلبك في السوق المفتوح', body: 'طلبك متاح الآن لاستقبال عروض الجاهزية من الممرضين.' };
+    case 'marketplace.request.updated':
+      return { title: 'تم تمديد مهلة الطلب', body: 'تم تحديث وقت استقبال العروض على طلبك.' };
+    case 'request.instant.search.expired':
+      return { title: 'انتهت مهلة البحث الفوري', body: 'يمكنك نشر طلبك في السوق المفتوح لاستقبال العروض.' };
+    case 'call.incoming':
+      return effectiveRole === 'NURSE'
+        ? { title: 'مكالمة واردة من المريض', body: 'اضغط للرد على المكالمة الصوتية عبر تمريضي.' }
+        : { title: 'مكالمة واردة من الممرض', body: 'اضغط للرد على المكالمة الصوتية عبر تمريضي.' };
+    case 'call.missed':
+      return { title: 'مكالمة فائتة', body: 'لديك مكالمة فائتة مرتبطة بالزيارة النشطة.' };
+    case 'chat.message': {
+      const snippet = typeof payload.snippet === 'string' && payload.snippet.trim()
+        ? payload.snippet.trim()
+        : 'لديك رسالة جديدة بخصوص الزيارة.';
+      return { title: 'وصلتك رسالة جديدة', body: snippet };
+    }
+    case 'safety.checkin_due':
+    case 'safety.checkin_reminder':
+      return effectiveRole === 'NURSE'
+        ? { title: 'تأكيد السلامة مطلوب', body: 'يرجى تأكيد سلامتك الآن داخل مركز الأمان.' }
+        : null;
+    case 'safety.event_changed':
+      return { title: 'تحديث مركز الأمان', body: 'تم تحديث حالة بلاغ الأمان الخاص بك.' };
+    default:
+      return null;
   }
 }
 
-/** Wake-up alarm for a new request. DATA-ONLY on Android (no `notification` block) so the app's background handler runs and raises an
- *  insistent, loud, full-screen alert with the distinctive tone; the TTL equals the offer lifetime so a stale offer is never delivered late.
- *  iOS gets a time-sensitive alert with the bundled long sound (a Critical Alert needs a special Apple entitlement). */
+/** Wake-up alarm for urgent, time-critical events only (new dispatch offer, incoming call, delayed departure). */
 export function alarmMessage(token: string, data: Record<string, string>, ttlSeconds: number, copy: { title: string; body: string }) {
   const ttl = Math.max(0, Math.min(300, Math.floor(ttlSeconds)));
   return {
@@ -139,26 +259,35 @@ export class FcmClient {
 export interface OutboxEvent {
   id: string | number;
   event_type: string;
+  created_at?: string;
   payload: {
+    eventId?: string;
+    eventType?: string;
     recipientUserId?: string;
     recipientUserIds?: string[];
-    requestId?: string;
-    offerId?: string;
-    proposalId?: string;
-    callId?: string;
-    conversationId?: string;
+    recipientRole?: string;
+    targetApp?: string;
+    requestId?: string | null;
+    assignmentId?: string | null;
+    offerId?: string | null;
+    proposalId?: string | null;
+    callId?: string | null;
+    conversationId?: string | null;
+    entityVersion?: number | null;
+    createdAt?: string | null;
+    expiresAt?: string | null;
+    priority?: string | null;
+    deepLink?: string | null;
+    skipPush?: boolean;
     snippet?: string;
-    expiresAt?: string;
     percent?: number;
+    decision?: string;
   };
 }
 export interface Db { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number | null }>; }
 
 const ALARM_EVENT_TYPES = new Set([
   'offer.created',
-  'marketplace.proposal.created',
-  'marketplace.proposal.accepted',
-  'request.assigned',
   'visit.departure_delayed',
   'call.incoming',
 ]);
@@ -173,7 +302,36 @@ async function openOfferIds(db: Db, offerIds: string[]): Promise<Set<string>> {
   return new Set(result.rows.map(row => String(row.id)));
 }
 
-/** Sends pushes for a batch of events with decoupled ledger logging in notification_deliveries. */
+function buildFcmDataMap(e: OutboxEvent, userId: string, role?: string, targetApp?: string): Record<string, string> {
+  const p = e.payload ?? {};
+  const eventId = p.eventId ? String(p.eventId) : String(e.id);
+  const eventType = p.eventType ? String(p.eventType) : e.event_type;
+  const resolvedRole = role ?? (p.recipientRole ? String(p.recipientRole) : '');
+  const resolvedApp = targetApp ?? (p.targetApp ? String(p.targetApp) : (targetAppForRole(resolvedRole) ?? ''));
+  const deepLink = p.deepLink ? String(p.deepLink) : deepLinkForPush(eventType, resolvedRole || undefined, p);
+
+  return {
+    eventId,
+    eventType,
+    type: eventType,
+    recipientUserId: userId,
+    recipientRole: resolvedRole,
+    targetApp: resolvedApp,
+    requestId: p.requestId ? String(p.requestId) : '',
+    assignmentId: p.assignmentId ? String(p.assignmentId) : '',
+    offerId: p.offerId ? String(p.offerId) : '',
+    proposalId: p.proposalId ? String(p.proposalId) : '',
+    conversationId: p.conversationId ? String(p.conversationId) : '',
+    callId: p.callId ? String(p.callId) : '',
+    entityVersion: p.entityVersion != null ? String(p.entityVersion) : '',
+    createdAt: p.createdAt ? String(p.createdAt) : (e.created_at ? String(e.created_at) : new Date().toISOString()),
+    expiresAt: p.expiresAt ? String(p.expiresAt) : '',
+    priority: p.priority ? String(p.priority) : (ALARM_EVENT_TYPES.has(eventType) ? 'CRITICAL' : 'HIGH'),
+    deepLink,
+  };
+}
+
+/** Sends pushes for a batch of events with strict role/app token isolation and decoupled ledger logging. */
 export async function pushDeliverBatch(
   db: Db,
   fcm: FcmClient,
@@ -187,44 +345,69 @@ export async function pushDeliverBatch(
   const alarmOn = hasAlarmCandidate && await alarmEnabled(db);
 
   const planned = events.flatMap(e => {
+    if (e.payload?.skipPush === true) return [];
     if (e.event_type === 'offer.created' && !open.has(e.payload.offerId ?? '')) return [];
-    const copy = pushCopy(e.event_type, e.payload);
+    if (e.payload?.recipientRole === 'ADMIN' || e.payload?.targetApp === 'ADMIN_WEB') return [];
+
+    const copy = pushCopy(e.event_type, e.payload, e.payload?.recipientRole);
     if (!copy) return [];
     const users = [...new Set([...(e.payload.recipientUserIds ?? []), ...(e.payload.recipientUserId ? [e.payload.recipientUserId] : [])])];
     const alarm = alarmOn && ALARM_EVENT_TYPES.has(e.event_type);
     const expiresAt = e.payload.expiresAt ? new Date(e.payload.expiresAt) : null;
+    const recipientRole = e.payload.recipientRole ? String(e.payload.recipientRole) : undefined;
+    const targetApp = e.payload.targetApp ? String(e.payload.targetApp) : targetAppForRole(recipientRole);
 
     return users.map(u => ({
       eventId: e.id,
       user: u,
+      recipientRole,
+      targetApp,
       copy,
       alarm,
       expiresAt,
-      data: {
-        type: e.event_type,
-        requestId: e.payload.requestId ?? '',
-        offerId: e.payload.offerId ?? '',
-        expiresAt: e.payload.expiresAt ?? '',
-        ...(e.payload.proposalId ? { proposalId: e.payload.proposalId } : {}),
-        ...(e.payload.callId ? { callId: e.payload.callId } : {}),
-        ...(e.payload.conversationId ? { conversationId: e.payload.conversationId } : {}),
-      },
+      data: buildFcmDataMap(e, u, recipientRole, targetApp),
     }));
   });
 
   if (!planned.length) return { sent: 0, failed: 0, pruned: 0 };
 
   const uniqueUsers = [...new Set(planned.map(p => p.user))];
-  const tokenRows = (
-    await db.query(
-      'SELECT user_id, token, platform FROM device_tokens WHERE user_id=ANY($1::uuid[])',
-      [uniqueUsers]
-    )
-  ).rows;
+  let tokenRows: any[];
+  try {
+    tokenRows = (
+      await db.query(
+        `SELECT dt.user_id, dt.token, dt.platform, dt.app_type, dt.role AS token_role, u.role AS user_role
+         FROM device_tokens dt
+         JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
+         WHERE dt.user_id = ANY($1::uuid[]) AND dt.active_status = 'ACTIVE'`,
+        [uniqueUsers],
+      )
+    ).rows;
+  } catch {
+    // Compatibility fallback if running against pre-063 schema in older tests
+    tokenRows = (
+      await db.query(
+        `SELECT dt.user_id, dt.token, dt.platform, u.role AS user_role
+         FROM device_tokens dt
+         JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
+         WHERE dt.user_id = ANY($1::uuid[])`,
+        [uniqueUsers],
+      )
+    ).rows;
+  }
 
-  const byUser = new Map<string, { token: string; platform: string }[]>();
+  const byUser = new Map<string, { token: string; platform: string; appType?: string; tokenRole?: string; userRole?: string }[]>();
   for (const r of tokenRows) {
-    byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), { token: r.token, platform: r.platform }]);
+    byUser.set(r.user_id, [
+      ...(byUser.get(r.user_id) ?? []),
+      {
+        token: r.token,
+        platform: r.platform,
+        appType: r.app_type ?? undefined,
+        tokenRole: r.token_role ?? undefined,
+        userRole: r.user_role ?? undefined,
+      },
+    ]);
   }
 
   const ledger = await db.query(`
@@ -242,14 +425,23 @@ export async function pushDeliverBatch(
   let failedCount = 0;
 
   const deliver = async (item: typeof planned[number]) => {
-    const devices = byUser.get(item.user) ?? [];
+    const rawDevices = byUser.get(item.user) ?? [];
+    // Strict role/app isolation: never send a role-specific push to an account/token of a different role or app
+    const devices = rawDevices.filter(dev => {
+      if (item.recipientRole) {
+        if (dev.userRole && dev.userRole !== item.recipientRole) return false;
+        if (dev.tokenRole && dev.tokenRole !== item.recipientRole) return false;
+      }
+      if (item.targetApp && dev.appType && dev.appType !== item.targetApp) return false;
+      return true;
+    });
+
     if (!devices.length) {
       if (recorded.has(deliveryKey(item, null))) return;
-      // Record token missing in delivery ledger
       await db.query(
         `INSERT INTO notification_deliveries(
           event_id, recipient_user_id, channel, status, attempts, last_error_code, last_error_detail, payload, expires_at
-        ) VALUES($1, $2, 'FCM_PUSH', 'FAILED', 1, 'NO_DEVICE_TOKEN', 'User has no registered active device tokens', $3::jsonb, $4)`,
+        ) VALUES($1, $2, 'FCM_PUSH', 'FAILED', 1, 'NO_DEVICE_TOKEN', 'User has no matching active device tokens', $3::jsonb, $4)`,
         [item.eventId, item.user, JSON.stringify(item.data), item.expiresAt]
       );
       failedCount++;
@@ -258,7 +450,6 @@ export async function pushDeliverBatch(
 
     for (const dev of devices) {
       if (recorded.has(deliveryKey(item, dev.token))) continue;
-      // Check if offer expired before attempting push
       if (item.expiresAt && item.expiresAt.getTime() <= Date.now()) {
         await db.query(
           `INSERT INTO notification_deliveries(
@@ -270,12 +461,21 @@ export async function pushDeliverBatch(
         continue;
       }
 
+      const resolvedRole = item.recipientRole ?? dev.userRole ?? item.data.recipientRole ?? '';
+      const eventType = item.data.type ?? '';
+      const copy = pushCopy(eventType, item.data, resolvedRole || undefined) ?? item.copy;
+      const payloadData: Record<string, string> = {
+        ...item.data,
+        recipientRole: resolvedRole,
+        targetApp: targetAppForRole(resolvedRole) ?? item.data.targetApp ?? '',
+      };
+
       const ttl = item.expiresAt ? (item.expiresAt.getTime() - Date.now()) / 1000 : 45;
-      const res = ['offer.closed','offer.expired'].includes(item.data.type)
-        ? await fcm.sendClosureDetailed(dev.token,item.data)
+      const res = ['offer.closed', 'offer.expired'].includes(eventType)
+        ? await fcm.sendClosureDetailed(dev.token, payloadData)
         : item.alarm
-          ? await fcm.sendAlarmDetailed(dev.token, item.data, ttl, item.copy)
-          : await fcm.sendDetailed(dev.token, item.copy, item.data);
+          ? await fcm.sendAlarmDetailed(dev.token, payloadData, ttl, copy)
+          : await fcm.sendDetailed(dev.token, copy, payloadData);
 
       if (res.result === 'ok') {
         sentCount++;
@@ -283,7 +483,7 @@ export async function pushDeliverBatch(
           `INSERT INTO notification_deliveries(
             event_id, recipient_user_id, device_token, channel, status, attempts, sent_at, payload, expires_at
           ) VALUES($1, $2, $3, 'FCM_PUSH', 'SENT', 1, now(), $4::jsonb, $5)`,
-          [item.eventId, item.user, dev.token, JSON.stringify(item.data), item.expiresAt]
+          [item.eventId, item.user, dev.token, JSON.stringify(payloadData), item.expiresAt]
         );
       } else if (res.result === 'unregistered') {
         deadTokens.push(dev.token);
@@ -292,7 +492,7 @@ export async function pushDeliverBatch(
           `INSERT INTO notification_deliveries(
             event_id, recipient_user_id, device_token, channel, status, attempts, last_error_code, last_error_detail, payload, expires_at
           ) VALUES($1, $2, $3, 'FCM_PUSH', 'UNREGISTERED', 1, 'UNREGISTERED', $4, $5::jsonb, $6)`,
-          [item.eventId, item.user, dev.token, res.errorDetail ?? 'Token unregistered by FCM', JSON.stringify(item.data), item.expiresAt]
+          [item.eventId, item.user, dev.token, res.errorDetail ?? 'Token unregistered by FCM', JSON.stringify(payloadData), item.expiresAt]
         );
       } else {
         failedCount++;
@@ -300,13 +500,12 @@ export async function pushDeliverBatch(
           `INSERT INTO notification_deliveries(
             event_id, recipient_user_id, device_token, channel, status, attempts, next_attempt_at, last_error_code, last_error_detail, payload, expires_at
           ) VALUES($1, $2, $3, 'FCM_PUSH', 'FAILED', 1, now() + interval '5 seconds', 'FCM_ERROR', $4, $5::jsonb, $6)`,
-          [item.eventId, item.user, dev.token, res.errorDetail ?? 'Delivery failed', JSON.stringify(item.data), item.expiresAt]
+          [item.eventId, item.user, dev.token, res.errorDetail ?? 'Delivery failed', JSON.stringify(payloadData), item.expiresAt]
         );
       }
     }
   };
 
-  // Keep notifications for a wave from waiting on one network round trip per nurse.
   const concurrency = 10;
   for (let offset = 0; offset < planned.length; offset += concurrency) {
     const results = await Promise.allSettled(planned.slice(offset, offset + concurrency).map(deliver));
@@ -353,16 +552,25 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
       UPDATE notification_deliveries SET ${changes},retry_lease_token=NULL,retry_lease_until=NULL
       WHERE id=$1 AND retry_lease_token=$2
     `,[row.id,lease,...values]);
-    const device = row.device_token && (await db.query(
-      'SELECT 1 FROM device_tokens WHERE token=$1 AND user_id=$2',[row.device_token,row.recipient_user_id],
-    )).rowCount;
-    if (!device) {
+    let deviceCount: number | null = 0;
+    try {
+      deviceCount = (await db.query(
+        `SELECT 1 FROM device_tokens WHERE token=$1 AND user_id=$2 AND active_status='ACTIVE'`,
+        [row.device_token, row.recipient_user_id],
+      )).rowCount;
+    } catch {
+      deviceCount = (await db.query(
+        'SELECT 1 FROM device_tokens WHERE token=$1 AND user_id=$2',
+        [row.device_token, row.recipient_user_id],
+      )).rowCount;
+    }
+    if (!row.device_token || !deviceCount) {
       await finish("status='ABANDONED'");
       continue;
     }
 
     const payload = typeof row.payload === 'object' ? row.payload : {};
-    const copy = pushCopy(payload.type, payload);
+    const copy = pushCopy(payload.type, payload, payload.recipientRole);
     const isOffer = payload.type === 'offer.created';
     if (!copy || (isOffer && !open.has(payload.offerId))) {
       await finish("status='ABANDONED'");
@@ -399,7 +607,6 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
   return retriedCount;
 }
 
-// Kept for backward compatibility
 export async function pushBatch(db: Db, fcm: Pick<FcmClient, 'send' | 'sendAlarm'>, events: OutboxEvent[]): Promise<{ sent: number; pruned: number }> {
   if (fcm instanceof FcmClient) {
     const res = await pushDeliverBatch(db, fcm, events);
@@ -413,7 +620,7 @@ async function alarmEnabled(db: Db): Promise<boolean> {
 }
 
 export function loadServiceAccount(raw: string | undefined): ServiceAccount | undefined {
-  if (!raw?.trim()) return undefined; // empty placeholder file = push disabled
+  if (!raw?.trim()) return undefined;
   try {
     const sa = JSON.parse(raw) as ServiceAccount;
     if (!sa.project_id || !sa.client_email || !sa.private_key) {

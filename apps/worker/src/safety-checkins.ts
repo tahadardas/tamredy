@@ -2,7 +2,11 @@ import type pg from 'pg';
 
 async function nurseEvent(client: pg.PoolClient, session: string, recipient: string, type: string) {
   await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-    VALUES($3,$1,jsonb_build_object('sessionId',$1::uuid,'recipientUserId',$2::uuid))`, [session, recipient, type]);
+    VALUES($3,$1,jsonb_build_object(
+      'eventType',$3::text,'sessionId',$1::uuid,'recipientUserId',$2::uuid,
+      'recipientRole','NURSE','targetApp','NURSE_APP','priority','CRITICAL',
+      'deepLink','tamreedy://nurse/guardian'
+    ))`, [session, recipient, type]);
 }
 
 export async function runSafetyCheckin(pool: pg.Pool): Promise<boolean> {

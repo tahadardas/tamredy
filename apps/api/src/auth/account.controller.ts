@@ -32,6 +32,7 @@ export class AccountController {
     await this.db.transaction(async c => {
       await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE id=$1 AND user_id=$2', [id, r.user!.id]);
       await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE device_session_id=$1 AND user_id=$2', [id, r.user!.id]);
+      await c.query(`UPDATE device_tokens SET active_status='REVOKED', updated_at=now() WHERE session_id=$1 AND user_id=$2`, [id, r.user!.id]).catch(() => {});
     });
     return { ok: true };
   }

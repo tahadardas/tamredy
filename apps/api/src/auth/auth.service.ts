@@ -228,11 +228,12 @@ export class AuthService {
   async logout(refreshToken: string) {
     const h = hashToken(refreshToken ?? '');
     await this.db.transaction(async c => {
-      const r = (await c.query('SELECT family_id, device_session_id FROM refresh_tokens WHERE token_hash=$1', [h])).rows[0];
+      const r = (await c.query('SELECT user_id, family_id, device_session_id FROM refresh_tokens WHERE token_hash=$1', [h])).rows[0];
       if (r) {
         await c.query('UPDATE refresh_tokens SET revoked_at=coalesce(revoked_at,now()) WHERE family_id=$1', [r.family_id]);
         if (r.device_session_id) {
           await c.query('UPDATE device_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE id=$1', [r.device_session_id]).catch(() => {});
+          await c.query(`UPDATE device_tokens SET active_status='REVOKED', updated_at=now() WHERE session_id=$1`, [r.device_session_id]).catch(() => {});
         }
       }
     });

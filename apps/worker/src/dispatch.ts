@@ -132,11 +132,28 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
       await c.query(`
         INSERT INTO outbox_events(event_type, aggregate_id, payload)
         VALUES('request.unfulfilled', $1, $2::jsonb)
-      `, [requestId, JSON.stringify({ requestId, recipientUserId: request.requester_user_id })]);
+      `, [requestId, JSON.stringify({
+        eventType: 'request.unfulfilled',
+        requestId,
+        recipientUserId: request.requester_user_id,
+        recipientRole: 'PATIENT',
+        targetApp: 'PATIENT_APP',
+        priority: 'HIGH',
+        deepLink: `tamreedy://patient/requests/${requestId}`,
+      })]);
       await c.query(`
         INSERT INTO outbox_events(event_type, aggregate_id, payload)
         VALUES('request.instant.search.expired', $1, $2::jsonb)
-      `, [requestId, JSON.stringify({ requestId, recipientUserId: request.requester_user_id })]);
+      `, [requestId, JSON.stringify({
+        eventType: 'request.instant.search.expired',
+        requestId,
+        recipientUserId: request.requester_user_id,
+        recipientRole: 'PATIENT',
+        targetApp: 'PATIENT_APP',
+        priority: 'HIGH',
+        skipPush: true,
+        deepLink: `tamreedy://patient/requests/${requestId}`,
+      })]);
       await c.query('COMMIT');
       return true;
     }
@@ -190,7 +207,18 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
       ), emitted AS (
         INSERT INTO outbox_events(event_type, aggregate_id, payload)
         SELECT 'offer.created', $1,
-          jsonb_build_object('requestId', $1, 'offerId', i.id, 'recipientUserId', n.user_id, 'expiresAt', i.expires_at)
+          jsonb_build_object(
+            'eventType', 'offer.created',
+            'requestId', $1,
+            'offerId', i.id,
+            'recipientUserId', n.user_id,
+            'recipientRole', 'NURSE',
+            'targetApp', 'NURSE_APP',
+            'expiresAt', i.expires_at,
+            'priority', 'CRITICAL',
+            'deepLink', 'tamreedy://nurse/offers/' || i.id::text,
+            'createdAt', statement_timestamp()
+          )
         FROM inserted i JOIN nurses n ON n.id = i.nurse_id
         RETURNING id
       ) SELECT count(*)::integer AS emitted_count FROM emitted

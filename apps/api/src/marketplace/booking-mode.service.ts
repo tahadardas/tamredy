@@ -4,6 +4,7 @@ import { ExtendOpenRequestDto, SwitchBookingModeDto } from './marketplace.dto.js
 import { saveSchedule, validateAppointment, verifyScheduledSafety } from '../scheduling/scheduling.js';
 import type { PoolClient } from 'pg';
 import { transitionRequest } from '../requests/request-lifecycle.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class BookingModeService {
@@ -113,7 +114,20 @@ export class BookingModeService {
         await client.query(
           `INSERT INTO outbox_events(event_type, aggregate_id, payload)
            VALUES('marketplace.request.published', $1, $2::jsonb)`,
-          [requestId, JSON.stringify({ requestId, recipientUserId: patientUserId, openExpiresAt })],
+          [
+            requestId,
+            JSON.stringify(buildNotificationPayload({
+              eventType: 'marketplace.request.published',
+              recipientUserId: patientUserId,
+              recipientRole: 'PATIENT',
+              targetApp: 'PATIENT_APP',
+              requestId,
+              entityVersion: Number(request.version) + 1,
+              expiresAt: openExpiresAt.toISOString(),
+              skipPush: true,
+              extra: { openExpiresAt },
+            })),
+          ],
         );
 
         return {
@@ -288,7 +302,17 @@ export class BookingModeService {
     await client.query(
       `INSERT INTO outbox_events(event_type, aggregate_id, payload)
        VALUES('request.created', $1, $2::jsonb)`,
-      [requestId, JSON.stringify({ recipientUserId: patientUserId, requestId })],
+      [
+        requestId,
+        JSON.stringify(buildNotificationPayload({
+          eventType: 'request.created',
+          recipientUserId: patientUserId,
+          recipientRole: 'PATIENT',
+          targetApp: 'PATIENT_APP',
+          requestId,
+          entityVersion: Number(request.version) + 1,
+        })),
+      ],
     );
 
     return {
@@ -348,7 +372,19 @@ export class BookingModeService {
       await client.query(
         `INSERT INTO outbox_events(event_type, aggregate_id, payload)
          VALUES('marketplace.request.updated', $1, $2::jsonb)`,
-        [requestId, JSON.stringify({ requestId, openExpiresAt: newExpiry, extendedMinutes: dto.additionalMinutes })],
+        [
+          requestId,
+          JSON.stringify(buildNotificationPayload({
+            eventType: 'marketplace.request.updated',
+            recipientUserId: patientUserId,
+            recipientRole: 'PATIENT',
+            targetApp: 'PATIENT_APP',
+            requestId,
+            expiresAt: newExpiry.toISOString(),
+            skipPush: true,
+            extra: { openExpiresAt: newExpiry, extendedMinutes: dto.additionalMinutes },
+          })),
+        ],
       );
 
       return {

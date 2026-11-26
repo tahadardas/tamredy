@@ -1,11 +1,21 @@
-import { Body, Controller, Get, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { IsBoolean, IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { DbService } from '../db/db.service.js';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { ReferenceCacheService } from '../cache/reference-cache.service.js';
 import { FeesService } from '../pricing/fees.service.js';
 import { PromoService, toRule } from '../pricing/promo.service.js';
 import { estimateV2, ruleFromRow } from '../pricing/pricing.js';
-import { invalid } from '../common/errors.js';
+import { conflict, invalid, missing } from '../common/errors.js';
+
+class CreateBeneficiaryDto {
+  @IsString() @MinLength(2) @MaxLength(80) displayName!: string;
+  @IsOptional() @IsIn(['SELF', 'PARENT', 'CHILD', 'SPOUSE', 'OTHER']) relationship?: string;
+  @IsOptional() @IsIn(['MALE', 'FEMALE']) gender?: 'MALE' | 'FEMALE';
+  @IsOptional() @IsDateString() dateOfBirth?: string;
+  @IsOptional() @IsString() @MaxLength(20) emergencyContactPhone?: string;
+  @IsBoolean() consentConfirmed!: boolean;
+}
 
 interface EstimateItemDto {
   serviceId: string;
@@ -171,8 +181,50 @@ export class CatalogController {
   async beneficiaries(@Request() r: AuthRequest) {
     requireRole(r.user!, 'PATIENT');
     return (await this.db.query(
-      `SELECT id, display_name FROM beneficiaries WHERE owner_user_id = $1 AND consent_status = 'GRANTED' ORDER BY created_at DESC`,
+      `SELECT id, display_name, relationship, gender, date_of_birth, emergency_contact_phone, created_at
+       FROM beneficiaries WHERE owner_user_id = $1 AND consent_status = 'GRANTED' ORDER BY created_at DESC`,
       [r.user!.id],
     )).rows;
+  }
+
+  @Post('beneficiaries')
+  @UseGuards(AuthGuard)
+  @HttpCode(201)
+  async createBeneficiary(@Request() r: AuthRequest, @Body() dto: CreateBeneficiaryDto) {
+    requireRole(r.user!, 'PATIENT');
+    if (!dto.consentConfirmed) invalid('BENEFICIARY_CONSENT_REQUIRED');
+    const existingCount = (await this.db.query(
+      `SELECT count(*)::int AS cnt FROM beneficiaries WHERE owner_user_id = $1 AND consent_status = 'GRANTED'`,
+      [r.user!.id],
+    )).rows[0]?.cnt ?? 0;
+    if (existingCount >= 12) conflict('TOO_MANY_BENEFICIARIES');
+    const row = (await this.db.query(
+      `INSERT INTO beneficiaries(owner_user_id, display_name, consent_status, relationship, gender, date_of_birth, emergency_contact_phone)
+       VALUES($1, $2, 'GRANTED', $3, $4, $5, $6)
+       RETURNING id, display_name, relationship, gender, date_of_birth, emergency_contact_phone, created_at`,
+      [
+        r.user!.id,
+        dto.displayName.trim(),
+        dto.relationship ?? 'OTHER',
+        dto.gender ?? null,
+        dto.dateOfBirth ?? null,
+        dto.emergencyContactPhone?.trim() || null,
+      ],
+    )).rows[0];
+    return row;
+  }
+
+  @Delete('beneficiaries/:id')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async removeBeneficiary(@Request() r: AuthRequest, @Param('id', ParseUUIDPipe) id: string) {
+    requireRole(r.user!, 'PATIENT');
+    const res = await this.db.query(
+      `UPDATE beneficiaries SET consent_status = 'REVOKED', updated_at = now()
+       WHERE id = $1 AND owner_user_id = $2 AND consent_status = 'GRANTED' RETURNING id`,
+      [id, r.user!.id],
+    );
+    if (!res.rowCount) missing();
+    return { removed: true, id };
   }
 }

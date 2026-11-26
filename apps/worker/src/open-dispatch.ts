@@ -20,7 +20,8 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
       )
       INSERT INTO outbox_events(event_type,aggregate_id,payload)
       SELECT 'offer.expired',$1,jsonb_build_object(
-        'requestId',$1::uuid,'offerId',e.id,'recipientUserId',n.user_id)
+        'eventType','offer.expired','requestId',$1::uuid,'offerId',e.id,
+        'recipientUserId',n.user_id,'recipientRole','NURSE','targetApp','NURSE_APP','priority','HIGH')
       FROM expired e JOIN nurses n ON n.id=e.nurse_id
     `,[requestId]);
     await client.query('DELETE FROM dispatch_jobs WHERE request_id=$1', [requestId]);
@@ -29,7 +30,10 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
     `, [requestId]);
     await client.query(`
       INSERT INTO outbox_events(event_type,aggregate_id,payload)
-      VALUES('request.unfulfilled',$1,jsonb_build_object('requestId',$1::uuid,'recipientUserId',$2::uuid))
+      VALUES('request.unfulfilled',$1,jsonb_build_object(
+        'eventType','request.unfulfilled','requestId',$1::uuid,'recipientUserId',$2::uuid,
+        'recipientRole','PATIENT','targetApp','PATIENT_APP','priority','HIGH',
+        'deepLink','tamreedy://patient/requests/' || $1::text))
     `, [requestId, closed.rows[0].requester_user_id]);
     return;
   }
@@ -83,7 +87,9 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
     )
     INSERT INTO outbox_events(event_type,aggregate_id,payload)
     SELECT 'offer.created',$1,jsonb_build_object(
-      'requestId',$1::uuid,'offerId',i.id,'recipientUserId',n.user_id,'expiresAt',i.expires_at)
+      'eventType','offer.created','requestId',$1::uuid,'offerId',i.id,'recipientUserId',n.user_id,
+      'recipientRole','NURSE','targetApp','NURSE_APP','expiresAt',i.expires_at,
+      'priority','CRITICAL','deepLink','tamreedy://nurse/offers/' || i.id::text,'createdAt',statement_timestamp())
     FROM inserted i JOIN nurses n ON n.id=i.nurse_id
   `, [requestId]);
 

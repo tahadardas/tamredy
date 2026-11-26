@@ -8,6 +8,7 @@ import { NurseEligibilityEngine } from './nurse-eligibility.engine.js';
 import { transitionRequest } from '../requests/request-lifecycle.js';
 import { AssignmentOrchestrator } from './assignment.orchestrator.js';
 import { BillingService } from '../pricing/billing.service.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class DispatchService {
@@ -85,7 +86,20 @@ export class DispatchService {
       await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type,payload)
         VALUES($1,$2,'request.assigned',$3::jsonb)`,[requestId,userId,JSON.stringify({assignmentId,nurseId})]);
       await c.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-        VALUES('request.assigned',$1,$2::jsonb)`,[requestId,JSON.stringify({requestId,assignmentId,nurseId,recipientUserId:request.requester_user_id})]);
+        VALUES('request.assigned',$1,$2::jsonb)`,[
+        requestId,
+        JSON.stringify(buildNotificationPayload({
+          eventType: 'request.assigned',
+          recipientUserId: request.requester_user_id,
+          recipientRole: 'PATIENT',
+          targetApp: 'PATIENT_APP',
+          requestId,
+          assignmentId,
+          offerId,
+          entityVersion: Number(request.version) + 1,
+          extra: { nurseId },
+        })),
+      ]);
       return {assignmentId,requestId,status:'ASSIGNED',replayed:false};
     });
   }
@@ -257,7 +271,17 @@ export class DispatchService {
       }
       await c.query(`INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)`,[requestId,userId,`visit.${action}`]);
       await c.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES($1,$2,$3::jsonb)`,[
-        `visit.${action}`,requestId,JSON.stringify({requestId,recipientUserId:request.requester_user_id})
+        `visit.${action}`,
+        requestId,
+        JSON.stringify(buildNotificationPayload({
+          eventType: `visit.${action}`,
+          recipientUserId: request.requester_user_id,
+          recipientRole: 'PATIENT',
+          targetApp: 'PATIENT_APP',
+          requestId,
+          assignmentId,
+          entityVersion: Number(request.version) + 1,
+        })),
       ]);
       // (payload carries ids only; the bill is read over REST)
       return {requestId,assignmentId,status:target.to,replayed:false};

@@ -4,6 +4,7 @@ import { DocStore } from '../admin/doc-store.js';
 import { conflict, missing } from '../common/errors.js';
 import { ClinicalApprovalRepository } from './clinical-approval.repository.js';
 import type { ClinicalDecisionDto, ClinicalEvidenceDto } from './clinical-approval.dto.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class ClinicalApprovalService {
@@ -95,15 +96,35 @@ export class ClinicalApprovalService {
             latest_acceptable_arrival_at=statement_timestamp()+($2::integer+60)*interval '1 minute'
             WHERE id=$1`, [requestId,durationMinutes]);
           await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-            VALUES('marketplace.request.published',$1,jsonb_build_object('requestId',$1::uuid,'recipientUserId',$2::uuid))`,
-          [requestId,review.requester_user_id]);
+            VALUES('marketplace.request.published',$1,$2::jsonb)`,
+          [
+            requestId,
+            JSON.stringify(buildNotificationPayload({
+              eventType: 'marketplace.request.published',
+              recipientUserId: review.requester_user_id,
+              recipientRole: 'PATIENT',
+              targetApp: 'PATIENT_APP',
+              requestId,
+              skipPush: true,
+            })),
+          ]);
         } else if (review.request_status === 'OFFERING') {
           await client.query(`INSERT INTO dispatch_jobs(request_id) VALUES($1) ON CONFLICT(request_id) DO NOTHING`, [requestId]);
         }
       }
       await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-        VALUES('request.clinical_review_changed',$1,jsonb_build_object('requestId',$1::uuid,'recipientUserId',$2::uuid))`,
-      [requestId,review.requester_user_id]);
+        VALUES('request.clinical_review_changed',$1,$2::jsonb)`,
+      [
+        requestId,
+        JSON.stringify(buildNotificationPayload({
+          eventType: 'request.clinical_review_changed',
+          recipientUserId: review.requester_user_id,
+          recipientRole: 'PATIENT',
+          targetApp: 'PATIENT_APP',
+          requestId,
+          extra: { decision: status },
+        })),
+      ]);
       return {requestId,status};
     });
   }

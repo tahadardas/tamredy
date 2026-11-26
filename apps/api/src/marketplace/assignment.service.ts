@@ -3,6 +3,7 @@ import { DbService } from '../db/db.service.js';
 import { AcceptProposalDto } from './marketplace.dto.js';
 import { MarketplaceEligibilityService } from './marketplace-eligibility.service.js';
 import { AssignmentOrchestrator } from '../dispatch/assignment.orchestrator.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class AssignmentService {
@@ -182,29 +183,46 @@ export class AssignmentService {
          VALUES('marketplace.proposal.accepted', $1, $2::jsonb)`,
         [
           proposal.id,
-          JSON.stringify({
-            proposalId: proposal.id,
-            requestId,
-            nurseUserId: nurse.user_id,
+          JSON.stringify(buildNotificationPayload({
+            eventType: 'marketplace.proposal.accepted',
             recipientUserId: nurse.user_id,
-            proposedArrivalAt: proposal.proposed_arrival_at,
-          }),
+            recipientRole: 'NURSE',
+            targetApp: 'NURSE_APP',
+            requestId,
+            assignmentId: assigned.assignmentId,
+            proposalId: proposal.id,
+            entityVersion: Number(request.version) + 1,
+            extra: {
+              nurseUserId: nurse.user_id,
+              proposedArrivalAt: proposal.proposed_arrival_at,
+            },
+          })),
         ],
       );
 
-      // B: Standard request.assigned event for dispatch tracking & Guardian
+      // B: Patient assignment confirmation & tracking event
       await client.query(
         `INSERT INTO outbox_events(event_type, aggregate_id, payload)
          VALUES('request.assigned', $1, $2::jsonb)`,
         [
           requestId,
-          JSON.stringify({
+          JSON.stringify(buildNotificationPayload({
+            eventType: 'request.assigned',
+            recipientUserId: patientUserId,
+            recipientRole: 'PATIENT',
+            targetApp: 'PATIENT_APP',
             requestId,
-            nurseId: nurse.id,
-            nurseUserId: nurse.user_id,
-            patientUserId,
-            expectedArrivalAt: proposal.proposed_arrival_at,
-          }),
+            assignmentId: assigned.assignmentId,
+            proposalId: proposal.id,
+            entityVersion: Number(request.version) + 1,
+            skipPush: true,
+            extra: {
+              nurseId: nurse.id,
+              nurseUserId: nurse.user_id,
+              patientUserId,
+              expectedArrivalAt: proposal.proposed_arrival_at,
+            },
+          })),
         ],
       );
 

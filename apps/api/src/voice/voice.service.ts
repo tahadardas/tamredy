@@ -1,9 +1,10 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { LiveGateway } from '../realtime/live.gateway.js';
 import { TrustService } from '../trust/trust.service.js';
 import { OperationalMetricsService } from '../observability/operational-metrics.service.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 const ACTIVE_CALL_STATES = ['INITIATED', 'RINGING', 'ACCEPTED', 'CONNECTING', 'CONNECTED', 'RECONNECTING'] as const;
 const TERMINAL_CALL_STATES = ['ENDED', 'REJECTED', 'MISSED', 'FAILED', 'CANCELLED'] as const;
@@ -75,7 +76,7 @@ export class VoiceService {
       throw new ConflictException({ code: 'CALL_BLOCKED' });
     }
 
-    const session = await this.db.transaction(async client => {
+    const sessionResult = await this.db.transaction(async client => {
       for (const participant of [callerUserId, receiverUserId].sort()) {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [participant]);
       }
@@ -113,15 +114,31 @@ export class VoiceService {
          VALUES($1,$2,'RINGING','{}'::jsonb)`,
         [row.id, callerUserId],
       );
+      const callEventId = randomUUID();
+      const receiverRole = isPatient ? 'NURSE' : 'PATIENT';
+      const receiverTargetApp = isPatient ? 'NURSE_APP' : 'PATIENT_APP';
+      const callPayload = buildNotificationPayload({
+        eventId: callEventId,
+        eventType: 'call.incoming',
+        recipientUserId: receiverUserId,
+        recipientRole: receiverRole,
+        targetApp: receiverTargetApp,
+        requestId,
+        callId: row.id,
+        expiresAt: updated.rows[0].ring_expires_at ? new Date(updated.rows[0].ring_expires_at).toISOString() : null,
+        extra: {
+          callerRole: isPatient ? 'PATIENT' : 'NURSE',
+          ringExpiresAt: updated.rows[0].ring_expires_at,
+        },
+      });
       await client.query(
-        `INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('call.incoming',$1,$2::jsonb)`,
-        [row.id, JSON.stringify({ recipientUserId: receiverUserId, callId: row.id, requestId })],
+        `INSERT INTO outbox_events(event_type,aggregate_id,payload,realtime_published_at) VALUES('call.incoming',$1,$2::jsonb,now())`,
+        [row.id, JSON.stringify(callPayload)],
       );
-      return updated.rows[0];
+      return { session: updated.rows[0], callPayload };
     });
-    await this.live.sendToUser(receiverUserId, 'call.incoming', {
-      callId: session.id, requestId, callerRole: isPatient ? 'PATIENT' : 'NURSE', ringExpiresAt: session.ring_expires_at,
-    });
+    const session = sessionResult.session;
+    await this.live.sendToUser(receiverUserId, 'call.incoming', sessionResult.callPayload);
     this.metrics.increment('voice_calls_started_total');
     return session;
   }

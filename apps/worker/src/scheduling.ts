@@ -46,7 +46,15 @@ export async function releaseScheduledVisit(pool: pg.Pool): Promise<boolean> {
       VALUES($1,$2)`, [visit.id, event]);
     await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
       VALUES($3,$1,$2::jsonb)`,
-    [visit.id, JSON.stringify({ recipientUserId: visit.requester_user_id, requestId: visit.id }), event]);
+    [visit.id, JSON.stringify({
+      eventType: event,
+      recipientUserId: visit.requester_user_id,
+      recipientRole: 'PATIENT',
+      targetApp: 'PATIENT_APP',
+      requestId: visit.id,
+      priority: 'HIGH',
+      deepLink: `tamreedy://patient/requests/${visit.id}`,
+    }), event]);
     await client.query('COMMIT');
     return true;
   } catch (error) {

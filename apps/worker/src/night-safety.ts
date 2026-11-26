@@ -13,7 +13,10 @@ export async function closeNightIneligibleOffers(pool: pg.Pool): Promise<boolean
     WHERE o.id=c.id RETURNING o.id,o.request_id,o.nurse_id,c.reason
   )
   INSERT INTO outbox_events(event_type,aggregate_id,payload)
-  SELECT 'offer.closed',c.request_id,jsonb_build_object('offerId',c.id,'requestId',c.request_id,'recipientUserId',n.user_id,'reason',c.reason)
+  SELECT 'offer.closed',c.request_id,jsonb_build_object(
+    'eventType','offer.closed','offerId',c.id,'requestId',c.request_id,
+    'recipientUserId',n.user_id,'recipientRole','NURSE','targetApp','NURSE_APP',
+    'reason',c.reason,'priority','HIGH')
   FROM closed c JOIN nurses n ON n.id=c.nurse_id`);
   return Boolean(result.rowCount);
 }

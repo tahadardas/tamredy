@@ -31,16 +31,17 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     await this.subscriber.subscribe('tamreedy:events');
     this.subscriber.on('message',(_channel,data)=>{
       try {
-        const evt=JSON.parse(data) as {eventId?:string;type:string;payload:{recipientUserId?:string;recipientUserIds?:string[];requestId?:string;namespace?:string}};
+        const evt=JSON.parse(data) as {eventId?:string;type:string;payload:{eventId?:string;recipientUserId?:string;recipientUserIds?:string[];recipientRole?:string;requestId?:string;namespace?:string}};
         // Retryable outbox invalidation is received on all API replicas.
         if(evt.type==='cache.invalidate' && evt.payload.namespace==='services:public') {
           // Catalogue/prices changed: every connected app reloads its service list (REST stays the source of truth).
           void this.cache.invalidate('services:public');this.io?.emit('catalog.changed',{});return;
         }
         const users=[...(evt.payload.recipientUserIds??[]),...(evt.payload.recipientUserId?[evt.payload.recipientUserId]:[])];
+        const resolvedEventId = evt.payload.eventId ?? evt.eventId;
         // Never rely on a client-selected room or broadcast private patient data publicly.
         for (const userId of new Set(users)) {
-          void this.deliverPrivateEvent(userId,evt.type,{...evt.payload,eventId:evt.eventId});
+          void this.deliverPrivateEvent(userId,evt.type,{...evt.payload, ...(resolvedEventId ? { eventId: resolvedEventId } : {})});
         }
       }catch { /* malformed worker message ignored and logged upstream */ }
     });
@@ -71,10 +72,13 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     return {role:result.rows[0].role};
   }
   async sendToUser(userId: string, type: string, payload: unknown) {
+    const obj = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+    const eventId = typeof obj.eventId === 'string' && obj.eventId ? obj.eventId : randomUUID();
+    const enriched = { ...obj, eventId, recipientUserId: userId };
     if (this.publisher) {
       try {
         await this.publisher.publish('tamreedy:events',JSON.stringify({
-          eventId:randomUUID(),type,payload:{...(payload as Record<string,unknown>),recipientUserId:userId},
+          eventId, type, payload: enriched,
         }));
         return;
       } catch {
@@ -82,7 +86,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         // events for clients connected to another replica.
       }
     }
-    await this.deliverPrivateEvent(userId,type,payload);
+    await this.deliverPrivateEvent(userId,type,enriched);
   }
 
   @SubscribeMessage('location.update')
@@ -121,9 +125,15 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     const users = this.io?.sockets;
     const recipients = this.io?.adapter.rooms.get(`user:${userId}`);
     if (!users || !recipients) return;
+    const targetRole = (payload && typeof payload === 'object' && 'recipientRole' in payload)
+      ? (payload as { recipientRole?: unknown }).recipientRole
+      : undefined;
     for (const socketId of [...recipients]) {
       const socket = users.get(socketId);
       if (!socket) continue;
+      if (typeof targetRole === 'string' && socket.data.role && socket.data.role !== targetRole) {
+        continue;
+      }
       try {
         await this.assertSocketAccess(socket.data.auth);
         socket.emit(type, payload);

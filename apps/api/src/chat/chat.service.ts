@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { LiveGateway } from '../realtime/live.gateway.js';
 import { inspectMessageForContactInfo } from './phone-shield.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 export interface SendChatMessageDto {
   clientMessageId?: string;
@@ -204,33 +206,43 @@ export class ChatService {
 
       const message = res.rows[0];
 
-      // Find other recipients in conversation
+      // Find other recipients in conversation (with role for strict routing)
       const otherMembers = await client.query(
-        `SELECT user_id FROM conversation_members WHERE conversation_id = $1 AND user_id <> $2`,
+        `SELECT cm.user_id, u.role FROM conversation_members cm JOIN users u ON u.id = cm.user_id
+         WHERE cm.conversation_id = $1 AND cm.user_id <> $2`,
         [conversationId, userId],
       );
 
-      // Realtime dispatch
+      // Realtime dispatch + Outbox push using the exact same eventId for deduplication
       for (const recipient of otherMembers.rows) {
+        const recipientRole = recipient.role === 'NURSE' ? 'NURSE' : 'PATIENT';
+        const targetApp = recipientRole === 'NURSE' ? 'NURSE_APP' : 'PATIENT_APP';
+        const sharedEventId = randomUUID();
+        const payload = buildNotificationPayload({
+          eventId: sharedEventId,
+          eventType: 'chat.message',
+          recipientUserId: recipient.user_id,
+          recipientRole,
+          targetApp,
+          conversationId,
+          extra: {
+            messageId: message.id,
+            senderUserId: userId,
+            snippet: content.slice(0, 100),
+          },
+        });
+
         await this.live.sendToUser(recipient.user_id, 'chat.message', {
+          ...payload,
           conversationId,
           message,
         });
 
-        // Outbox event for push notification
+        // Outbox event for push notification (realtime already sent with matching eventId)
         await client.query(
-          `INSERT INTO outbox_events(event_type, aggregate_id, payload)
-           VALUES('chat.message', $1, $2::jsonb)`,
-          [
-            conversationId,
-            JSON.stringify({
-              recipientUserId: recipient.user_id,
-              conversationId,
-              messageId: message.id,
-              senderUserId: userId,
-              snippet: content.slice(0, 100),
-            }),
-          ],
+          `INSERT INTO outbox_events(event_type, aggregate_id, payload, realtime_published_at)
+           VALUES('chat.message', $1, $2::jsonb, now())`,
+          [conversationId, JSON.stringify(payload)],
         );
       }
 

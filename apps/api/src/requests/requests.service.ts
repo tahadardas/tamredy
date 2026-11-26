@@ -12,6 +12,7 @@ import { FeesService } from '../pricing/fees.service.js';
 import { AutoDiscountService } from '../pricing/auto-discounts.service.js';
 
 import { saveSchedule, validateAppointment, verifyScheduledSafety } from '../scheduling/scheduling.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class RequestsService {
@@ -197,7 +198,20 @@ export class RequestsService {
         await client.query(
           `INSERT INTO outbox_events(event_type, aggregate_id, payload)
            VALUES('marketplace.request.published', $1, $2::jsonb)`,
-          [request.id, JSON.stringify({ requestId: request.id, recipientUserId: userId, openExpiresAt })],
+          [
+            request.id,
+            JSON.stringify(buildNotificationPayload({
+              eventType: 'marketplace.request.published',
+              recipientUserId: userId,
+              recipientRole: 'PATIENT',
+              targetApp: 'PATIENT_APP',
+              requestId: request.id,
+              entityVersion: request.version,
+              expiresAt: openExpiresAt?.toISOString() ?? null,
+              skipPush: true,
+              extra: { openExpiresAt },
+            })),
+          ],
         );
         await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'marketplace.request.published']);
       } else if (!needsClinicalApproval) {
@@ -217,7 +231,17 @@ export class RequestsService {
         if (appointment) await saveSchedule(client, request.id, appointment);
         else await client.query('INSERT INTO dispatch_jobs(request_id) VALUES($1)',[request.id]);
         await client.query('INSERT INTO request_events(request_id,actor_user_id,event_type) VALUES($1,$2,$3)',[request.id,userId,'request.created']);
-        await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[request.id,JSON.stringify({recipientUserId:userId,requestId:request.id})]);
+        await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('request.created',$1,$2::jsonb)`,[
+          request.id,
+          JSON.stringify(buildNotificationPayload({
+            eventType: 'request.created',
+            recipientUserId: userId,
+            recipientRole: 'PATIENT',
+            targetApp: 'PATIENT_APP',
+            requestId: request.id,
+            entityVersion: request.version,
+          })),
+        ]);
       }
       return {...request,clinicalApprovalStatus:needsClinicalApproval?'PENDING':'NOT_REQUIRED',
         ...(appointment ? { scheduledAt: appointment.toISOString() } : {}),
@@ -225,10 +249,23 @@ export class RequestsService {
     });
   }
   async findOne(userId: string, requestId: string) {
-    const found = await this.db.query(`SELECT id,requester_user_id,beneficiary_id,service_id,status,version,price_amount,currency_code,created_at,
-       booking_mode, marketplace_status, published_at, open_expires_at, latest_acceptable_arrival_at,clinical_approval_status,
-       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = care_requests.id AND mp.status = 'PENDING') AS active_proposals_count
-       FROM care_requests WHERE id=$1 AND requester_user_id=$2`,[requestId,userId]);
+    const found = await this.db.query(`SELECT cr.id,cr.requester_user_id,cr.beneficiary_id,cr.service_id,cr.status,cr.version,cr.price_amount,cr.currency_code,cr.created_at,
+       cr.booking_mode, cr.marketplace_status, cr.published_at, cr.open_expires_at, cr.latest_acceptable_arrival_at,cr.clinical_approval_status,
+       cr.address_text, cr.payment_status, cr.amount_due, cr.tip_amount, cr.search_expires_at,
+       s.title_ar AS service_title, b.display_name AS beneficiary_name,
+       sv.appointment_at AS scheduled_at,
+       a.id AS assignment_id, a.nurse_id AS assigned_nurse_id,
+       CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE','COMPLETED') THEN u.display_name END AS nurse_name,
+       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING' AND mp.expires_at > now()) AS active_proposals_count
+       FROM care_requests cr
+       JOIN services s ON s.id = cr.service_id
+       JOIN beneficiaries b ON b.id = cr.beneficiary_id
+       LEFT JOIN scheduled_visits sv ON sv.request_id = cr.id
+       LEFT JOIN request_assignments a ON a.request_id = cr.id AND a.status IN ('RESERVED','ACTIVE','RELEASED')
+       LEFT JOIN nurses n ON n.id = a.nurse_id
+       LEFT JOIN users u ON u.id = n.user_id
+       WHERE cr.id=$1 AND cr.requester_user_id=$2
+       ORDER BY a.accepted_at DESC NULLS LAST LIMIT 1`,[requestId,userId]);
     if(!found.rowCount) missing();
     const items = await this.db.query(`
       SELECT cri.id, cri.service_id, cri.quantity, cri.unit_price, cri.expected_minutes,
@@ -244,8 +281,9 @@ export class RequestsService {
     // One joined query for request + service + beneficiary + winning assignment.
     // A correlated lookup per row would be a N+1 anti-pattern.
     const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,cr.clinical_approval_status,
-      cr.created_at,cr.version,
+      cr.created_at,cr.version,cr.payment_status,cr.amount_due,cr.tip_amount,
       cr.booking_mode, cr.marketplace_status, cr.open_expires_at, cr.latest_acceptable_arrival_at,
+      sv.appointment_at AS scheduled_at,
       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING') AS active_proposals_count,
       to_char(cr.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at,
       s.title_ar AS service_title,b.display_name AS beneficiary_name,
@@ -253,6 +291,7 @@ export class RequestsService {
       FROM care_requests cr
       JOIN services s ON s.id=cr.service_id
       JOIN beneficiaries b ON b.id=cr.beneficiary_id
+      LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
       LEFT JOIN request_assignments a ON a.request_id=cr.id AND a.status='ACTIVE'
       WHERE cr.requester_user_id=$1
         AND ($2::timestamptz IS NULL OR (cr.created_at,cr.id)<($2::timestamptz,$3::uuid))

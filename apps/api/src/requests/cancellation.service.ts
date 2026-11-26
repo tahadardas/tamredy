@@ -6,6 +6,7 @@ import type { CancelRequestDto } from './cancel-request.dto.js';
 
 import { closeOpenOffers } from '../dispatch/offer-outbox.js';
 import { transitionRequest } from './request-lifecycle.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 type Evidence = {
   status: string;
@@ -169,8 +170,29 @@ export async function cancelRequest(
   await client.query(`INSERT INTO request_events(request_id,actor_user_id,event_type)
     VALUES($1,$2,'request.cancelled')`, [requestId,userId]);
   await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-    VALUES('request.cancelled',$1,$2::jsonb)`, [requestId, JSON.stringify({
-    requestId, recipientUserIds: nurseUserId ? [userId, nurseUserId] : [userId],
-  })]);
+    VALUES('request.cancelled',$1,$2::jsonb)`, [requestId, JSON.stringify(buildNotificationPayload({
+    eventType: 'request.cancelled',
+    recipientUserId: userId,
+    recipientRole: 'PATIENT',
+    targetApp: 'PATIENT_APP',
+    requestId,
+    assignmentId: assignment?.id ?? null,
+    entityVersion: Number(request.version) + 1,
+    skipPush: true,
+    extra: { cancelledBy: 'PATIENT' },
+  }))]);
+  if (nurseUserId) {
+    await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
+      VALUES('request.cancelled',$1,$2::jsonb)`, [requestId, JSON.stringify(buildNotificationPayload({
+      eventType: 'request.cancelled',
+      recipientUserId: nurseUserId,
+      recipientRole: 'NURSE',
+      targetApp: 'NURSE_APP',
+      requestId,
+      assignmentId: assignment?.id ?? null,
+      entityVersion: Number(request.version) + 1,
+      extra: { cancelledBy: 'PATIENT' },
+    }))]);
+  }
   return response(written.rows[0], false);
 }

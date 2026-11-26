@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg';
 import { LedgerService, fromMinor, toMinor, type LedgerLegInput } from '../wallet/ledger.service.js';
 import { DuesService } from './fees.service.js';
 import { ReferralService } from './referral.service.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 export interface FinalBill {
   timeGross: number;
@@ -200,7 +201,13 @@ export class BillingService {
       JSON.stringify({received:amount,applied,change,remaining,collectionId:collection.id})]);
     await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
       VALUES($1,$2,$3::jsonb)`, [`payment.${status.toLowerCase()}`,requestId,
-      JSON.stringify({requestId,recipientUserId:row.requester_user_id})]);
+      JSON.stringify(buildNotificationPayload({
+        eventType: `payment.${status.toLowerCase()}`,
+        recipientUserId: row.requester_user_id,
+        recipientRole: 'PATIENT',
+        targetApp: 'PATIENT_APP',
+        requestId,
+      }))]);
     return { ...collection,status,remaining,change:Number(change),replayed:false };
   }
 
@@ -241,7 +248,14 @@ export class BillingService {
     await client.query('UPDATE invoices SET tip_amount=$2,version=version+1 WHERE id=$1', [row.id,amount]);
     await client.query('UPDATE care_requests SET tip_amount=$2,updated_at=statement_timestamp() WHERE id=$1', [requestId,amount]);
     await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-      VALUES('payment.tip',$1,$2::jsonb)`, [requestId,JSON.stringify({requestId,recipientUserId:row.nurse_user_id})]);
+      VALUES('payment.tip',$1,$2::jsonb)`, [requestId, JSON.stringify(buildNotificationPayload({
+      eventType: 'payment.tip',
+      recipientUserId: row.nurse_user_id,
+      recipientRole: 'NURSE',
+      targetApp: 'NURSE_APP',
+      requestId,
+      extra: { tipAmount: amount },
+    }))]);
     return {tip:amount,replayed:false};
   }
 }

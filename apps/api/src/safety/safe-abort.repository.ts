@@ -56,7 +56,16 @@ export class SafeAbortRepository {
     await client.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id)
       VALUES($1,'safety.visit_aborted','incident',$2)`, [actor,incident]);
     await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
-      VALUES('visit.interrupted',$1,jsonb_build_object('requestId',$1::uuid,'recipientUserId',$2::uuid))`,
-    [requestId,requester]);
+      VALUES('visit.interrupted',$1,jsonb_build_object(
+        'eventType','visit.interrupted',
+        'requestId',$1::uuid,
+        'assignmentId',$3::uuid,
+        'recipientUserId',$2::uuid,
+        'recipientRole','PATIENT',
+        'targetApp','PATIENT_APP',
+        'priority','HIGH',
+        'createdAt',statement_timestamp()
+      ))`,
+    [requestId,requester,assignment]);
   }
 }

@@ -55,15 +55,23 @@ export class NursesService {
     return makePage(result.rows,page.limit,`nurse:${userId}`);
   }
   async assignmentDetails(userId:string,assignmentId:string) {
-    const result=await this.db.query(`SELECT a.id AS assignment_id,cr.id AS request_id,cr.status,cr.address_text,
+    const result=await this.db.query(`SELECT a.id AS assignment_id,a.status AS assignment_status,
+      a.departed_at,a.expected_arrival_at,a.eta_status,a.planned_start_at,
+      cr.id AS request_id,cr.status,cr.address_text,cr.version,cr.booking_mode,
       ST_Y(cr.location::geometry) AS latitude,ST_X(cr.location::geometry) AS longitude,
-      cr.price_amount,cr.currency_code,s.title_ar AS service_title
+      cr.price_amount,cr.currency_code,cr.commission_bps,s.title_ar AS service_title,
+      b.display_name AS beneficiary_name,
+      CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.display_name END AS patient_name,
+      sv.appointment_at AS scheduled_at
       FROM request_assignments a JOIN nurses n ON n.id=a.nurse_id
       JOIN care_requests cr ON cr.id=a.request_id JOIN services s ON s.id=cr.service_id
-      WHERE a.id=$1 AND n.user_id=$2 AND a.status='ACTIVE'`,[assignmentId,userId]);
+      JOIN beneficiaries b ON b.id=cr.beneficiary_id
+      JOIN users u ON u.id=cr.requester_user_id
+      LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
+      WHERE a.id=$1 AND n.user_id=$2 AND a.status IN ('ACTIVE','RESERVED','RELEASED')`,[assignmentId,userId]);
     if(!result.rowCount) missing();
     const items = await this.db.query(`SELECT cri.id,cri.service_id,cri.quantity,cri.expected_minutes,
-      cri.item_status,cri.performed_quantity,cri.actual_minutes,s.title_ar AS service_title
+      cri.item_status,cri.performed_quantity,cri.actual_minutes,cri.completion_note,cri.status_reason,s.title_ar AS service_title
       FROM care_request_items cri JOIN services s ON s.id=cri.service_id
       WHERE cri.request_id=$1 ORDER BY cri.created_at,cri.id`, [result.rows[0].request_id]);
     return {...result.rows[0],items:items.rows};

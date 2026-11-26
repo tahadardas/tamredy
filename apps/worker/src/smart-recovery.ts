@@ -106,7 +106,16 @@ export async function runSmartRecoveryJob(pool: pg.Pool): Promise<{
        ), events AS (
          INSERT INTO outbox_events(event_type,aggregate_id,payload)
          SELECT 'marketplace.recovery.alert',i.nurse_id,
-           jsonb_build_object('recipientUserId',m.user_id,'openRequestsCount',cardinality(i.request_ids),'requestIds',i.request_ids)
+           jsonb_build_object(
+             'eventType','marketplace.recovery.alert',
+             'recipientUserId',m.user_id,
+             'recipientRole','NURSE',
+             'targetApp','NURSE_APP',
+             'priority','NORMAL',
+             'deepLink','tamreedy://nurse/marketplace',
+             'openRequestsCount',cardinality(i.request_ids),
+             'requestIds',i.request_ids
+           )
          FROM inserted i JOIN matched m ON m.nurse_id=i.nurse_id
          RETURNING id
        ) SELECT count(*)::integer AS alerts_sent FROM events`,

@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { DbService } from '../db/db.service.js';
 import { SubmitProposalDto, UpdateProposalDto, WithdrawProposalDto } from './marketplace.dto.js';
 import { MarketplaceEligibilityService } from './marketplace-eligibility.service.js';
+import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
 @Injectable()
 export class ProposalsService {
@@ -132,13 +133,20 @@ export class ProposalsService {
          VALUES('marketplace.proposal.created', $1, $2::jsonb)`,
         [
           proposal.id,
-          JSON.stringify({
-            proposalId: proposal.id,
-            requestId,
+          JSON.stringify(buildNotificationPayload({
+            eventType: 'marketplace.proposal.created',
             recipientUserId: req.requester_user_id,
-            proposedArrivalAt: proposal.proposed_arrival_at,
-            estimatedNurseEarning,
-          }),
+            recipientRole: 'PATIENT',
+            targetApp: 'PATIENT_APP',
+            requestId,
+            proposalId: proposal.id,
+            entityVersion: proposal.proposal_version,
+            expiresAt: proposal.expires_at ? new Date(proposal.expires_at).toISOString() : null,
+            extra: {
+              proposedArrivalAt: proposal.proposed_arrival_at,
+              estimatedNurseEarning,
+            },
+          })),
         ],
       );
 
@@ -169,12 +177,26 @@ export class ProposalsService {
     }
     const prop = res.rows[0];
 
-    // Inform patient of withdrawal
-    await this.db.query(
-      `INSERT INTO outbox_events(event_type, aggregate_id, payload)
-       VALUES('marketplace.proposal.withdrawn', $1, $2::jsonb)`,
-      [prop.id, JSON.stringify({ proposalId: prop.id, requestId: prop.request_id })],
-    );
+    const reqOwner = (await this.db.query(`SELECT requester_user_id, version FROM care_requests WHERE id = $1`, [prop.request_id])).rows[0];
+    if (reqOwner?.requester_user_id) {
+      // Inform patient of withdrawal
+      await this.db.query(
+        `INSERT INTO outbox_events(event_type, aggregate_id, payload)
+         VALUES('marketplace.proposal.withdrawn', $1, $2::jsonb)`,
+        [
+          prop.id,
+          JSON.stringify(buildNotificationPayload({
+            eventType: 'marketplace.proposal.withdrawn',
+            recipientUserId: reqOwner.requester_user_id,
+            recipientRole: 'PATIENT',
+            targetApp: 'PATIENT_APP',
+            requestId: prop.request_id,
+            proposalId: prop.id,
+            entityVersion: reqOwner.version,
+          })),
+        ],
+      );
+    }
 
     return { withdrawn: true, proposalId };
   }

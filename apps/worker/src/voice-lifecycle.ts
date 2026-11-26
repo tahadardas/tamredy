@@ -14,8 +14,11 @@ export async function expireVoiceCalls(pool: pg.Pool): Promise<boolean> {
      ), events AS (
        INSERT INTO outbox_events(event_type,aggregate_id,payload)
        SELECT CASE WHEN call_status='MISSED' THEN 'call.missed' ELSE 'call.failed' END,id,
-         jsonb_build_object('recipientUserIds',ARRAY[caller_user_id,receiver_user_id],
-           'callId',id,'requestId',request_id,'reason',end_reason)
+         jsonb_build_object(
+           'eventType',CASE WHEN call_status='MISSED' THEN 'call.missed' ELSE 'call.failed' END,
+           'recipientUserIds',ARRAY[caller_user_id,receiver_user_id],
+           'callId',id,'requestId',request_id,'reason',end_reason,
+           'priority','HIGH')
        FROM expired RETURNING aggregate_id
      ), removed AS (
        DELETE FROM voice_call_events e USING expired x

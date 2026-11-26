@@ -52,8 +52,11 @@ async function flushRealtimeOutbox(): Promise<boolean> {
   if (!redis) return false;
   return deliverOutbox(pool, 'realtime', async events => {
     for (const event of events) {
+      const eventId = typeof event.payload?.eventId === 'string' && event.payload.eventId
+        ? event.payload.eventId
+        : String(event.id);
       await redis.publish('tamreedy:events', JSON.stringify({
-        eventId: String(event.id), type: event.event_type, payload: event.payload,
+        eventId, type: event.event_type, payload: event.payload,
       }));
     }
   });
