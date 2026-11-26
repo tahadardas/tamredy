@@ -32,6 +32,16 @@ class CallManager extends ChangeNotifier {
 
   CallManager({required this.api, required this.eventBus}) {
     _busSub = eventBus.whereType(_callEventTypes).listen(_onBusEvent);
+    _connSub = eventBus.connectionStateStream.listen((connected) {
+      if (_callId == null || isTerminal) return;
+      if (connected) {
+        _pollTimer?.cancel();
+        _pollTimer = null;
+        unawaited(refresh());
+      } else {
+        _ensureFallbackPolling();
+      }
+    });
   }
 
   static const _callEventTypes = {
@@ -51,6 +61,7 @@ class CallManager extends ChangeNotifier {
   static const _uuid = Uuid();
 
   StreamSubscription<RealtimeEvent>? _busSub;
+  StreamSubscription<bool>? _connSub;
   Timer? _pollTimer;
   Timer? _durationTimer;
   Timer? _reconnectTimer;
@@ -64,7 +75,10 @@ class CallManager extends ChangeNotifier {
   bool _offerSent = false;
   bool _answerSent = false;
   bool _connectedReported = false;
+  bool _localMediaConnected = false;
   int _signalSequence = 0;
+  int _signalEpoch = 0;
+  Future<void> _signalQueue = Future<void>.value();
   int _reconnectAttempts = 0;
 
   String? _callId;
@@ -124,7 +138,10 @@ class CallManager extends ChangeNotifier {
     _offerSent = false;
     _answerSent = false;
     _connectedReported = false;
+    _localMediaConnected = false;
     _signalSequence = 0;
+    _signalEpoch++;
+    _signalQueue = Future<void>.value();
     _reconnectAttempts = 0;
   }
 
@@ -192,6 +209,8 @@ class CallManager extends ChangeNotifier {
     required String requestId,
     required String peerName,
     required String peerRole,
+    CallPhase initialPhase = CallPhase.ringing,
+    List<dynamic>? iceServers,
   }) async {
     if (_callId == callId && isActive) {
       _overlayVisible = true;
@@ -204,7 +223,9 @@ class CallManager extends ChangeNotifier {
     _peerName = peerName;
     _peerRole = peerRole;
     _isIncoming = true;
-    _phase = CallPhase.ringing;
+    _phase = (initialPhase == CallPhase.connected && !_localMediaConnected)
+        ? CallPhase.connecting
+        : initialPhase;
     _error = null;
     _muted = false;
     _audioRoute = AudioOutputRoute.earpiece;
@@ -212,9 +233,19 @@ class CallManager extends ChangeNotifier {
     _overlayVisible = true;
     notifyListeners();
     _startPolling();
-    await refresh();
+    if (_phase == CallPhase.accepted ||
+        _phase == CallPhase.connecting ||
+        _phase == CallPhase.reconnecting) {
+      try {
+        await _initPeerConnection(iceServers);
+        await refresh();
+      } catch (_) {}
+    } else {
+      await refresh();
+    }
   }
 
+  /// BUG-039: Restore active call accurately as outgoing OR incoming, recovering WebRTC media if needed.
   Future<void> checkActiveCalls({required String defaultPeerName, required String defaultPeerRole}) async {
     try {
       final active = await api.getList('/v1/calls/active/mine');
@@ -223,11 +254,50 @@ class CallManager extends ChangeNotifier {
       final id = raw['id']?.toString();
       if (id == null || id.isEmpty) return;
       if (_callId == id && isActive) return;
+
+      final isCaller = raw['is_caller'] == true;
+      final serverPhase = _parsePhase(raw['call_status']?.toString()) ?? CallPhase.ringing;
+      final peerName = (isCaller ? raw['receiver_name'] : raw['caller_name'])?.toString().trim();
+      final resolvedPeerName = (peerName != null && peerName.isNotEmpty) ? peerName : defaultPeerName;
+      final iceServers = raw['ice_servers'] as List?;
+
+      if (isCaller) {
+        _resetMediaState();
+        _callId = id;
+        _requestId = raw['request_id']?.toString();
+        _peerName = resolvedPeerName;
+        _peerRole = defaultPeerRole;
+        _isIncoming = false;
+        _phase = (serverPhase == CallPhase.connected && !_localMediaConnected)
+            ? CallPhase.connecting
+            : serverPhase;
+        _error = null;
+        _muted = false;
+        _audioRoute = AudioOutputRoute.earpiece;
+        _elapsedSeconds = 0;
+        _overlayVisible = true;
+        notifyListeners();
+        _startPolling();
+        try {
+          await _initPeerConnection(iceServers);
+          if (_phase == CallPhase.ringing || _phase == CallPhase.initiating) {
+            await _sendOfferIfCaller();
+          }
+          await refresh();
+        } catch (_) {
+          _error = 'تعذر استعادة مسار الصوت للمكالمة الجارية';
+          notifyListeners();
+        }
+        return;
+      }
+
       await presentIncoming(
         callId: id,
         requestId: raw['request_id']?.toString() ?? '',
-        peerName: defaultPeerName,
+        peerName: resolvedPeerName,
         peerRole: defaultPeerRole,
+        initialPhase: serverPhase,
+        iceServers: iceServers,
       );
     } catch (_) {}
   }
@@ -375,6 +445,7 @@ class CallManager extends ChangeNotifier {
         _reconnectTimer?.cancel();
         _reconnectTimer = null;
         _reconnectAttempts = 0;
+        _localMediaConnected = true;
         _phase = CallPhase.connected;
         _ensureDurationTimer();
         _startQualityMonitoring();
@@ -385,6 +456,7 @@ class CallManager extends ChangeNotifier {
         notifyListeners();
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        _localMediaConnected = false;
         if (!isTerminal) {
           _phase = CallPhase.reconnecting;
           notifyListeners();
@@ -414,7 +486,8 @@ class CallManager extends ChangeNotifier {
     if (rawSignals == null || rawSignals.isEmpty || _pc == null) return;
     for (final raw in rawSignals) {
       final sig = Map<String, dynamic>.from(raw as Map);
-      final sigId = sig['id']?.toString() ?? sig['event_id']?.toString() ?? '';
+      // BUG-041: Key signal deduplication canonically on event_id (shared across WS & REST)
+      final sigId = sig['event_id']?.toString() ?? sig['eventId']?.toString() ?? sig['id']?.toString() ?? '';
       if (sigId.isNotEmpty && !_handledSignals.add(sigId)) continue;
       final type = sig['event_type']?.toString();
       final data = sig['event_data'] is Map
@@ -468,16 +541,42 @@ class CallManager extends ChangeNotifier {
     _pendingCandidates.clear();
   }
 
+  /// BUG-038: Async FIFO serialized queue guaranteeing monotonic sequence numbers and stable retry eventId.
   Future<Map<String, dynamic>> _sendSignal(String eventType, Map<String, dynamic> data) {
     final id = _callId;
     if (id == null) return Future.value(<String, dynamic>{});
-    _signalSequence++;
-    return api.post('/v1/calls/$id/signal', {
-      'eventId': _uuid.v4(),
-      'sequenceNumber': _signalSequence,
-      'eventType': eventType,
-      'data': data,
-    });
+    final epoch = _signalEpoch;
+    final completer = Completer<Map<String, dynamic>>();
+    _signalQueue = _signalQueue.then((_) async {
+      if (_callId != id || _signalEpoch != epoch || isTerminal) {
+        completer.complete(<String, dynamic>{});
+        return;
+      }
+      final seq = ++_signalSequence;
+      final eventId = _uuid.v4();
+      final payload = {
+        'eventId': eventId,
+        'sequenceNumber': seq,
+        'eventType': eventType,
+        'data': data,
+      };
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          final res = await api.post('/v1/calls/$id/signal', payload);
+          completer.complete(res);
+          return;
+        } catch (e) {
+          final retryable = isTransientError(e) && attempt == 0 && _callId == id && _signalEpoch == epoch && !isTerminal;
+          if (retryable) {
+            await Future<void>.delayed(const Duration(milliseconds: 250));
+            continue;
+          }
+          completer.completeError(e);
+          return;
+        }
+      }
+    }).catchError((_) {});
+    return completer.future;
   }
 
   void _scheduleIceRestart() {
@@ -528,7 +627,8 @@ class CallManager extends ChangeNotifier {
       if (eventType != null && data is Map) {
         _consumeSignals([
           {
-            'id': evt.payload['eventId'],
+            'event_id': evt.payload['eventId'] ?? evt.payload['event_id'] ?? evt.id,
+            'sequence_number': evt.payload['sequenceNumber'],
             'event_type': eventType,
             'event_data': Map<String, dynamic>.from(data),
           },
@@ -539,7 +639,7 @@ class CallManager extends ChangeNotifier {
 
     final next = switch (evt.type) {
       'call.accepted' => CallPhase.accepted,
-      'call.connected' => CallPhase.connected,
+      'call.connected' => _localMediaConnected ? CallPhase.connected : CallPhase.connecting,
       'call.reconnecting' => CallPhase.reconnecting,
       'call.rejected' => CallPhase.rejected,
       'call.cancel' => CallPhase.cancelled,
@@ -550,8 +650,8 @@ class CallManager extends ChangeNotifier {
     };
     if (next != null) {
       _phase = next;
-      // Only start duration timer if WebRTC is genuinely connected (never on ACCEPTED alone)
-      if (next == CallPhase.connected && _pc != null) {
+      // BUG-040: Start call duration timer ONLY after local RTCPeerConnection confirms ICE/DTLS media connected
+      if (next == CallPhase.connected && _localMediaConnected && _pc != null) {
         _ensureDurationTimer();
       }
       if (isTerminal) {
@@ -563,8 +663,24 @@ class CallManager extends ChangeNotifier {
   }
 
   void _startPolling() {
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 6), (_) => refresh());
+    if (eventBus.isConnected) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      return;
+    }
+    _ensureFallbackPolling();
+  }
+
+  void _ensureFallbackPolling() {
+    if (_pollTimer != null || _callId == null || isTerminal) return;
+    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (eventBus.isConnected) {
+        _pollTimer?.cancel();
+        _pollTimer = null;
+        return;
+      }
+      unawaited(refresh());
+    });
   }
 
   void _ensureDurationTimer() {
@@ -678,7 +794,7 @@ class CallManager extends ChangeNotifier {
 
   Future<void> resetForSessionChange() async {
     if (isActive && _callId != null && !_isIncoming) {
-      await endOrCancel().catchError((_) {});
+      await endCall().catchError((_) {});
     }
     _resetMediaState();
     await _disposeWebRtc();
@@ -696,6 +812,7 @@ class CallManager extends ChangeNotifier {
   @override
   void dispose() {
     _busSub?.cancel();
+    _connSub?.cancel();
     _resetMediaState();
     _disposeWebRtc();
     super.dispose();

@@ -85,7 +85,7 @@ export class VoiceService {
           `SELECT * FROM voice_call_sessions WHERE caller_user_id=$1 AND initiation_key=$2`,
           [callerUserId, idempotencyKey],
         );
-        if (replay.rowCount) return replay.rows[0];
+        if (replay.rowCount) return { session: replay.rows[0], callPayload: null, replayed: true };
       }
       const active = await client.query(
         `SELECT id FROM voice_call_sessions
@@ -135,11 +135,13 @@ export class VoiceService {
         `INSERT INTO outbox_events(event_type,aggregate_id,payload,realtime_published_at) VALUES('call.incoming',$1,$2::jsonb,now())`,
         [row.id, JSON.stringify(callPayload)],
       );
-      return { session: updated.rows[0], callPayload };
+      return { session: updated.rows[0], callPayload, replayed: false };
     });
     const session = sessionResult.session;
-    await this.live.sendToUser(receiverUserId, 'call.incoming', sessionResult.callPayload);
-    this.metrics.increment('voice_calls_started_total');
+    if (!sessionResult.replayed && sessionResult.callPayload) {
+      await this.live.sendToUser(receiverUserId, 'call.incoming', sessionResult.callPayload);
+      this.metrics.increment('voice_calls_started_total');
+    }
     return session;
   }
 
@@ -162,7 +164,12 @@ export class VoiceService {
       await client.query(`INSERT INTO voice_call_events(session_id,actor_user_id,event_type) VALUES($1,$2,'ACCEPTED')`, [callId, receiverUserId]);
       return updated.rows[0];
     });
-    await this.live.sendToUser(result.caller_user_id, 'call.accepted', { callId, acceptedAt: result.accepted_at });
+    await this.live.sendToUser(result.caller_user_id, 'call.accepted', {
+      eventId: randomUUID(),
+      callId,
+      acceptedAt: result.accepted_at,
+      sessionVersion: result.session_version,
+    });
     return result;
   }
 
@@ -176,14 +183,24 @@ export class VoiceService {
     if (!result.rowCount) throw new ConflictException({ code: 'CALL_CANNOT_CONNECT' });
     const call = result.rows[0];
     const peer = call.caller_user_id === userId ? call.receiver_user_id : call.caller_user_id;
-    await this.live.sendToUser(peer, 'call.connected', { callId, connectedAt: call.connected_at });
+    await this.live.sendToUser(peer, 'call.connected', {
+      eventId: randomUUID(),
+      callId,
+      connectedAt: call.connected_at,
+      sessionVersion: call.session_version,
+    });
     return call;
   }
 
   async rejectCall(userId: string, callId: string, reason = 'DECLINED') {
     const result = await this.finish(userId, callId, 'REJECTED', reason, ['INITIATED', 'RINGING']);
     const peer = result.caller_user_id === userId ? result.receiver_user_id : result.caller_user_id;
-    await this.live.sendToUser(peer, 'call.rejected', { callId, reason });
+    await this.live.sendToUser(peer, 'call.rejected', {
+      eventId: randomUUID(),
+      callId,
+      reason,
+      sessionVersion: result.session_version,
+    });
     return result;
   }
 
@@ -194,7 +211,13 @@ export class VoiceService {
     const cancelled = ['INITIATED', 'RINGING'].includes(current.rows[0].call_status);
     const result = await this.finish(userId, callId, cancelled ? 'CANCELLED' : 'ENDED', reason, [...ACTIVE_CALL_STATES]);
     const peer = result.caller_user_id === userId ? result.receiver_user_id : result.caller_user_id;
-    await this.live.sendToUser(peer, cancelled ? 'call.cancel' : 'call.ended', { callId, durationSeconds: result.duration_seconds, reason });
+    await this.live.sendToUser(peer, cancelled ? 'call.cancel' : 'call.ended', {
+      eventId: randomUUID(),
+      callId,
+      durationSeconds: result.duration_seconds,
+      reason,
+      sessionVersion: result.session_version,
+    });
     return result;
   }
 
@@ -216,52 +239,100 @@ export class VoiceService {
     });
   }
 
+  /** BUG-038: Serialize WebRTC signals per session + actor inside one transaction lock to eliminate sequence races. */
   async relaySignal(senderUserId: string, callId: string, dto: CallSignalDto) {
     const serialized = JSON.stringify(dto.data);
     if (Buffer.byteLength(serialized, 'utf8') > Number(process.env.CALL_SIGNAL_MAX_BYTES ?? 32_768)) {
       throw new BadRequestException({ code: 'CALL_SIGNAL_TOO_LARGE' });
     }
-    const callResult = await this.db.query(`SELECT caller_user_id,receiver_user_id,call_status FROM voice_call_sessions WHERE id=$1`, [callId]);
-    if (!callResult.rowCount) throw new NotFoundException({ code: 'CALL_NOT_FOUND' });
-    const call = callResult.rows[0];
-    if (![call.caller_user_id, call.receiver_user_id].includes(senderUserId)) throw new ForbiddenException({ code: 'NOT_CALL_PARTICIPANT' });
-    if (!(ACTIVE_CALL_STATES as readonly string[]).includes(call.call_status)) throw new ConflictException({ code: 'CALL_TERMINAL' });
-    const duplicate = await this.db.query('SELECT 1 FROM voice_call_events WHERE event_id=$1', [dto.eventId]);
-    if (duplicate.rowCount) return { relayed: true, duplicate: true };
-    const latest = await this.db.query(
-      `SELECT max(sequence_number)::integer AS sequence_number FROM voice_call_events
-       WHERE session_id=$1 AND actor_user_id=$2 AND sequence_number IS NOT NULL`,
-      [callId, senderUserId],
-    );
-    if (dto.sequenceNumber <= Number(latest.rows[0]?.sequence_number ?? 0)) {
-      throw new ConflictException({ code: 'CALL_SIGNAL_OUT_OF_ORDER' });
-    }
-    if (dto.eventType === 'ICE_CANDIDATE') {
-      const count = await this.db.query(
-        `SELECT count(*)::integer AS count FROM voice_call_events WHERE session_id=$1 AND actor_user_id=$2 AND event_type='ICE_CANDIDATE'`,
+    const txResult = await this.db.transaction(async client => {
+      const callResult = await client.query(
+        `SELECT caller_user_id, receiver_user_id, call_status
+         FROM voice_call_sessions
+         WHERE id=$1 FOR UPDATE`,
+        [callId],
+      );
+      if (!callResult.rowCount) throw new NotFoundException({ code: 'CALL_NOT_FOUND' });
+      const call = callResult.rows[0];
+      if (![call.caller_user_id, call.receiver_user_id].includes(senderUserId)) {
+        throw new ForbiddenException({ code: 'NOT_CALL_PARTICIPANT' });
+      }
+      if (!(ACTIVE_CALL_STATES as readonly string[]).includes(call.call_status)) {
+        throw new ConflictException({ code: 'CALL_TERMINAL' });
+      }
+      const duplicate = await client.query('SELECT id FROM voice_call_events WHERE event_id=$1', [dto.eventId]);
+      if (duplicate.rowCount) {
+        return { duplicate: true as const, recipientUserId: null as string | null };
+      }
+      const latest = await client.query(
+        `SELECT max(sequence_number)::integer AS sequence_number
+         FROM voice_call_events
+         WHERE session_id=$1 AND actor_user_id=$2 AND sequence_number IS NOT NULL`,
         [callId, senderUserId],
       );
-      if (Number(count.rows[0].count) >= Number(process.env.CALL_MAX_ICE_CANDIDATES ?? 128)) {
-        throw new BadRequestException({ code: 'ICE_CANDIDATE_LIMIT_REACHED' });
+      const latestSeq = Number(latest.rows[0]?.sequence_number ?? 0);
+      if (dto.sequenceNumber <= latestSeq) {
+        throw new ConflictException({
+          code: 'CALL_SIGNAL_OUT_OF_ORDER',
+          latestSequence: latestSeq,
+        });
       }
+      if (dto.eventType === 'ICE_CANDIDATE') {
+        const count = await client.query(
+          `SELECT count(*)::integer AS count
+           FROM voice_call_events
+           WHERE session_id=$1 AND actor_user_id=$2 AND event_type='ICE_CANDIDATE'`,
+          [callId, senderUserId],
+        );
+        if (Number(count.rows[0].count) >= Number(process.env.CALL_MAX_ICE_CANDIDATES ?? 128)) {
+          throw new BadRequestException({ code: 'ICE_CANDIDATE_LIMIT_REACHED' });
+        }
+      }
+      try {
+        const inserted = await client.query(
+          `INSERT INTO voice_call_events(session_id,actor_user_id,event_type,event_data,event_id,sequence_number)
+           VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(event_id) DO NOTHING RETURNING id`,
+          [callId, senderUserId, dto.eventType, serialized, dto.eventId, dto.sequenceNumber],
+        );
+        if (!inserted.rowCount) {
+          return { duplicate: true as const, recipientUserId: null as string | null };
+        }
+      } catch (err) {
+        if ((err as { code?: string }).code === '23505') {
+          throw new ConflictException({ code: 'CALL_SIGNAL_OUT_OF_ORDER' });
+        }
+        throw err;
+      }
+      const recipientUserId = call.caller_user_id === senderUserId ? call.receiver_user_id : call.caller_user_id;
+      return { duplicate: false as const, recipientUserId };
+    });
+
+    if (txResult.duplicate || !txResult.recipientUserId) {
+      return { relayed: true, duplicate: true };
     }
-    const inserted = await this.db.query(
-      `INSERT INTO voice_call_events(session_id,actor_user_id,event_type,event_data,event_id,sequence_number)
-       VALUES($1,$2,$3,$4::jsonb,$5,$6) ON CONFLICT(event_id) DO NOTHING RETURNING id`,
-      [callId, senderUserId, dto.eventType, serialized, dto.eventId, dto.sequenceNumber],
-    );
-    if (!inserted.rowCount) return { relayed: true, duplicate: true };
-    const recipientUserId = call.caller_user_id === senderUserId ? call.receiver_user_id : call.caller_user_id;
-    await this.live.sendToUser(recipientUserId, 'call.signal', { callId, ...dto, fromUserId: senderUserId });
+    await this.live.sendToUser(txResult.recipientUserId, 'call.signal', {
+      callId,
+      ...dto,
+      event_id: dto.eventId,
+      fromUserId: senderUserId,
+    });
     this.metrics.increment('voice_signals_total');
     return { relayed: true, eventId: dto.eventId, sequenceNumber: dto.sequenceNumber };
   }
 
   async activeCalls(userId: string) {
     const result = await this.db.query(
-      `SELECT id,request_id,caller_user_id,receiver_user_id,call_status,ringing_at,ring_expires_at,accepted_at,connected_at,session_version
-       FROM voice_call_sessions WHERE $1 IN (caller_user_id,receiver_user_id)
-         AND call_status=ANY($2::text[]) ORDER BY created_at DESC LIMIT 2`,
+      `SELECT s.id,s.request_id,s.caller_user_id,s.receiver_user_id,
+              ($1 = s.caller_user_id) AS is_caller,
+              u1.display_name AS caller_name, u2.display_name AS receiver_name,
+              s.ice_servers,
+              s.call_status,s.ringing_at,s.ring_expires_at,s.accepted_at,s.connected_at,s.session_version
+       FROM voice_call_sessions s
+       JOIN users u1 ON u1.id = s.caller_user_id
+       JOIN users u2 ON u2.id = s.receiver_user_id
+       WHERE $1 IN (s.caller_user_id,s.receiver_user_id)
+         AND s.call_status=ANY($2::text[])
+       ORDER BY s.created_at DESC LIMIT 2`,
       [userId, [...ACTIVE_CALL_STATES]],
     );
     return result.rows;
@@ -269,8 +340,8 @@ export class VoiceService {
 
   async getCall(userId: string, callId: string, includeSignals = true) {
     const result = await this.db.query(
-      `SELECT s.*,u1.display_name AS caller_name,u2.display_name AS receiver_name
-       FROM voice_call_sessions s JOIN users u1 ON u1.id=s.caller_user_id JOIN users u2 ON u2.id=s.receiver_user_id WHERE s.id=$1`, [callId],
+      `SELECT s.*, ($2 = s.caller_user_id) AS is_caller, u1.display_name AS caller_name, u2.display_name AS receiver_name
+       FROM voice_call_sessions s JOIN users u1 ON u1.id=s.caller_user_id JOIN users u2 ON u2.id=s.receiver_user_id WHERE s.id=$1`, [callId, userId],
     );
     if (!result.rowCount) throw new NotFoundException({ code: 'CALL_NOT_FOUND' });
     const call = result.rows[0];
@@ -280,9 +351,9 @@ export class VoiceService {
       `SELECT id,event_id,sequence_number,actor_user_id,event_type,event_data,created_at
        FROM voice_call_events WHERE session_id=$1 AND actor_user_id<>$2
          AND event_type IN ('SDP_OFFER','SDP_ANSWER','ICE_CANDIDATE','ICE_RESTART')
-       ORDER BY created_at DESC,id DESC LIMIT 256`, [callId, userId],
+       ORDER BY sequence_number ASC NULLS LAST, created_at ASC, id ASC LIMIT 256`, [callId, userId],
     );
-    return { ...call, signals: signals.rows.reverse() };
+    return { ...call, signals: signals.rows };
   }
 
   async recordQuality(userId: string, callId: string, quality: CallQualityDto) {
