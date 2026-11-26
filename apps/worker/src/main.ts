@@ -74,6 +74,15 @@ async function flushPushOutbox(): Promise<boolean> {
 
 async function runWorker(): Promise<void> {
   await pool.query('SELECT 1');
+  // BUG-027: fail fast at startup if migration 063 device token isolation columns are missing
+  const schemaCheck = await pool.query(`
+    SELECT count(*)::int AS cols FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='device_tokens'
+      AND column_name = ANY(ARRAY['device_id','app_type','role','session_id','active_status'])
+  `);
+  if ((schemaCheck.rows[0]?.cols ?? 0) < 5) {
+    throw new Error('MIGRATION_063_REQUIRED: device_tokens isolation columns missing');
+  }
   console.info(JSON.stringify({
     service:'tamreedy-worker',event:'worker.started',realtimeConfigured:!!redis,pushConfigured:!!fcm,
   }));

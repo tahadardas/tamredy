@@ -131,6 +131,80 @@ class AppNotificationEvent {
 class NotificationCoordinator {
   final String expectedRole; // PATIENT or NURSE
   final String expectedApp; // PATIENT_APP or NURSE_APP
+  String? authenticatedUserId;
+
+  static const _patientAllowedEvents = {
+    'request.created',
+    'request.clinical_review_changed',
+    'request.assigned',
+    'request.cancelled',
+    'visit.interrupted',
+    'request.unfulfilled',
+    'request.instant.search.expired',
+    'request.schedule_released',
+    'marketplace.request.published',
+    'marketplace.request.updated',
+    'marketplace.proposal.created',
+    'marketplace.proposal.withdrawn',
+    'visit.depart',
+    'visit.arrive',
+    'visit.start',
+    'visit.complete',
+    'payment.updated',
+    'payment.partially_paid',
+    'payment.partial',
+    'payment.paid',
+    'tracking.updated',
+    'chat.message',
+    'chat.read',
+    'call.incoming',
+    'call.ringing',
+    'call.accepted',
+    'call.rejected',
+    'call.cancel',
+    'call.signal',
+    'call.connected',
+    'call.reconnecting',
+    'call.ended',
+    'call.missed',
+    'call.failed',
+  };
+
+  static const _nurseAllowedEvents = {
+    'offer.created',
+    'offer.closed',
+    'offer.expired',
+    'request.assigned',
+    'request.cancelled',
+    'visit.interrupted',
+    'request.schedule_released',
+    'marketplace.request.published',
+    'marketplace.request.updated',
+    'marketplace.proposal.accepted',
+    'marketplace.recovery.alert',
+    'safety.event_changed',
+    'safety.checkin_due',
+    'safety.checkin_reminder',
+    'visit.departure_delayed',
+    'payment.updated',
+    'payment.partially_paid',
+    'payment.partial',
+    'payment.paid',
+    'payment.tip',
+    'chat.message',
+    'chat.read',
+    'call.incoming',
+    'call.ringing',
+    'call.accepted',
+    'call.rejected',
+    'call.cancel',
+    'call.signal',
+    'call.connected',
+    'call.reconnecting',
+    'call.ended',
+    'call.missed',
+    'call.failed',
+  };
 
   final _seenIds = <String>{};
   final _seenOrder = <String>[];
@@ -147,39 +221,32 @@ class NotificationCoordinator {
   NotificationCoordinator({
     required this.expectedRole,
     required this.expectedApp,
+    this.authenticatedUserId,
   });
 
+  void setAuthenticatedUserId(String? userId) {
+    authenticatedUserId = (userId == null || userId.trim().isEmpty) ? null : userId.trim();
+  }
+
+  void clearHistory() {
+    authenticatedUserId = null;
+    _seenIds.clear();
+    _seenOrder.clear();
+    pendingColdStartTarget = null;
+  }
+
+  /// BUG-028: Enforce strict Allow List + non-empty recipientRole, targetApp, and recipientUserId.
   bool isAuthorizedForThisApp(AppNotificationEvent event) {
-    if (event.recipientRole.isNotEmpty && event.recipientRole != expectedRole) {
-      return false;
+    if (event.eventType == 'catalog.changed') return true;
+    if (event.recipientRole != expectedRole) return false;
+    if (event.targetApp != expectedApp) return false;
+    if (authenticatedUserId != null && authenticatedUserId!.isNotEmpty) {
+      if (event.recipientUserId.isEmpty || event.recipientUserId != authenticatedUserId) {
+        return false;
+      }
     }
-    if (event.targetApp.isNotEmpty && event.targetApp != expectedApp) {
-      return false;
-    }
-    if (expectedRole == 'PATIENT' && const {
-      'offer.created',
-      'offer.closed',
-      'offer.expired',
-      'marketplace.proposal.accepted',
-      'marketplace.recovery.alert',
-      'visit.departure_delayed',
-      'safety.checkin_due',
-      'safety.checkin_reminder',
-      'payment.tip',
-    }.contains(event.eventType)) {
-      return false;
-    }
-    if (expectedRole == 'NURSE' && const {
-      'request.created',
-      'marketplace.proposal.created',
-      'marketplace.proposal.withdrawn',
-      'request.clinical_review_changed',
-      'request.unfulfilled',
-      'request.instant.search.expired',
-    }.contains(event.eventType)) {
-      return false;
-    }
-    return true;
+    final allowed = expectedRole == 'NURSE' ? _nurseAllowedEvents : _patientAllowedEvents;
+    return allowed.contains(event.eventType);
   }
 
   /// Processes an incoming event (from WebSocket or Foreground FCM). Returns true if accepted.
@@ -203,7 +270,7 @@ class NotificationCoordinator {
     return true;
   }
 
-  /// Handles user tapping a notification (Foreground, Background, or Cold Start).
+  /// Handles user tapping a notification (never blocked by delivery deduplication).
   NotificationRouteTarget? routeFromTap(Map<String, dynamic> rawData, {bool coldStart = false}) {
     final event = AppNotificationEvent.fromMap(rawData);
     if (!isAuthorizedForThisApp(event)) return null;

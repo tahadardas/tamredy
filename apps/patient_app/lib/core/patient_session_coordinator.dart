@@ -104,6 +104,7 @@ class PatientSessionCoordinator extends ChangeNotifier {
   Future<void> initAuthenticatedSession() async {
     if (_initialized) return;
     _initialized = true;
+    notifications.setAuthenticatedUserId(await api.currentUserId());
     await bookingDraft.restoreDraft();
     await PatientAlarm.requestPermissions();
 
@@ -126,7 +127,7 @@ class PatientSessionCoordinator extends ChangeNotifier {
 
     final pending = notifications.takePendingColdStartTarget();
     if (pending != null) {
-      Future<void>.delayed(const Duration(milliseconds: 250), () {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         onRouteTarget?.call(pending);
       });
     }

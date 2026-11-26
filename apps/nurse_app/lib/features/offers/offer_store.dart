@@ -21,9 +21,12 @@ class OfferStore extends ChangeNotifier {
   late final StreamSubscription<RealtimeEvent> _sub;
 
   TypedNurseOffer? activeOffer;
+  final List<TypedNurseOffer> _offerQueue = [];
+  final Set<String> _closedOfferIds = {};
   Duration serverOffset = Duration.zero;
   Map<String, dynamic>? commitmentWarning;
   bool acting = false;
+  String? _actingOfferId;
   bool muted = false;
   String? error;
   Timer? _expiryTimer;
@@ -33,10 +36,16 @@ class OfferStore extends ChangeNotifier {
     _sessionGen++;
     _expiryTimer?.cancel();
     _expiryTimer = null;
+    for (final o in _offerQueue) {
+      OfferAlarm.cancelOffer(o.offerId);
+    }
     if (activeOffer != null) {
       OfferAlarm.cancelOffer(activeOffer!.offerId);
     }
+    _offerQueue.clear();
+    _closedOfferIds.clear();
     activeOffer = null;
+    _actingOfferId = null;
     commitmentWarning = null;
     acting = false;
     muted = false;
@@ -51,51 +60,109 @@ class OfferStore extends ChangeNotifier {
     }
     final offerId = ev.payload['offerId']?.toString() ?? ev.payload['offer_id']?.toString();
     if (offerId != null && offerId.isNotEmpty) {
+      _closedOfferIds.add(offerId);
       OfferAlarm.cancelOffer(offerId);
-      if (activeOffer?.offerId == offerId && !acting) {
-        clearOffer();
+      _offerQueue.removeWhere((o) => o.offerId == offerId);
+      if (activeOffer?.offerId == offerId && _actingOfferId != offerId) {
+        _advanceQueue();
       }
     }
   }
 
   Future<void> fetchOpenOffers() async {
-    if (kDemoMode || acting) return;
+    if (kDemoMode) return;
+    final gen = _sessionGen;
     try {
       final raw = await api.getList('/v1/nurse/me/offers');
+      if (gen != _sessionGen) return;
       ingestRawOffers(raw);
     } catch (_) {}
   }
 
+  void _advanceQueue() {
+    _expiryTimer?.cancel();
+    while (_offerQueue.isNotEmpty) {
+      final candidate = _offerQueue.first;
+      if (_closedOfferIds.contains(candidate.offerId) ||
+          candidate.remainingFrom(DateTime.now(), serverOffset) <= Duration.zero) {
+        _offerQueue.removeAt(0);
+        continue;
+      }
+      activeOffer = candidate;
+      _scheduleExpiryCheck(candidate.remainingFrom(DateTime.now(), serverOffset));
+      notifyListeners();
+      return;
+    }
+    activeOffer = null;
+    commitmentWarning = null;
+    notifyListeners();
+  }
+
   void ingestRawOffers(List<dynamic> rawOffers) {
-    if (acting) return;
-    if (rawOffers.isEmpty) {
-      if (activeOffer != null &&
-          activeOffer!.remainingFrom(DateTime.now(), serverOffset) == Duration.zero) {
-        clearOffer();
+    final now = DateTime.now();
+    final validIncoming = <TypedNurseOffer>[];
+    final validIds = <String>{};
+
+    for (final entry in rawOffers) {
+      if (entry is! Map) continue;
+      final parsed = TypedNurseOffer.fromJson(Map<String, dynamic>.from(entry));
+      if (parsed.offerId.isEmpty || _closedOfferIds.contains(parsed.offerId)) continue;
+      final offset = parsed.serverNow.difference(now);
+      final remaining = parsed.remainingFrom(now, offset);
+      if (!kDemoMode && remaining <= Duration.zero) {
+        _closedOfferIds.add(parsed.offerId);
+        OfferAlarm.cancelOffer(parsed.offerId);
+        continue;
+      }
+      serverOffset = offset;
+      validIncoming.add(parsed);
+      validIds.add(parsed.offerId);
+    }
+
+    // BUG-032: Remove all offers no longer open on server immediately (never leave stale offers open)
+    if (activeOffer != null &&
+        !validIds.contains(activeOffer!.offerId) &&
+        _actingOfferId != activeOffer!.offerId) {
+      OfferAlarm.cancelOffer(activeOffer!.offerId);
+      activeOffer = null;
+      commitmentWarning = null;
+      _expiryTimer?.cancel();
+    }
+
+    _offerQueue
+      ..clear()
+      ..addAll(validIncoming);
+
+    if (validIncoming.isEmpty) {
+      if (_actingOfferId == null) {
+        activeOffer = null;
+        commitmentWarning = null;
+        _expiryTimer?.cancel();
+        notifyListeners();
       }
       return;
     }
-    final raw = Map<String, dynamic>.from(rawOffers.first as Map);
-    final parsed = TypedNurseOffer.fromJson(raw);
-    final now = DateTime.now();
-    final offset = parsed.serverNow.difference(now);
-    final remaining = parsed.remainingFrom(now, offset);
-    if (!kDemoMode && remaining <= Duration.zero) {
+
+    final next = validIncoming.first;
+    if (activeOffer?.offerId == next.offerId) {
+      notifyListeners();
       return;
     }
 
-    if (activeOffer?.offerId == parsed.offerId) return;
+    if (_actingOfferId != null) {
+      notifyListeners();
+      return;
+    }
 
-    serverOffset = offset;
-    activeOffer = parsed;
+    activeOffer = next;
     error = null;
     muted = false;
     commitmentWarning = null;
-
+    final remaining = next.remainingFrom(now, serverOffset);
     _scheduleExpiryCheck(remaining);
     if (!kDemoMode) {
-      api.getMap('/v1/nurse/offers/${parsed.offerId}/commitment').then((c) {
-        if (activeOffer?.offerId == parsed.offerId) {
+      api.getMap('/v1/nurse/offers/${next.offerId}/commitment').then((c) {
+        if (activeOffer?.offerId == next.offerId) {
           commitmentWarning = c;
           notifyListeners();
         }
@@ -104,11 +171,11 @@ class OfferStore extends ChangeNotifier {
 
     OfferAlarm.show(
       AlarmData(
-        parsed.offerId,
-        'طلب زيارة جديد في ${parsed.area}',
-        '${parsed.serviceTitle} — حصتك ${formatMoney(parsed.nurseShare)}',
+        next.offerId,
+        'طلب زيارة جديد في ${next.area}',
+        '${next.serviceTitle} — حصتك ${formatMoney(next.nurseShare)}',
         remaining.inSeconds.clamp(2, 60),
-        data: raw,
+        data: Map<String, dynamic>.from(rawOffers.first as Map),
       ),
     );
     notifyListeners();
@@ -156,12 +223,15 @@ class OfferStore extends ChangeNotifier {
     if (offer == null || acting) return false;
     OfferAlarm.cancelAll();
     acting = true;
+    _actingOfferId = offer.offerId;
     error = null;
     notifyListeners();
 
     try {
       if (kDemoMode) {
         await Future<void>.delayed(const Duration(milliseconds: 300));
+        _closedOfferIds.add(offer.offerId);
+        _offerQueue.removeWhere((o) => o.offerId == offer.offerId);
         activeOffer = null;
         _expiryTimer?.cancel();
         onOfferAccepted(offer.requestId, 'demo-assign-1');
@@ -174,6 +244,8 @@ class OfferStore extends ChangeNotifier {
       if (assignmentId.isEmpty) {
         throw StateError('MISSING_ASSIGNMENT_ID');
       }
+      _closedOfferIds.add(offer.offerId);
+      _offerQueue.removeWhere((o) => o.offerId == offer.offerId);
       activeOffer = null;
       _expiryTimer?.cancel();
       onOfferAccepted(requestId, assignmentId);
@@ -183,31 +255,44 @@ class OfferStore extends ChangeNotifier {
         e,
         fallback: 'انتهت صلاحية العرض أو تم قبوله من ممرض آخر.',
       );
+      _closedOfferIds.add(offer.offerId);
+      _offerQueue.removeWhere((o) => o.offerId == offer.offerId);
       activeOffer = null;
       _expiryTimer?.cancel();
       await fetchOpenOffers();
       return false;
     } finally {
+      _actingOfferId = null;
       acting = false;
       notifyListeners();
     }
   }
 
-  Future<void> decline() async {
+  Future<bool> decline() async {
     final offer = activeOffer;
-    if (offer == null || acting) return;
+    if (offer == null || acting) return false;
     OfferAlarm.cancelAll();
     acting = true;
+    _actingOfferId = offer.offerId;
+    error = null;
     notifyListeners();
     try {
       if (!kDemoMode) {
         await api.post('/v1/nurse/offers/${offer.offerId}/decline', {});
       }
-    } catch (_) {}
-    activeOffer = null;
-    _expiryTimer?.cancel();
-    acting = false;
-    notifyListeners();
+      _closedOfferIds.add(offer.offerId);
+      _offerQueue.removeWhere((o) => o.offerId == offer.offerId);
+      _actingOfferId = null;
+      acting = false;
+      _advanceQueue();
+      return true;
+    } catch (e) {
+      error = explainError(e, fallback: 'تعذر رفض العرض؛ تحقق من الاتصال.');
+      _actingOfferId = null;
+      acting = false;
+      notifyListeners();
+      return false;
+    }
   }
 
   void clearOffer() {

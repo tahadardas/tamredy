@@ -233,8 +233,11 @@ class OfferAlarm {
   }) async {
     final role = '${data['recipientRole'] ?? ''}'.toUpperCase();
     final targetApp = '${data['targetApp'] ?? ''}'.toUpperCase();
-    if (role.isNotEmpty && role != 'NURSE') return;
-    if (targetApp.isNotEmpty && targetApp != 'NURSE_APP') return;
+    // BUG-028: Require explicit non-empty role & targetApp matching NURSE / NURSE_APP
+    if (role != 'NURSE' || targetApp != 'NURSE_APP') return;
+    final authUid = coordinator?.authenticatedUserId;
+    final recipientUid = '${data['recipientUserId'] ?? ''}'.trim();
+    if (authUid != null && authUid.isNotEmpty && recipientUid != authUid) return;
 
     final type = '${data['eventType'] ?? data['type'] ?? ''}';
     if (type == 'offer.closed' || type == 'offer.expired') {
@@ -244,7 +247,12 @@ class OfferAlarm {
     }
 
     final eventId = '${data['eventId'] ?? data['id'] ?? ''}';
-    if (!_markHandled(eventId)) return;
+    if (coordinator != null) {
+      final ev = AppNotificationEvent.fromMap(data);
+      if (!coordinator!.acceptEvent(ev, dedupe: true)) return;
+    } else if (!_markHandled(eventId)) {
+      return;
+    }
 
     final merged = {
       ...data,

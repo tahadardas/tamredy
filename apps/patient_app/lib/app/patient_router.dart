@@ -116,12 +116,22 @@ class PatientRouter {
     );
   }
 
+  static String? _lastRouteKey;
+  static DateTime _lastRouteAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   static void handleNotificationTarget(
     PatientSessionCoordinator session,
     NotificationRouteTarget target,
   ) {
     final n = nav;
     if (n == null) return;
+    final routeKey = '${target.kind.name}:${target.requestId ?? ''}:${target.conversationId ?? ''}:${target.offerId ?? ''}:${target.callId ?? ''}';
+    final now = DateTime.now();
+    if (routeKey == _lastRouteKey && now.difference(_lastRouteAt) < const Duration(milliseconds: 1200)) {
+      return;
+    }
+    _lastRouteKey = routeKey;
+    _lastRouteAt = now;
 
     switch (target.kind) {
       case NotificationRouteKind.chatConversation:

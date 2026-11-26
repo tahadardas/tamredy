@@ -118,15 +118,14 @@ class LiveChannel {
       s.on(e, (data) {
         final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
         final eventId = payload['eventId']?.toString() ?? '';
-        if (eventId.isNotEmpty) {
-          if (!_seenEvents.add(eventId)) return;
-          if (_seenEvents.length > 512) _seenEvents.remove(_seenEvents.first);
-        }
 
         if (coordinator != null && e != 'catalog.changed' && e != 'tracking.updated' && e != 'call.signal') {
           final parsed = AppNotificationEvent.fromMap(payload, fallbackType: e);
-          if (!coordinator!.isAuthorizedForThisApp(parsed)) return;
-          coordinator!.acceptEvent(parsed, dedupe: false);
+          // BUG-029: Single authoritative eventId deduplication across WebSocket & FCM
+          if (!coordinator!.acceptEvent(parsed, dedupe: true)) return;
+        } else if (eventId.isNotEmpty) {
+          if (!_seenEvents.add(eventId)) return;
+          if (_seenEvents.length > 512) _seenEvents.remove(_seenEvents.first);
         }
 
         eventBus?.emit(

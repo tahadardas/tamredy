@@ -51,7 +51,7 @@ test('push delivery enforces role/app isolation, active_status filtering, full e
       .replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
     await pg.exec(sql);
   }
-  await pg.exec('CREATE TABLE IF NOT EXISTS device_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid());');
+  await pg.exec('CREATE TABLE IF NOT EXISTS device_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), revoked_at timestamptz);');
   await pg.exec(readFileSync(new URL('063_notifications_routing_and_device_tokens.sql', root), 'utf8'));
   const U1 = '11111111-1111-1111-1111-111111111111', U2 = '22222222-2222-2222-2222-222222222222';
   await pg.query("INSERT INTO users(id,phone_e164,role) VALUES($1,'+1','PATIENT'),($2,'+2','PATIENT')", [U1, U2]);

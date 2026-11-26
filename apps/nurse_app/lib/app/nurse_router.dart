@@ -28,26 +28,45 @@ class NurseRouter {
     );
   }
 
+  static String? _lastRouteKey;
+  static DateTime _lastRouteAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   static void handleNotificationTarget(
     NurseSessionCoordinator session,
     NotificationRouteTarget target,
   ) {
     final n = nav;
     if (n == null) return;
+    final routeKey = '${target.kind.name}:${target.requestId ?? ''}:${target.assignmentId ?? ''}:${target.conversationId ?? ''}:${target.offerId ?? ''}:${target.callId ?? ''}';
+    final now = DateTime.now();
+    if (routeKey == _lastRouteKey && now.difference(_lastRouteAt) < const Duration(milliseconds: 1200)) {
+      return;
+    }
+    _lastRouteKey = routeKey;
+    _lastRouteAt = now;
 
     switch (target.kind) {
       case NotificationRouteKind.nurseOffer:
         session.offers.fetchOpenOffers();
-        switchTab(0);
         return;
 
       case NotificationRouteKind.nurseAssignment:
-        session.visit.restoreActiveAssignment();
-        n.push(
-          MaterialPageRoute<void>(
-            builder: (_) => VisitWorkspaceScreen(session: session),
-          ),
-        );
+        session.visit.restoreActiveAssignment(force: true);
+        if (target.assignmentId == null ||
+            target.assignmentId == session.visit.assignmentId ||
+            target.requestId == session.visit.requestId) {
+          n.push(
+            MaterialPageRoute<void>(
+              builder: (_) => VisitWorkspaceScreen(session: session),
+            ),
+          );
+        } else {
+          n.push(
+            MaterialPageRoute<void>(
+              builder: (_) => NurseNotificationsScreen(session: session),
+            ),
+          );
+        }
         return;
 
       case NotificationRouteKind.nurseMarketplace:
@@ -56,20 +75,28 @@ class NurseRouter {
         return;
 
       case NotificationRouteKind.chatConversation:
-        final reqId = target.requestId ?? session.visit.requestId;
+        // BUG-030: Never substitute current active visit's requestId when notification lacks requestId
+        final reqId = target.requestId;
         if (reqId != null && reqId.isNotEmpty) {
+          final matchingPatient = (target.requestId == session.visit.requestId)
+              ? (session.visit.patientName ?? 'المريض')
+              : 'المريض';
           n.push(
             MaterialPageRoute<void>(
               builder: (_) => NurseChatScreen(
                 session: session,
                 requestId: reqId,
                 conversationId: target.conversationId,
-                patientName: session.visit.patientName ?? 'المريض',
+                patientName: matchingPatient,
               ),
             ),
           );
         } else {
-          switchTab(0);
+          n.push(
+            MaterialPageRoute<void>(
+              builder: (_) => NurseNotificationsScreen(session: session),
+            ),
+          );
         }
         return;
 

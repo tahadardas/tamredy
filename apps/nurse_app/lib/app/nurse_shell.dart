@@ -6,7 +6,6 @@ import '../features/calendar/nurse_calendar_screen.dart';
 import '../features/finance/financial_center_screen.dart';
 import '../features/home/nurse_home_screen.dart';
 import '../features/marketplace/marketplace_screen.dart';
-import '../features/offers/incoming_offer_overlay.dart';
 import '../features/profile/nurse_profile_screen.dart';
 import '../features/safety/guardian_sheet.dart';
 import 'nurse_router.dart';
@@ -20,59 +19,41 @@ class NurseShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final tc = context.tamColors;
 
-    return Stack(
-      children: [
-        ValueListenableBuilder<int>(
-          valueListenable: NurseRouter.currentTab,
-          builder: (context, tabIndex, _) {
-            final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-            return Scaffold(
-              backgroundColor: tc.background,
-              body: Column(
-                children: [
-                  TamConnectionBanner(
-                    health: session.api.connectionHealth,
-                    onRetry: session.resyncAll,
-                  ),
-                  if (guardianEnabled) _GuardianSosTopBar(session: session),
-                  Expanded(
-                    child: IndexedStack(
-                      index: tabIndex,
-                      children: [
-                        NurseHomeScreen(session: session),
-                        MarketplaceScreen(session: session),
-                        NurseCalendarScreen(session: session),
-                        FinancialCenterScreen(session: session),
-                        NurseProfileScreen(session: session),
-                      ],
-                    ),
-                  ),
-                ],
+    return ValueListenableBuilder<int>(
+      valueListenable: NurseRouter.currentTab,
+      builder: (context, tabIndex, _) {
+        final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+        return Scaffold(
+          backgroundColor: tc.background,
+          body: Column(
+            children: [
+              TamConnectionBanner(
+                health: session.api.connectionHealth,
+                onRetry: session.resyncAll,
               ),
-              bottomNavigationBar: keyboardOpen
-                  ? null
-                  : _NurseBottomBar(
-                      currentIndex: tabIndex,
-                      onTap: (i) => NurseRouter.currentTab.value = i,
-                    ),
-            );
-          },
-        ),
-        // Global full-screen Incoming Offer Overlay: appears over ALL tabs & pushed routes.
-        ListenableBuilder(
-          listenable: session.offers,
-          builder: (context, _) {
-            final offer = session.offers.activeOffer;
-            if (offer == null) return const SizedBox.shrink();
-            return Positioned.fill(
-              child: IncomingOfferOverlay(
-                session: session,
-                offer: offer,
+              if (guardianEnabled) _GuardianSosTopBar(session: session),
+              Expanded(
+                child: IndexedStack(
+                  index: tabIndex,
+                  children: [
+                    NurseHomeScreen(session: session),
+                    MarketplaceScreen(session: session),
+                    NurseCalendarScreen(session: session),
+                    FinancialCenterScreen(session: session),
+                    NurseProfileScreen(session: session),
+                  ],
+                ),
               ),
-            );
-          },
-        ),
-      ],
+            ],
+          ),
+          bottomNavigationBar: keyboardOpen
+              ? null
+              : _NurseBottomBar(
+                  currentIndex: tabIndex,
+                  onTap: (i) => NurseRouter.currentTab.value = i,
+                ),
+        );
+      },
     );
   }
 }

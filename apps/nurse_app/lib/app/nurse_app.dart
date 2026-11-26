@@ -3,7 +3,9 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../alarm.dart';
 import '../core/nurse_session_coordinator.dart';
+import '../features/offers/incoming_offer_overlay.dart';
 import '../features/profile/nurse_onboarding_gate.dart';
+import '../guardian.dart';
 import 'nurse_router.dart';
 import 'nurse_shell.dart';
 
@@ -66,7 +68,32 @@ class _TamreedyNurseAppState extends State<TamreedyNurseApp> {
                 ),
                 child: TamGlobalCallOverlay(
                   manager: _session.callManager,
-                  child: child ?? const SizedBox.shrink(),
+                  child: Stack(
+                    children: [
+                      child ?? const SizedBox.shrink(),
+                      // BUG-031: True Root Overlay above ALL tabs and ALL pushed routes,
+                      // prioritized underneath active Calls and yielding to urgent Guardian SOS.
+                      ListenableBuilder(
+                        listenable: Listenable.merge([
+                          _session.offers,
+                          if (guardianEnabled) _session.guardian,
+                        ]),
+                        builder: (context, _) {
+                          final emergencySos = guardianEnabled && _session.guardian.sosUnconfirmed;
+                          final offer = _session.offers.activeOffer;
+                          if (offer == null || emergencySos) {
+                            return const SizedBox.shrink();
+                          }
+                          return Positioned.fill(
+                            child: IncomingOfferOverlay(
+                              session: _session,
+                              offer: offer,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );

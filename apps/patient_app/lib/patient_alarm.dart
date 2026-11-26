@@ -195,14 +195,22 @@ class PatientAlarm {
   }) async {
     final role = '${data['recipientRole'] ?? ''}'.toUpperCase();
     final targetApp = '${data['targetApp'] ?? ''}'.toUpperCase();
-    if (role.isNotEmpty && role != 'PATIENT') return;
-    if (targetApp.isNotEmpty && targetApp != 'PATIENT_APP') return;
+    // BUG-028: Require explicit non-empty role & targetApp matching PATIENT / PATIENT_APP
+    if (role != 'PATIENT' || targetApp != 'PATIENT_APP') return;
+    final authUid = coordinator?.authenticatedUserId;
+    final recipientUid = '${data['recipientUserId'] ?? ''}'.trim();
+    if (authUid != null && authUid.isNotEmpty && recipientUid != authUid) return;
 
     final expiresAt = DateTime.tryParse('${data['expiresAt'] ?? ''}');
     if (expiresAt != null && expiresAt.isBefore(DateTime.now().toUtc())) return;
 
     final eventId = '${data['eventId'] ?? data['id'] ?? ''}';
-    if (!_markHandled(eventId)) return;
+    if (coordinator != null) {
+      final ev = AppNotificationEvent.fromMap(data);
+      if (!coordinator!.acceptEvent(ev, dedupe: true)) return;
+    } else if (!_markHandled(eventId)) {
+      return;
+    }
 
     final type = '${data['eventType'] ?? data['type'] ?? ''}';
     final isCallAlarm = type == 'call.incoming' || '${data['priority'] ?? ''}'.toUpperCase() == 'ALARM';

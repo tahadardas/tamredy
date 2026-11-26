@@ -372,29 +372,19 @@ export async function pushDeliverBatch(
   if (!planned.length) return { sent: 0, failed: 0, pruned: 0 };
 
   const uniqueUsers = [...new Set(planned.map(p => p.user))];
-  let tokenRows: any[];
-  try {
-    tokenRows = (
-      await db.query(
-        `SELECT dt.user_id, dt.token, dt.platform, dt.app_type, dt.role AS token_role, u.role AS user_role
-         FROM device_tokens dt
-         JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
-         WHERE dt.user_id = ANY($1::uuid[]) AND dt.active_status = 'ACTIVE'`,
-        [uniqueUsers],
-      )
-    ).rows;
-  } catch {
-    // Compatibility fallback if running against pre-063 schema in older tests
-    tokenRows = (
-      await db.query(
-        `SELECT dt.user_id, dt.token, dt.platform, u.role AS user_role
-         FROM device_tokens dt
-         JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
-         WHERE dt.user_id = ANY($1::uuid[])`,
-        [uniqueUsers],
-      )
-    ).rows;
-  }
+  // BUG-027: Migration 063 + device_sessions isolation is mandatory; never fall back to unisolated token queries.
+  const tokenRows = (
+    await db.query(
+      `SELECT dt.user_id, dt.token, dt.platform, dt.app_type, dt.role AS token_role, u.role AS user_role
+       FROM device_tokens dt
+       JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
+       LEFT JOIN device_sessions ds ON ds.id = dt.session_id
+       WHERE dt.user_id = ANY($1::uuid[])
+         AND dt.active_status = 'ACTIVE'
+         AND (dt.session_id IS NULL OR ds.revoked_at IS NULL)`,
+      [uniqueUsers],
+    )
+  ).rows;
 
   const byUser = new Map<string, { token: string; platform: string; appType?: string; tokenRole?: string; userRole?: string }[]>();
   for (const r of tokenRows) {
@@ -426,13 +416,15 @@ export async function pushDeliverBatch(
 
   const deliver = async (item: typeof planned[number]) => {
     const rawDevices = byUser.get(item.user) ?? [];
-    // Strict role/app isolation: never send a role-specific push to an account/token of a different role or app
+    // Strict role/app isolation: never deliver if token role/appType is missing or mismatched
     const devices = rawDevices.filter(dev => {
       if (item.recipientRole) {
-        if (dev.userRole && dev.userRole !== item.recipientRole) return false;
-        if (dev.tokenRole && dev.tokenRole !== item.recipientRole) return false;
+        if (!dev.userRole || dev.userRole !== item.recipientRole) return false;
+        if (!dev.tokenRole || dev.tokenRole !== item.recipientRole) return false;
       }
-      if (item.targetApp && dev.appType && dev.appType !== item.targetApp) return false;
+      if (item.targetApp) {
+        if (!dev.appType || dev.appType !== item.targetApp) return false;
+      }
       return true;
     });
 
@@ -552,24 +544,26 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
       UPDATE notification_deliveries SET ${changes},retry_lease_token=NULL,retry_lease_until=NULL
       WHERE id=$1 AND retry_lease_token=$2
     `,[row.id,lease,...values]);
-    let deviceCount: number | null = 0;
-    try {
-      deviceCount = (await db.query(
-        `SELECT 1 FROM device_tokens WHERE token=$1 AND user_id=$2 AND active_status='ACTIVE'`,
-        [row.device_token, row.recipient_user_id],
-      )).rowCount;
-    } catch {
-      deviceCount = (await db.query(
-        'SELECT 1 FROM device_tokens WHERE token=$1 AND user_id=$2',
-        [row.device_token, row.recipient_user_id],
-      )).rowCount;
-    }
+    const payload = typeof row.payload === 'object' ? row.payload : {};
+    const expectedRole = typeof payload.recipientRole === 'string' && payload.recipientRole ? payload.recipientRole : null;
+    const expectedApp = typeof payload.targetApp === 'string' && payload.targetApp ? payload.targetApp : null;
+    const deviceCount = (await db.query(
+      `SELECT 1 FROM device_tokens dt
+       JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
+       LEFT JOIN device_sessions ds ON ds.id = dt.session_id
+       WHERE dt.token = $1
+         AND dt.user_id = $2
+         AND dt.active_status = 'ACTIVE'
+         AND (dt.session_id IS NULL OR ds.revoked_at IS NULL)
+         AND ($3::text IS NULL OR (u.role = $3 AND dt.role = $3))
+         AND ($4::text IS NULL OR dt.app_type = $4)`,
+      [row.device_token, row.recipient_user_id, expectedRole, expectedApp],
+    )).rowCount;
     if (!row.device_token || !deviceCount) {
       await finish("status='ABANDONED'");
       continue;
     }
 
-    const payload = typeof row.payload === 'object' ? row.payload : {};
     const copy = pushCopy(payload.type, payload, payload.recipientRole);
     const isOffer = payload.type === 'offer.created';
     if (!copy || (isOffer && !open.has(payload.offerId))) {
