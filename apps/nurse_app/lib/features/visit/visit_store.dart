@@ -60,6 +60,10 @@ class VisitStore extends ChangeNotifier {
   String? patientName;
   String? addressText;
   String? bookingMode;
+  String? visitOutcome;
+  String? visitOutcomeReason;
+  bool invoiceAbsent = false;
+  bool billLoading = false;
   LatLng? destination;
   LatLng? nursePos;
   RouteInfo? route;
@@ -81,6 +85,10 @@ class VisitStore extends ChangeNotifier {
   int _restoreGeneration = 0;
   int _sessionGeneration = 0;
   Future<void>? _restoreInFlight;
+  int _assignmentGeneration = 0;
+  int _billGeneration = 0;
+  CancelToken? _detailCancelToken;
+  CancelToken? _restoreCancelToken;
 
   bool get hasActiveWork => const {
     NurseVisitPhase.assigned,
@@ -150,11 +158,15 @@ class VisitStore extends ChangeNotifier {
   Future<void> restoreActiveAssignment({bool force = false}) {
     if (kDemoMode) return Future.value();
     if (!force && _restoreInFlight != null) return _restoreInFlight!;
-    final future = _doRestoreActiveAssignment();
-    _restoreInFlight = future.whenComplete(() {
-      if (identical(_restoreInFlight, future)) _restoreInFlight = null;
+    _restoreCancelToken?.cancel('superseded');
+    final token = CancelToken();
+    _restoreCancelToken = token;
+    late final Future<void> tracked;
+    tracked = _doRestoreActiveAssignment(token).whenComplete(() {
+      if (identical(_restoreInFlight, tracked)) _restoreInFlight = null;
     });
-    return _restoreInFlight!;
+    _restoreInFlight = tracked;
+    return tracked;
   }
 
   NurseVisitPhase? _mapRequestStatusToPhase(String requestStatus) => switch (requestStatus) {
@@ -168,13 +180,13 @@ class VisitStore extends ChangeNotifier {
     _ => null,
   };
 
-  Future<void> _doRestoreActiveAssignment() async {
+  Future<void> _doRestoreActiveAssignment(CancelToken token) async {
     final gen = ++_restoreGeneration;
     final sessGen = _sessionGeneration;
     loading = true;
     notifyListeners();
     try {
-      final res = await api.getMap('/v1/nurse/me/active-assignment');
+      final res = await api.getMap('/v1/nurse/me/active-assignment', cancelToken: token);
       if (gen != _restoreGeneration || sessGen != _sessionGeneration) return;
 
       final rawInvoices = res['unpaidInvoices'] as List? ?? const [];
@@ -225,6 +237,15 @@ class VisitStore extends ChangeNotifier {
         return;
       }
 
+      final assignmentChanged = assignmentId != snap.assignmentId;
+      if (assignmentChanged) {
+        _resetActiveFieldVisit(keepCancellationNotice: false);
+        bill = null;
+        activeUnpaidInvoice = null;
+        _collectionRequestId = null;
+        collectionMessage = null;
+        collectionShort = false;
+      }
       syncError = null;
       activeSnapshot = snap;
       _entityVersion = snap.version;
@@ -232,15 +253,17 @@ class VisitStore extends ChangeNotifier {
       requestId = snap.requestId;
       phase = mappedPhase;
 
-      serviceTitle = snap.serviceTitle ?? serviceTitle;
-      beneficiaryName = snap.beneficiaryName ?? beneficiaryName;
-      patientName = snap.patientName ?? patientName;
-      addressText = snap.addressText ?? addressText;
-      bookingMode = snap.bookingMode ?? bookingMode;
-
-      if (snap.patientLat != null && snap.patientLng != null) {
-        destination = LatLng(snap.patientLat!, snap.patientLng!);
-      }
+      serviceTitle = snap.serviceTitle;
+      beneficiaryName = snap.beneficiaryName;
+      patientName = snap.patientName;
+      addressText = snap.exactLocationAuthorized ? snap.addressText : null;
+      bookingMode = snap.bookingMode;
+      visitOutcome = snap.visitOutcome;
+      visitOutcomeReason = snap.visitOutcomeReason;
+      invoiceAbsent = visitOutcome == 'NOT_PERFORMED';
+      destination = snap.exactLocationAuthorized && snap.patientLat != null && snap.patientLng != null
+          ? LatLng(snap.patientLat!, snap.patientLng!) : null;
+      if (destination == null) stopNavigation();
 
       if (snap.items != null) {
         items = snap.items!;
@@ -261,8 +284,10 @@ class VisitStore extends ChangeNotifier {
         await loadBill(targetRequestId: requestId);
       }
       error = null;
-    } catch (_) {
-      // Keep local state on transient network failure
+    } catch (e) {
+      if (gen != _restoreGeneration || sessGen != _sessionGeneration || token.isCancelled) return;
+      syncError = explainError(e, fallback: 'تعذر تحديث الزيارة؛ يتم عرض آخر بيانات مؤكدة');
+      api.markStale();
     } finally {
       if (gen == _restoreGeneration && sessGen == _sessionGeneration) {
         loading = false;
@@ -293,24 +318,36 @@ class VisitStore extends ChangeNotifier {
   }
 
   Future<void> refreshAssignmentDetail() async {
-    if (kDemoMode || assignmentId == null) return;
+    final id = assignmentId;
+    if (kDemoMode || id == null) return;
+    final session = _sessionGeneration;
+    final generation = _assignmentGeneration;
+    _detailCancelToken?.cancel('superseded');
+    final token = CancelToken();
+    _detailCancelToken = token;
     try {
-      final d = await api.getMap('/v1/nurse/assignments/$assignmentId');
-      serviceTitle = d['service_title']?.toString() ?? serviceTitle;
-      beneficiaryName = d['beneficiary_name']?.toString() ?? beneficiaryName;
-      patientName = d['patient_name']?.toString() ?? patientName;
-      addressText = d['address_text']?.toString() ?? addressText;
+      final d = await api.getMap('/v1/nurse/assignments/$id', cancelToken: token);
+      if (session != _sessionGeneration || generation != _assignmentGeneration || id != assignmentId || token.isCancelled) return;
+      serviceTitle = d['service_title']?.toString();
+      beneficiaryName = d['beneficiary_name']?.toString();
+      patientName = d['patient_name']?.toString();
+      final authorized = d['exact_location_authorized'] == true;
+      addressText = authorized ? d['address_text']?.toString() : null;
       final lat = double.tryParse('${d['latitude'] ?? ''}');
       final lng = double.tryParse('${d['longitude'] ?? ''}');
-      if (lat != null && lng != null) destination = LatLng(lat, lng);
-      if (d['items'] is List) {
-        items = (d['items'] as List)
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      }
+      destination = authorized && lat != null && lng != null ? LatLng(lat, lng) : null;
+      if (destination == null) stopNavigation();
+      visitOutcome = d['visit_outcome']?.toString();
+      visitOutcomeReason = d['visit_outcome_reason']?.toString();
+      invoiceAbsent = visitOutcome == 'NOT_PERFORMED';
+      items = (d['items'] as List? ?? const []).whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e)).toList();
       notifyListeners();
-    } catch (_) {}
+    } catch (e) {
+      if (session != _sessionGeneration || generation != _assignmentGeneration || token.isCancelled) return;
+      syncError = explainError(e, fallback: 'تعذر تحديث تفاصيل الزيارة');
+      notifyListeners();
+    }
   }
 
   Future<void> _step(
@@ -319,15 +356,23 @@ class VisitStore extends ChangeNotifier {
     Map<String, dynamic>? body,
   }) async {
     if (busy || (!kDemoMode && assignmentId == null)) return;
+    final session = _sessionGeneration;
+    final generation = _assignmentGeneration;
+    final id = assignmentId;
     busy = true;
     error = null;
     notifyListeners();
     try {
       if (!kDemoMode) {
-        await api.post('/v1/nurse/assignments/$assignmentId/$command', body);
+        final response = await api.post('/v1/nurse/assignments/$id/$command', body);
+        if (session != _sessionGeneration || generation != _assignmentGeneration || id != assignmentId) return;
+        visitOutcome = (response['visit_outcome'] ?? response['visitOutcome'])?.toString() ?? visitOutcome;
+        visitOutcomeReason = (response['visit_outcome_reason'] ?? response['visitOutcomeReason'] ?? response['reason'])?.toString() ?? visitOutcomeReason;
+        invoiceAbsent = visitOutcome == 'NOT_PERFORMED';
       }
       phase = nextPhase;
     } on DioException catch (de) {
+      if (session != _sessionGeneration || generation != _assignmentGeneration) return;
       final data = de.response?.data;
       if (command == 'arrive' &&
           data is Map &&
@@ -342,10 +387,13 @@ class VisitStore extends ChangeNotifier {
         error = explainError(de, fallback: 'تعذر تنفيذ الانتقال. تحقق من الحالة وأعد المحاولة.');
       }
     } catch (e) {
+      if (session != _sessionGeneration || generation != _assignmentGeneration) return;
       error = explainError(e, fallback: 'تعذر تنفيذ الانتقال. حاول مرة أخرى.');
     } finally {
-      busy = false;
-      notifyListeners();
+      if (session == _sessionGeneration && generation == _assignmentGeneration) {
+        busy = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -404,10 +452,16 @@ class VisitStore extends ChangeNotifier {
       return;
     }
 
-    if (assignmentId == null || _posSub != null) return;
+    if (assignmentId == null || destination == null || _posSub != null) return;
+    final session = _sessionGeneration;
+    final generation = _assignmentGeneration;
+    final id = assignmentId;
+    bool current() => session == _sessionGeneration && generation == _assignmentGeneration && id == assignmentId
+        && destination != null && phase == NurseVisitPhase.enRoute;
     try {
       _navChannel ??= LiveLocationChannel(api);
       await _navChannel!.start();
+      if (!current()) return;
       var perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
@@ -415,6 +469,7 @@ class VisitStore extends ChangeNotifier {
       if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
         return;
       }
+      if (!current()) return;
       final settings = defaultTargetPlatform == TargetPlatform.android
           ? AndroidSettings(
               accuracy: LocationAccuracy.high,
@@ -428,13 +483,14 @@ class VisitStore extends ChangeNotifier {
           : const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10);
 
       _posSub = Geolocator.getPositionStream(locationSettings: settings).listen((pos) async {
+        if (!current()) return;
         nursePos = LatLng(pos.latitude, pos.longitude);
         notifyListeners();
         if (DateTime.now().difference(_lastSentAt).inSeconds >= 4) {
           _lastSentAt = DateTime.now();
           try {
             final sessionId = await api.deviceSessionId();
-            if (sessionId == null) return;
+            if (sessionId == null || !current()) return;
             final payload = <String, dynamic>{
               'latitude': pos.latitude,
               'longitude': pos.longitude,
@@ -445,10 +501,10 @@ class VisitStore extends ChangeNotifier {
               if (pos.speed >= 0) 'speedMetersPerSecond': pos.speed,
               if (pos.heading >= 0) 'heading': pos.heading,
               'locationSource': 'GPS',
-              'assignmentId': ?assignmentId,
+              'assignmentId': ?id,
             };
             final sentViaSocket = await (_navChannel?.send(payload) ?? Future.value(false));
-            if (!sentViaSocket) {
+            if (!sentViaSocket && current()) {
               api.put('/v1/nurse/me/location', payload).catchError((_) => <String, dynamic>{});
             }
           } catch (_) {}
@@ -456,9 +512,11 @@ class VisitStore extends ChangeNotifier {
       });
 
       await _refreshRoute();
+      if (!current()) return;
       _routeTimer?.cancel();
       _routeTimer = Timer.periodic(const Duration(seconds: 20), (_) => _refreshRoute());
     } catch (_) {
+      if (!current()) return;
       error = 'تعذر تفعيل التتبع الملاحي، تأكد من تشغيل GPS.';
       notifyListeners();
     }
@@ -466,10 +524,19 @@ class VisitStore extends ChangeNotifier {
 
   Future<void> _refreshRoute() async {
     if (assignmentId == null || phase != NurseVisitPhase.enRoute) return;
+    final id = assignmentId;
+    final generation = _assignmentGeneration;
     try {
-      route = RouteInfo.fromJson(await api.getMap('/v1/nurse/assignments/$assignmentId/route'));
+      final fetched = RouteInfo.fromJson(await api.getMap('/v1/nurse/assignments/$id/route'));
+      if (id != assignmentId || generation != _assignmentGeneration || destination == null) return;
+      route = fetched;
       notifyListeners();
-    } catch (_) {}
+    } catch (e) {
+      if (id == assignmentId && generation == _assignmentGeneration) {
+        syncError = explainError(e, fallback: 'تعذر تحديث مسار الزيارة');
+        notifyListeners();
+      }
+    }
   }
 
   void stopNavigation() {
@@ -502,23 +569,38 @@ class VisitStore extends ChangeNotifier {
       return;
     }
     if (reqId == null || reqId.isEmpty) return;
+    if (reqId == requestId && invoiceAbsent) {
+      bill = null;
+      billLoading = false;
+      notifyListeners();
+      return;
+    }
     final sessGen = _sessionGeneration;
+    final billGen = ++_billGeneration;
+    billLoading = true;
+    notifyListeners();
     try {
       final fetched = BillInfo.fromJson(await api.getMap('/v1/nurse/requests/$reqId/bill'));
-      if (sessGen != _sessionGeneration) return;
+      if (sessGen != _sessionGeneration || billGen != _billGeneration) return;
       bill = fetched;
       _collectionRequestId = reqId;
       notifyListeners();
     } catch (e) {
-      if (sessGen != _sessionGeneration) return;
+      if (sessGen != _sessionGeneration || billGen != _billGeneration) return;
       error = explainError(e, fallback: 'تعذر تحميل تفاصيل الفاتورة');
-      notifyListeners();
+    } finally {
+      if (sessGen == _sessionGeneration && billGen == _billGeneration) {
+        billLoading = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<bool> collectCash(int amount, {String? targetRequestId}) async {
     final b = bill;
     if (b == null || amount <= 0 || collecting) return false;
+    final session = _sessionGeneration;
+    final generation = _assignmentGeneration;
     collecting = true;
     collectionMessage = null;
     notifyListeners();
@@ -544,7 +626,9 @@ class VisitStore extends ChangeNotifier {
 
       final id = targetRequestId ?? _collectionRequestId ?? activeUnpaidInvoice?.requestId ?? requestId;
       if (id == null || id.isEmpty) return false;
-      final storageKey = 'cash_collect_v3_${id}_$amount';
+      final owner = await api.currentUserId();
+      if (owner == null || owner.isEmpty || session != _sessionGeneration) return false;
+      final storageKey = 'cash_collect_v4_${owner}_${id}_$amount';
       var idemKey = await api.readLocal(storageKey);
       if (idemKey == null || idemKey.isEmpty) {
         idemKey = api.newIdempotencyKey();
@@ -556,8 +640,7 @@ class VisitStore extends ChangeNotifier {
         {'amount': amount},
         {'Idempotency-Key': idemKey},
       );
-      await api.writeLocal(storageKey, null);
-
+      if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
       final remaining = (num.tryParse('${r['remaining'] ?? 0}') ?? 0).round();
       final change = (num.tryParse('${r['change'] ?? 0}') ?? 0).round();
       collectionMessage = remaining > 0
@@ -567,18 +650,23 @@ class VisitStore extends ChangeNotifier {
               : 'تم تحصيل كامل المبلغ بنجاح';
       collectionShort = r['status'] != 'PAID';
       await loadBill(targetRequestId: id);
+      if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
+      if (bill != null && error == null) await api.writeLocal(storageKey, null);
       if (!collectionShort) {
         unpaidInvoices = unpaidInvoices.where((inv) => inv.requestId != id).toList();
         if (activeUnpaidInvoice?.requestId == id) activeUnpaidInvoice = null;
       }
       return !collectionShort;
     } catch (e) {
+      if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
       collectionMessage = explainError(e, fallback: 'تعذر تأكيد التحصيل النقدي. حاول مرة أخرى.');
       collectionShort = true;
       return false;
     } finally {
-      collecting = false;
-      notifyListeners();
+      if (session == _sessionGeneration && generation == _assignmentGeneration) {
+        collecting = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -618,6 +706,13 @@ class VisitStore extends ChangeNotifier {
     _sessionGeneration++;
     _restoreGeneration++;
     _restoreInFlight = null;
+    _restoreCancelToken?.cancel('session_changed');
+    loading = false;
+    busy = false;
+    collecting = false;
+    billLoading = false;
+    _billGeneration++;
+    error = null;
     unpaidInvoices = const [];
     assignments = const [];
     activeUnpaidInvoice = null;
@@ -626,7 +721,16 @@ class VisitStore extends ChangeNotifier {
   }
 
   void _resetActiveFieldVisit({required bool keepCancellationNotice}) {
+    _assignmentGeneration++;
+    _billGeneration++;
+    _detailCancelToken?.cancel('assignment_changed');
+    _detailCancelToken = null;
     stopNavigation();
+    busy = false;
+    billLoading = false;
+    visitOutcome = null;
+    visitOutcomeReason = null;
+    invoiceAbsent = false;
     phase = NurseVisitPhase.idle;
     activeSnapshot = null;
     assignmentId = null;
@@ -658,6 +762,12 @@ class VisitStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _sessionGeneration++;
+    _restoreGeneration++;
+    _assignmentGeneration++;
+    _billGeneration++;
+    _restoreCancelToken?.cancel('disposed');
+    _detailCancelToken?.cancel('disposed');
     stopNavigation();
     _sub.cancel();
     super.dispose();

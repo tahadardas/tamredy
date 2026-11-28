@@ -285,6 +285,21 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
     final bill = v.bill;
     final paid = bill?.status == 'PAID';
 
+    if (v.invoiceAbsent) {
+      return TamScaffold(
+        title: 'أُغلقت الزيارة دون تقديم خدمات',
+        subtitle: 'لا توجد فاتورة للتحصيل',
+        showBack: true,
+        children: [
+          NoticeBox(v.visitOutcomeReason ?? 'لم تُنفذ الخدمات خلال هذه الزيارة'),
+          PrimaryButton('العودة إلى وضع الاستعداد', onPressed: () {
+            v.finishAndReturnAvailable();
+            Navigator.of(context).maybePop();
+          }),
+        ],
+      );
+    }
+
     return TamScaffold(
       title: 'إنهاء الزيارة والتحصيل',
       subtitle: paid ? 'تم التحصيل بالكامل بنجاح' : 'تحصيل القيمة النقدية من المريض',
@@ -292,7 +307,10 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
       onRefresh: v.loadBill,
       children: [
         if (bill == null)
-          const TamSkeleton.card(height: 160)
+          if (v.billLoading)
+            const TamSkeleton.card(height: 160)
+          else
+            TamErrorState(title: 'تعذر تحميل الفاتورة', message: v.error ?? 'أعد تحميل تفاصيل الفاتورة', onRetry: v.loadBill)
         else ...[
           TamCard(
             child: Column(

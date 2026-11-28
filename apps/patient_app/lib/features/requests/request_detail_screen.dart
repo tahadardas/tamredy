@@ -104,7 +104,7 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
     final tc = context.tamColors;
 
     return ListenableBuilder(
-      listenable: widget.session.requests,
+      listenable: Listenable.merge([widget.session.requests, widget.session.bookingDraft]),
       builder: (context, _) {
         final req = widget.session.requests.requestById(widget.requestId);
         return TamScaffold(
@@ -113,9 +113,16 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
           showBack: true,
           onRefresh: () => widget.session.requests.loadRequestDetail(widget.requestId),
           children: [
-            if (req == null)
-              const TamSkeleton.card(height: 180)
-            else ...[
+            if (widget.session.requests.detailErrors[widget.requestId] case final String message)
+              TamErrorState(title: 'تعذر تحديث تفاصيل الطلب', message: message,
+                onRetry: () => widget.session.requests.loadRequestDetail(widget.requestId, force: true)),
+            if (widget.session.requests.reconciliationPending.contains(widget.requestId))
+              const NoticeBox('تجري مطابقة حالة الطلب مع الخادم؛ البيانات المعروضة آخر حالة مؤكدة'),
+            if (req == null && !widget.session.requests.detailErrors.containsKey(widget.requestId))
+              const TamSkeleton.card(height: 180),
+            if (req != null) ...[
+              if (req.visitOutcome == 'NOT_PERFORMED')
+                NoticeBox(req.visitOutcomeReason ?? 'أُغلقت الزيارة دون تقديم خدمات؛ لا توجد فاتورة للتحصيل'),
               TamCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -286,7 +293,7 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
                     ),
                   ),
                 ),
-              if (req.status == 'COMPLETED')
+              if (req.status == 'COMPLETED' && req.visitOutcome != 'NOT_PERFORMED')
                 PrimaryButton(
                   req.isUnpaid ? 'إتمام الدفع والتقييم' : 'عرض الفاتورة والتقييم',
                   onPressed: () => Navigator.of(context).push(

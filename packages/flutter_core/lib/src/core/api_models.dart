@@ -31,23 +31,23 @@ class ServerCapabilities {
 
   const ServerCapabilities({
     this.scheduledVisitsEnabled = false,
-    this.openMarketplaceEnabled = true,
+    this.openMarketplaceEnabled = false,
     this.openDispatchEnabled = false,
     this.liveLocationRedisEnabled = false,
     this.guardianNightPolicyEnabled = false,
     this.walletProviderEnabled = false,
-    this.ordersAccepting = true,
+    this.ordersAccepting = false,
     this.pausedMessage,
   });
 
   factory ServerCapabilities.fromJson(Map<String, dynamic> j) => ServerCapabilities(
     scheduledVisitsEnabled: j['scheduledVisitsEnabled'] == true,
-    openMarketplaceEnabled: j['openMarketplaceEnabled'] != false,
+    openMarketplaceEnabled: j['openMarketplaceEnabled'] == true,
     openDispatchEnabled: j['openDispatchEnabled'] == true,
     liveLocationRedisEnabled: j['liveLocationRedisEnabled'] == true,
     guardianNightPolicyEnabled: j['guardianNightPolicyEnabled'] == true,
     walletProviderEnabled: j['walletProviderEnabled'] == true,
-    ordersAccepting: j['ordersAccepting'] != false,
+    ordersAccepting: j['ordersAccepting'] == true,
     pausedMessage: j['pausedMessage']?.toString(),
   );
 }
@@ -271,6 +271,8 @@ class TypedCareRequest {
   final String? marketplaceStatus;
   final String? clinicalApprovalStatus;
   final String? paymentStatus;
+  final String? visitOutcome;
+  final String? visitOutcomeReason;
   final int? amountDue;
   final int tipAmount;
   final String serviceTitle;
@@ -302,6 +304,8 @@ class TypedCareRequest {
     this.marketplaceStatus,
     this.clinicalApprovalStatus,
     this.paymentStatus,
+    this.visitOutcome,
+    this.visitOutcomeReason,
     this.amountDue,
     this.tipAmount = 0,
     this.serviceTitle = '',
@@ -365,6 +369,8 @@ class TypedCareRequest {
       marketplaceStatus: incoming.marketplaceStatus ?? marketplaceStatus,
       clinicalApprovalStatus: incoming.clinicalApprovalStatus ?? clinicalApprovalStatus,
       paymentStatus: incoming.paymentStatus ?? paymentStatus,
+      visitOutcome: incoming.visitOutcome ?? visitOutcome,
+      visitOutcomeReason: incoming.visitOutcomeReason ?? visitOutcomeReason,
       amountDue: incoming.amountDue ?? amountDue,
       tipAmount: incoming.tipAmount != 0 ? incoming.tipAmount : tipAmount,
       serviceTitle: incoming.serviceTitle.isNotEmpty ? incoming.serviceTitle : serviceTitle,
@@ -411,6 +417,8 @@ class TypedCareRequest {
       marketplaceStatus: j['marketplace_status']?.toString(),
       clinicalApprovalStatus: j['clinical_approval_status']?.toString(),
       paymentStatus: j['payment_status']?.toString(),
+      visitOutcome: (j['visit_outcome'] ?? j['visitOutcome'])?.toString(),
+      visitOutcomeReason: (j['visit_outcome_reason'] ?? j['visitOutcomeReason'])?.toString(),
       amountDue: j['amount_due'] != null ? (num.tryParse('${j['amount_due']}') ?? 0).round() : null,
       tipAmount: (num.tryParse('${j['tip_amount'] ?? 0}') ?? 0).round(),
       serviceTitle: '${j['service_title'] ?? ''}',
@@ -446,6 +454,9 @@ class TypedAssignmentSnapshot {
   final String requestStatus;
   final int version;
   final bool departureWindowOpen;
+  final bool exactLocationAuthorized;
+  final String? visitOutcome;
+  final String? visitOutcomeReason;
   final List<String> allowedActions;
   final String? serviceTitle;
   final String? beneficiaryName;
@@ -464,6 +475,9 @@ class TypedAssignmentSnapshot {
     required this.requestStatus,
     this.version = 1,
     this.departureWindowOpen = false,
+    this.exactLocationAuthorized = false,
+    this.visitOutcome,
+    this.visitOutcomeReason,
     this.allowedActions = const [],
     this.serviceTitle,
     this.beneficiaryName,
@@ -483,6 +497,9 @@ class TypedAssignmentSnapshot {
     requestStatus: '${j['request_status'] ?? j['status'] ?? ''}',
     version: (num.tryParse('${j['version'] ?? 1}') ?? 1).toInt(),
     departureWindowOpen: j['departure_window_open'] == true,
+    exactLocationAuthorized: (j['exact_location_authorized'] ?? j['exactLocationAuthorized']) == true,
+    visitOutcome: (j['visit_outcome'] ?? j['visitOutcome'])?.toString(),
+    visitOutcomeReason: (j['visit_outcome_reason'] ?? j['visitOutcomeReason'])?.toString(),
     allowedActions: j['allowedActions'] is List
         ? (j['allowedActions'] as List).map((e) => e.toString()).toList()
         : const [],
