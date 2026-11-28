@@ -22,7 +22,7 @@ jobs:
           POSTGRES_DB: tamreedy_test_rc2
         ports: ['5432:5432']
         options: >-
-          --health-cmd 'pg_isready -U rc2_test -d tamreedy_test_rc2'
+          --health-cmd "pg_isready -U rc2_test -d tamreedy_test_rc2"
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       NODE_ENV: test

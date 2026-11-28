@@ -78,8 +78,14 @@ async function flushPushOutbox(): Promise<boolean> {
 
 async function runWorker(): Promise<void> {
   await pool.query('SELECT 1');
-  const missing = missingMigrations((await pool.query('SELECT name FROM schema_migrations')).rows.map(row => String(row.name)));
-  if (missing.length) throw new Error('MIGRATION_COMPATIBILITY_ERROR: ' + missing.join(','));
+  let applied: string[];
+  try {
+    applied = (await pool.query('SELECT name FROM schema_migrations')).rows.map(row => String(row.name));
+  } catch {
+    throw Object.assign(new Error('Migration manifest unavailable'), {code:'MIGRATION_COMPATIBILITY_ERROR'});
+  }
+  const missing = missingMigrations(applied);
+  if (missing.length) throw Object.assign(new Error('Required release migrations missing'), {code:'MIGRATION_COMPATIBILITY_ERROR'});
   const features = featureCapabilities();
   if (features.openDispatchEnabled && !features.openMarketplaceEnabled) throw new Error('FEATURE_FLAGS_CONFLICT');
   if (features.liveLocationRedisEnabled && !redis) throw new Error('REDIS_CONFIGURATION_REQUIRED');

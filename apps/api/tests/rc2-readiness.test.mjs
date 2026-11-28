@@ -75,3 +75,24 @@ test('actual PostgreSQL outbox monitor counts required channels, expiry and dead
     assert.equal(row.dead_letter_count,1);
   }finally{await db.close();}
 });
+
+test('readiness validates configured FCM key and TURN URL without claiming provider delivery',async()=>{
+  const keys=['PUSH_ENABLED','VOICE_ENABLED','FCM_SERVICE_ACCOUNT_FILE','FCM_SERVICE_ACCOUNT_JSON','TURN_URLS','TURN_SHARED_SECRET'];
+  const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  try{
+    process.env.PUSH_ENABLED='true';process.env.VOICE_ENABLED='false';
+    delete process.env.FCM_SERVICE_ACCOUNT_FILE;
+    process.env.FCM_SERVICE_ACCOUNT_JSON='not-json';
+    await assert.rejects(probe().report(),e=>e.getResponse().failures.includes('FCM_NOT_CONFIGURED'));
+    process.env.FCM_SERVICE_ACCOUNT_JSON=JSON.stringify({project_id:'isolated-test',client_email:'rc2@example.test',private_key:'not-a-key'});
+    await assert.rejects(probe().report(),e=>e.getResponse().failures.includes('FCM_NOT_CONFIGURED'));
+    const {generateKeyPairSync}=await import('node:crypto');
+    const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+    process.env.FCM_SERVICE_ACCOUNT_JSON=JSON.stringify({project_id:'isolated-test',client_email:'rc2@example.test',private_key:privateKey.export({type:'pkcs8',format:'pem'})});
+    assert.equal((await probe().report()).checks.push.configured,true);
+    process.env.VOICE_ENABLED='true';process.env.TURN_URLS='https://invalid.example.test';process.env.TURN_SHARED_SECRET='isolated-test-fixture';
+    await assert.rejects(probe().report(),e=>e.getResponse().failures.includes('VOICE_NOT_CONFIGURED'));
+    process.env.TURN_URLS='turn:127.0.0.1:3478?transport=udp';
+    assert.equal((await probe().report()).checks.voice.configured,true);
+  }finally{for(const[key,value]of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});

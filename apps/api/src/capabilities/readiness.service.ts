@@ -1,4 +1,6 @@
 import { OUTBOX_HEALTH_SQL } from './readiness-queries.js';
+import { readFile } from 'node:fs/promises';
+import { createPrivateKey } from 'node:crypto';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { GeoIndexService } from '../live-location/geo-index.service.js';
@@ -56,22 +58,39 @@ export class ReadinessService {
     let connected = redis.connected;
     if (redisRequired && !redis.enabled) {
       const {Redis} = await import('ioredis');
-      const client = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, {lazyConnect:true, enableOfflineQueue:false, maxRetriesPerRequest:0, connectTimeout:1500, commandTimeout:1500}) : null;
-      if (client) {
-        client.on('error', () => undefined);
-        try { await client.connect(); connected = await client.ping() === 'PONG'; }
-        catch { connected = false; }
-        finally { client.disconnect(); }
-      }
+      let client: InstanceType<typeof Redis> | null = null;
+      try {
+        if (process.env.REDIS_URL) {
+          client = new Redis(process.env.REDIS_URL, {lazyConnect:true, enableOfflineQueue:false, maxRetriesPerRequest:0, connectTimeout:1500, commandTimeout:1500});
+          client.on('error', () => undefined);
+          await client.connect();
+          connected = await client.ping() === 'PONG';
+        }
+      } catch { connected = false; }
+      finally { client?.disconnect(); }
     }
     checks.redis = {...redis, required:redisRequired, connected};
     if (redisRequired && !connected) failures.push('REDIS_UNAVAILABLE');
-    const pushConfigured = Boolean(process.env.FCM_SERVICE_ACCOUNT_FILE || process.env.FCM_SERVICE_ACCOUNT_JSON);
+    let pushConfigured = false;
+    if (process.env.FCM_SERVICE_ACCOUNT_FILE || process.env.FCM_SERVICE_ACCOUNT_JSON) {
+      try {
+        const raw = process.env.FCM_SERVICE_ACCOUNT_FILE
+          ? await readFile(process.env.FCM_SERVICE_ACCOUNT_FILE, 'utf8')
+          : process.env.FCM_SERVICE_ACCOUNT_JSON!;
+        const account = JSON.parse(raw) as Record<string, unknown>;
+        pushConfigured = typeof account.project_id === 'string' && account.project_id.length > 0
+          && typeof account.client_email === 'string' && account.client_email.includes('@')
+          && typeof account.private_key === 'string'
+          && createPrivateKey(account.private_key).asymmetricKeyType === 'rsa';
+      } catch { pushConfigured = false; }
+    }
     const pushRequired = process.env.PUSH_ENABLED !== 'false';
     checks.push = {configured:pushConfigured, required:pushRequired};
     if (pushRequired && !pushConfigured) failures.push('FCM_NOT_CONFIGURED');
     const voiceRequired = process.env.VOICE_ENABLED !== 'false';
-    const voiceConfigured = Boolean(process.env.TURN_URLS && process.env.TURN_SHARED_SECRET);
+    const turnUrls = process.env.TURN_URLS?.split(',').map(value => value.trim()).filter(Boolean) ?? [];
+    const voiceConfigured = turnUrls.length > 0 && turnUrls.every(value => /^turns?:[^\s,]+$/.test(value))
+      && Boolean(process.env.TURN_SHARED_SECRET?.trim());
     checks.voice = {configured:voiceConfigured, required:voiceRequired};
     if (voiceRequired && !voiceConfigured) failures.push('VOICE_NOT_CONFIGURED');
     const capabilities = await this.capabilities.snapshot();
