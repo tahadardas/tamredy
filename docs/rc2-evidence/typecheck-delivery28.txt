@@ -1,0 +1,10 @@
+> tamreedy-monorepo@0.2.0 typecheck D:\Tamreedy
+> pnpm -r typecheck
+
+Scope: 3 of 4 workspace projects
+apps/api typecheck$ tsc --noEmit
+apps/admin_web typecheck$ tsc --noEmit
+apps/worker typecheck$ tsc --noEmit -p tsconfig.json
+apps/worker typecheck: Done
+apps/admin_web typecheck: Done
+apps/api typecheck: Done

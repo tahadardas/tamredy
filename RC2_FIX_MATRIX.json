@@ -1,0 +1,960 @@
+{
+  "release": "Tamreedy 3.1 RC2",
+  "baseCommit": "b1427e0f3f2afbdb468a89f343ebaaade02bfbee",
+  "implementationCommit": "c6c18f718dc8cfd55a0cd8eba461d72602338a19",
+  "targetBranch": "feature/tamreedy-rc2-regression-closure",
+  "sourceBranch": "feature/tamreedy-production-hardening",
+  "summary": {
+    "totalFixes": 30,
+    "implemented": 30,
+    "verified": 22,
+    "implementedNotVerified": 8,
+    "blocked": 0,
+    "failed": 0,
+    "productionReady": false,
+    "newHttpEndpoints": [],
+    "newSocketMessages": [
+      "call.signal with ACK"
+    ],
+    "migrationsAdded": [
+      "infra/db/migrations/070_rc2_booking_terms.sql",
+      "infra/db/migrations/071_rc2_currency_accounts.sql",
+      "infra/db/migrations/072_rc2_shared_eligibility.sql",
+      "infra/db/migrations/079_rc2_worker_heartbeat.sql"
+    ]
+  },
+  "fixes": [
+    {
+      "fixId": "RC2-001",
+      "originalFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "originalLines": "169-179",
+      "rootCause": "Future identity mismatch permanently pinned refresh singleflight.",
+      "correctedFunction": "refreshAll",
+      "changedFiles": [
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart",
+        "apps/patient_app/test/rc2_requests_store_test.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "correctedLines": 215,
+      "commitSha": "8422ef12baa998eef7ee540982f1f79f4ad28b76",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-002",
+      "originalFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "originalLines": "261-275",
+      "rootCause": "Detail singleflight compared original and wrapped futures and retained completed results.",
+      "correctedFunction": "loadRequestDetail",
+      "changedFiles": [
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart",
+        "apps/patient_app/test/rc2_requests_store_test.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "correctedLines": 324,
+      "commitSha": "8422ef12baa998eef7ee540982f1f79f4ad28b76",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-003",
+      "originalFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "originalLines": "132-167",
+      "rootCause": "Snapshot upsert omitted reconciliation and shared refresh generations invalidated history.",
+      "correctedFunction": "_reconcileMissing",
+      "changedFiles": [
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart",
+        "apps/patient_app/test/rc2_requests_store_test.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "correctedLines": 169,
+      "commitSha": "8422ef12baa998eef7ee540982f1f79f4ad28b76",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-004",
+      "originalFile": "apps/api/src/voice/voice.service.ts",
+      "originalLines": "167-214",
+      "rootCause": "Call state events lacked server recipient role and target app",
+      "changedFiles": [
+        "apps/api/src/voice/voice.service.ts",
+        "apps/worker/src/voice-lifecycle.ts"
+      ],
+      "correctedFunction": "sendCallEvent",
+      "correctedLines": 39,
+      "commitSha": "b162c9e96521f73f413f6ff443bb609df4920c59",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "Handset call-state propagation not exercised end to end; server envelopes and client ingestion/version behavior pass.",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "apps/api/src/voice/voice.service.ts"
+    },
+    {
+      "fixId": "RC2-005",
+      "originalFile": "apps/api/src/realtime/live.gateway.ts",
+      "originalLines": "74-89,125-144",
+      "rootCause": "Private socket events had incomplete envelopes and insufficient current entity/session authorization",
+      "changedFiles": [
+        "apps/api/src/realtime/live.gateway.ts",
+        "apps/api/src/realtime/private-event.ts"
+      ],
+      "correctedFunction": "deliverPrivateEvent",
+      "correctedLines": 178,
+      "commitSha": "b162c9e96521f73f413f6ff443bb609df4920c59",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt",
+          "docs/rc2-evidence/socket-load-500.json"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "apps/api/src/realtime/live.gateway.ts"
+    },
+    {
+      "fixId": "RC2-006",
+      "originalFile": "packages/flutter_core/lib/src/realtime.dart",
+      "originalLines": "118-138,281-288,384-400",
+      "rootCause": "FCM presentation dedupe suppressed later WebSocket domain processing",
+      "changedFiles": [
+        "packages/flutter_core/lib/src/core/notification_coordinator.dart",
+        "packages/flutter_core/lib/src/core/realtime_bus.dart",
+        "packages/flutter_core/lib/src/realtime.dart"
+      ],
+      "correctedFunction": "ingestPrivateEvent",
+      "correctedLines": 68,
+      "commitSha": "b352c6c401f0903e2095354d81d95cc7192d4bd5",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "packages/flutter_core/lib/src/realtime.dart"
+    },
+    {
+      "fixId": "RC2-007",
+      "originalFile": "packages/flutter_core/lib/src/core/notification_coordinator.dart",
+      "originalLines": "239-249",
+      "rootCause": "Private events accepted before authenticated account identity was known",
+      "changedFiles": [
+        "packages/flutter_core/lib/src/core/notification_coordinator.dart"
+      ],
+      "correctedFunction": "isAuthorizedForThisApp",
+      "correctedLines": 257,
+      "commitSha": "b352c6c401f0903e2095354d81d95cc7192d4bd5",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt",
+          "docs/rc2-evidence/socket-load-500.json"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "packages/flutter_core/lib/src/core/notification_coordinator.dart"
+    },
+    {
+      "fixId": "RC2-008",
+      "originalFile": "apps/worker/src/push.ts",
+      "originalLines": "381-384,421-426,548-557",
+      "rootCause": "Null, revoked and foreign session bindings allowed initial/retry push delivery; device token rebind retained previous session",
+      "changedFiles": [
+        "apps/api/src/devices/devices.controller.ts",
+        "apps/worker/src/push.ts",
+        "apps/worker/tests/push.test.mjs"
+      ],
+      "correctedFunction": "pushDeliverBatch",
+      "correctedLines": 341,
+      "commitSha": "b162c9e96521f73f413f6ff443bb609df4920c59",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt",
+          "docs/rc2-evidence/socket-load-500.json"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "apps/worker/src/push.ts"
+    },
+    {
+      "fixId": "RC2-009",
+      "originalFile": "apps/nurse_app/lib/features/visit/visit_store.dart",
+      "originalLines": "228-249",
+      "rootCause": "Null fallback and late responses retained previous patient identity, address and navigation.",
+      "correctedFunction": "_doRestoreActiveAssignment",
+      "changedFiles": [
+        "apps/api/src/requests/request-recovery.service.ts",
+        "apps/nurse_app/lib/features/visit/visit_store.dart",
+        "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart",
+        "apps/nurse_app/test/rc2_visit_isolation_test.dart",
+        "packages/flutter_core/lib/src/core/api_models.dart"
+      ],
+      "correctedFile": "apps/nurse_app/lib/features/visit/visit_store.dart",
+      "correctedLines": 183,
+      "commitSha": "c6c18f718dc8cfd55a0cd8eba461d72602338a19",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/nurse_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/nurse-tests-final-finance.txt",
+          "docs/rc2-evidence/nurse-analyze-final-finance.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-010",
+      "originalFile": "apps/patient_app/lib/core/patient_session_coordinator.dart",
+      "originalLines": "247-258; booking184-233,843-861",
+      "rootCause": "Draft clearing omitted account data and late asynchronous operations crossed session boundaries.",
+      "correctedFunction": "_clearAccountState",
+      "changedFiles": [
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/features/booking/booking_wizard_screen.dart",
+        "apps/patient_app/lib/features/booking/pending_clinical_upload_store.dart",
+        "apps/patient_app/lib/features/booking/pending_request_operation_store.dart",
+        "apps/patient_app/pubspec.lock",
+        "apps/patient_app/pubspec.yaml",
+        "apps/patient_app/test/rc2_booking_recovery_test.dart",
+        "packages/flutter_core/lib/src/api.dart",
+        "packages/flutter_core/test/rc2_credential_races_test.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/core/patient_session_coordinator.dart",
+      "correctedLines": 312,
+      "commitSha": "6fd53dd6404ec9b0e6ed3b972a92913073d64511",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-011",
+      "originalFile": "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+      "originalLines": "279-297",
+      "rootCause": "Guardian, navigation, notification, profile and call state survived session transitions.",
+      "correctedFunction": "_clearAccountState",
+      "changedFiles": [
+        "apps/nurse_app/lib/app/nurse_router.dart",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+        "apps/nurse_app/lib/features/home/nurse_home_screen.dart",
+        "apps/nurse_app/lib/features/profile/nurse_profile_screen.dart",
+        "apps/nurse_app/lib/guardian.dart",
+        "apps/nurse_app/lib/guardian_location.dart",
+        "apps/nurse_app/test/rc2_guardian_isolation_test.dart",
+        "packages/flutter_core/lib/src/api.dart"
+      ],
+      "correctedFile": "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+      "correctedLines": 382,
+      "commitSha": "11d439203d0f65fb1e8421d51d988d0c731fd16b",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/nurse_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/nurse-tests-final-finance.txt",
+          "docs/rc2-evidence/nurse-analyze-final-finance.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-012",
+      "originalFile": "apps/api/src/scheduling/calendar.service.ts",
+      "originalLines": "25-47",
+      "rootCause": "Calendar used acceptance time instead of the immutable planned service window.",
+      "changedFiles": [
+        "apps/api/src/scheduling/calendar.service.ts",
+        "apps/nurse_app/lib/features/calendar/calendar_store.dart"
+      ],
+      "correctedFunction": "getSchedule",
+      "correctedLines": 24,
+      "commitSha": "6d412d6c34dbaf791752321285e46200a149cc21",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/scheduling/calendar.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-013",
+      "originalFile": "apps/api/src/scheduling/calendar.service.ts",
+      "originalLines": "77-93",
+      "rootCause": "Calendar-block advisory lock did not serialize with assignment nurse-row locks.",
+      "changedFiles": [
+        "apps/api/src/scheduling/calendar.service.ts"
+      ],
+      "correctedFunction": "addBlock",
+      "correctedLines": 74,
+      "commitSha": "6d412d6c34dbaf791752321285e46200a149cc21",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/scheduling/calendar.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/scheduling-race-final.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-014",
+      "originalFile": "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+      "originalLines": "146,161-165",
+      "rootCause": "Active execution was an unconditional veto on provably non-overlapping future reservations.",
+      "changedFiles": [
+        "apps/api/src/dispatch/dispatch.service.ts",
+        "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+        "infra/db/migrations/072_rc2_shared_eligibility.sql"
+      ],
+      "correctedFunction": "evaluate",
+      "correctedLines": 43,
+      "commitSha": "6d412d6c34dbaf791752321285e46200a149cc21",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-015",
+      "originalFile": "apps/api/src/dispatch/assignment.orchestrator.ts",
+      "originalLines": "61-94",
+      "rootCause": "Legacy financial accounts omitted currency from balance/limit allocation.",
+      "changedFiles": [
+        "apps/admin_web/src/pages_fees.tsx",
+        "apps/api/src/admin/admin-fees.controller.ts",
+        "apps/api/src/dispatch/assignment.orchestrator.ts",
+        "apps/api/src/nurses/nurse-financial.service.ts",
+        "apps/api/src/nurses/nurse-me.controller.ts",
+        "apps/api/src/nurses/nurses.service.ts",
+        "apps/api/src/pricing/fees.service.ts",
+        "apps/api/src/requests/cancellation.service.ts",
+        "apps/api/src/wallet/financial-reservations.service.ts",
+        "apps/api/src/wallet/ledger.service.ts",
+        "apps/nurse_app/lib/features/finance/financial_center_screen.dart",
+        "apps/nurse_app/lib/features/finance/nurse_finance_store.dart",
+        "infra/db/migrations/071_rc2_currency_accounts.sql"
+      ],
+      "correctedFunction": "assignLocked",
+      "correctedLines": 45,
+      "commitSha": "6d412d6c34dbaf791752321285e46200a149cc21",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "Historical balances remain unallocated pending currency proof and approved administrative reconciliation; safe fail-closed isolation is implemented.",
+      "correctedFile": "apps/api/src/dispatch/assignment.orchestrator.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-016",
+      "originalFile": "apps/api/src/wallet/financial-reservations.service.ts",
+      "originalLines": "94-145",
+      "rootCause": "Committing min(reservedPrepaid, finalCommission) lost explicit release/credit/uncovered allocation.",
+      "changedFiles": [
+        "apps/api/src/wallet/financial-reservations.service.ts",
+        "infra/db/migrations/071_rc2_currency_accounts.sql"
+      ],
+      "correctedFunction": "commitForInvoice",
+      "correctedLines": 85,
+      "commitSha": "4891cc472e5643f9da51ee8ec622c0360bd0251e",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/wallet/financial-reservations.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-017",
+      "originalFile": "apps/api/src/pricing/billing.service.ts",
+      "originalLines": "88-103",
+      "rootCause": "Unbounded rounding entries concealed arbitrary debit/credit mismatches.",
+      "changedFiles": [
+        "apps/api/src/pricing/billing.service.ts"
+      ],
+      "correctedFunction": "issueInvoice",
+      "correctedLines": 36,
+      "commitSha": "4891cc472e5643f9da51ee8ec622c0360bd0251e",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/pricing/billing.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-018",
+      "originalFile": "apps/api/src/dispatch/dispatch.service.ts",
+      "originalLines": "285-310",
+      "rootCause": "Terminal request status did not independently expose performed-vs-not-performed visit outcome.",
+      "changedFiles": [
+        "apps/api/src/dispatch/dispatch.service.ts",
+        "apps/api/src/nurses/nurses.service.ts",
+        "apps/api/src/requests/request-recovery.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/nurse_app/lib/features/visit/visit_store.dart",
+        "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart",
+        "apps/nurse_app/test/rc2_visit_isolation_test.dart",
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart",
+        "apps/patient_app/test/rc2_requests_store_test.dart",
+        "packages/flutter_core/lib/src/core/api_models.dart"
+      ],
+      "correctedFunction": "transition",
+      "correctedLines": 171,
+      "commitSha": "c6c18f718dc8cfd55a0cd8eba461d72602338a19",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/nurse_app)",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "SQL no-service settlement and invoice absence pass. Both-app no-service completion and collection screens not exercised against live sessions.",
+      "correctedFile": "apps/api/src/dispatch/dispatch.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/nurse-tests-final-finance.txt",
+          "docs/rc2-evidence/nurse-analyze-final-finance.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately.",
+        "additional": "Nurse cases execute the original cash retry key across upgrade and no-service completion without fetching a bill."
+      }
+    },
+    {
+      "fixId": "RC2-019",
+      "originalFile": "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+      "originalLines": "184-233,764-787,805-839",
+      "rootCause": "Pending clinical evidence was memory-only and lost after process restart.",
+      "correctedFunction": "_restorePendingEvidence",
+      "changedFiles": [
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/features/booking/booking_wizard_screen.dart",
+        "apps/patient_app/lib/features/booking/pending_clinical_upload_store.dart",
+        "apps/patient_app/lib/features/booking/pending_request_operation_store.dart",
+        "apps/patient_app/pubspec.lock",
+        "apps/patient_app/pubspec.yaml",
+        "apps/patient_app/test/rc2_booking_recovery_test.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+      "correctedLines": 1108,
+      "commitSha": "6fd53dd6404ec9b0e6ed3b972a92913073d64511",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "AES-GCM owner/hash/file restart tests pass; Android keystore/private-storage process restart and real upload require device verification.",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-020",
+      "originalFile": "apps/api/src/clinical-approvals/clinical-approval.service.ts",
+      "originalLines": "112-119",
+      "rootCause": "Clinical approval replaced the patient arrival constraint with a fresh default deadline.",
+      "changedFiles": [
+        "apps/api/src/clinical-approvals/clinical-approval.repository.ts",
+        "apps/api/src/clinical-approvals/clinical-approval.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "infra/db/migrations/070_rc2_booking_terms.sql"
+      ],
+      "correctedFunction": "decide",
+      "correctedLines": 85,
+      "commitSha": "f20d75cd5b69ef72efe6fdc9912afb23aceae148",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/clinical-approvals/clinical-approval.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-021",
+      "originalFile": "apps/api/src/live-location/live-location-read.service.ts",
+      "originalLines": "requests.service.ts319-340;worker dispatch216-274;open-dispatch45-105",
+      "rootCause": "Tracking read Redis while dispatch eligibility read old PostgreSQL checkpoints independently.",
+      "changedFiles": [
+        "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+        "apps/api/src/live-location/geo-index.service.ts",
+        "apps/api/src/live-location/live-location-read.service.ts",
+        "apps/api/src/live-location/live-location.service.ts",
+        "apps/api/src/live-location/location-persistence.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/worker/src/dispatch.ts",
+        "apps/worker/src/live-location.ts",
+        "apps/worker/src/open-dispatch.ts",
+        "packages/backend-policy/live-location.d.mts",
+        "packages/backend-policy/live-location.mjs"
+      ],
+      "correctedFunction": "getNurseLocation",
+      "correctedLines": 40,
+      "commitSha": "f20d75cd5b69ef72efe6fdc9912afb23aceae148",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "Shared reader/freshness/forbidden-fallback tests pass; real Redis GEO outage and recovery not exercised.",
+      "correctedFile": "apps/api/src/live-location/live-location-read.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-022",
+      "originalFile": "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+      "originalLines": "worker dispatch/open-dispatch and nurse-me readiness",
+      "rootCause": "API and worker eligibility rules diverged across independently maintained queries.",
+      "changedFiles": [
+        "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+        "apps/api/src/nurses/nurse-me.controller.ts",
+        "apps/worker/src/dispatch.ts",
+        "apps/worker/src/open-dispatch.ts",
+        "infra/db/migrations/072_rc2_shared_eligibility.sql"
+      ],
+      "correctedFunction": "evaluate",
+      "correctedLines": 43,
+      "commitSha": "6d412d6c34dbaf791752321285e46200a149cc21",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "Shared SQL API/worker eligibility tests pass; real Redis-backed cross-process policy equivalence not exercised.",
+      "correctedFile": "apps/api/src/dispatch/nurse-eligibility.engine.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-023",
+      "originalFile": "apps/api/src/requests/requests.service.ts",
+      "originalLines": "319-340",
+      "rootCause": "Fallback freshness used a hard-coded limit and omitted captured/received/source diagnostics.",
+      "changedFiles": [
+        "apps/api/src/live-location/live-location-read.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "packages/backend-policy/live-location.mjs"
+      ],
+      "correctedFunction": "track",
+      "correctedLines": 323,
+      "commitSha": "f20d75cd5b69ef72efe6fdc9912afb23aceae148",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "correctedFile": "apps/api/src/requests/requests.service.ts",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-024",
+      "originalFile": "packages/flutter_core/lib/src/core/call_manager.dart",
+      "originalLines": "544-578",
+      "rootCause": "FIFO signaling used HTTP only; missing socket ACK path and delayed media continuation session guards",
+      "changedFiles": [
+        "apps/api/src/realtime/live.gateway.ts",
+        "apps/api/src/voice/voice.service.ts",
+        "packages/flutter_core/lib/src/core/call_manager.dart",
+        "packages/flutter_core/lib/src/core/realtime_bus.dart",
+        "packages/flutter_core/lib/src/realtime.dart"
+      ],
+      "correctedFunction": "_sendSignal",
+      "correctedLines": 579,
+      "commitSha": "b352c6c401f0903e2095354d81d95cc7192d4bd5",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "Session-scoped FIFO WS ACK signaling implemented; actual ACK loss/HTTP fallback, media peers, ICE restart and TURN relay not exercised.",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "packages/flutter_core/lib/src/core/call_manager.dart"
+    },
+    {
+      "fixId": "RC2-025",
+      "originalFile": "packages/flutter_core/lib/src/core/call_manager.dart",
+      "originalLines": "630-658",
+      "rootCause": "Unversioned events and stale snapshots could regress terminal call state; socket reconnect stopped fallback before reconciliation",
+      "changedFiles": [
+        "packages/flutter_core/lib/src/core/call_manager.dart",
+        "packages/flutter_core/test/rc2_call_ordering_test.dart"
+      ],
+      "correctedFunction": "_applyServerPhase",
+      "correctedLines": 818,
+      "commitSha": "b352c6c401f0903e2095354d81d95cc7192d4bd5",
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (packages/flutter_core)",
+      "verificationResult": "IMPLEMENTED_NOT_VERIFIED",
+      "remainingBlocker": "Version and terminal locking pass behavioral tests; live media reconnect and snapshot/missing-signal recovery not exercised.",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/events-api-current.txt",
+          "docs/rc2-evidence/events-worker-current.txt",
+          "docs/rc2-evidence/flutter-core-tests-resumed.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      },
+      "correctedFile": "packages/flutter_core/lib/src/core/call_manager.dart"
+    },
+    {
+      "fixId": "RC2-026",
+      "originalFile": "apps/api/src/app.controller.ts",
+      "originalLines": "59-102; worker outbox13,41",
+      "rootCause": "Readiness used nonexistent push_delivered_at and returned zero after monitoring query failures.",
+      "correctedFunction": "report",
+      "changedFiles": [
+        "apps/api/src/app.controller.ts",
+        "apps/api/src/app.module.ts",
+        "apps/api/src/capabilities/feature-capabilities.service.ts",
+        "apps/api/src/capabilities/readiness-queries.ts",
+        "apps/api/src/capabilities/readiness.service.ts",
+        "apps/api/tests/rc2-readiness.test.mjs",
+        "apps/api/tests/rc2-worker-startup.pg.test.mjs",
+        "apps/worker/src/main.ts",
+        "infra/db/migrations/079_rc2_worker_heartbeat.sql",
+        "packages/backend-policy/schema.d.mts",
+        "packages/backend-policy/schema.mjs"
+      ],
+      "correctedFile": "apps/api/src/capabilities/readiness.service.ts",
+      "correctedLines": 15,
+      "commitSha": "f36ab0306f7dae5e8952833a550ac367359dad9f",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/readiness-config-final.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-027",
+      "originalFile": "apps/api/src/app.controller.ts",
+      "originalLines": "59-70",
+      "rootCause": "Migration counts/highest name did not prove every required release migration exists.",
+      "correctedFunction": "report",
+      "changedFiles": [
+        "apps/api/src/app.controller.ts",
+        "apps/api/src/app.module.ts",
+        "apps/api/src/capabilities/feature-capabilities.service.ts",
+        "apps/api/src/capabilities/readiness-queries.ts",
+        "apps/api/src/capabilities/readiness.service.ts",
+        "apps/api/tests/rc2-readiness.test.mjs",
+        "apps/api/tests/rc2-worker-startup.pg.test.mjs",
+        "apps/worker/src/main.ts",
+        "infra/db/migrations/079_rc2_worker_heartbeat.sql",
+        "packages/backend-policy/schema.d.mts",
+        "packages/backend-policy/schema.mjs"
+      ],
+      "correctedFile": "apps/api/src/capabilities/readiness.service.ts",
+      "correctedLines": 15,
+      "commitSha": "f36ab0306f7dae5e8952833a550ac367359dad9f",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-schema-startup-final.txt",
+          "docs/rc2-evidence/readiness-config-final.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-028",
+      "originalFile": "apps/api/src/app.controller.ts",
+      "originalLines": "29-48",
+      "rootCause": "Critical settings defaulted to accepting and capability gates diverged across API, worker and apps.",
+      "correctedFunction": "snapshot",
+      "changedFiles": [
+        "apps/api/src/app.controller.ts",
+        "apps/api/src/app.module.ts",
+        "apps/api/src/capabilities/feature-capabilities.service.ts",
+        "apps/api/src/capabilities/readiness-queries.ts",
+        "apps/api/src/capabilities/readiness.service.ts",
+        "apps/api/src/marketplace/assignment.service.ts",
+        "apps/api/src/marketplace/booking-mode.service.ts",
+        "apps/api/src/marketplace/proposals.service.ts",
+        "apps/api/src/requests/requests.service.ts",
+        "apps/api/tests/rc2-marketplace-capabilities.test.mjs",
+        "apps/api/tests/rc2-readiness.test.mjs",
+        "apps/api/tests/rc2-worker-startup.pg.test.mjs",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+        "apps/nurse_app/lib/features/marketplace/marketplace_screen.dart",
+        "apps/nurse_app/lib/features/marketplace/marketplace_store.dart",
+        "apps/nurse_app/test/rc2_nurse_capabilities_test.dart",
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/patient_app/lib/features/booking/booking_wizard_screen.dart",
+        "apps/worker/src/dispatch.ts",
+        "apps/worker/src/main.ts",
+        "apps/worker/src/open-dispatch.ts",
+        "apps/worker/src/scheduling.ts",
+        "infra/db/migrations/079_rc2_worker_heartbeat.sql",
+        "packages/backend-policy/capabilities.d.mts",
+        "packages/backend-policy/capabilities.mjs",
+        "packages/backend-policy/schema.d.mts",
+        "packages/backend-policy/schema.mjs"
+      ],
+      "correctedFile": "apps/api/src/capabilities/feature-capabilities.service.ts",
+      "correctedLines": 10,
+      "commitSha": "f36ab0306f7dae5e8952833a550ac367359dad9f",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/nurse_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/nurse-tests-final-finance.txt",
+          "docs/rc2-evidence/nurse-analyze-final-finance.txt",
+          "docs/rc2-evidence/readiness-config-final.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-029",
+      "originalFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "originalLines": "Named loading lifecycles; no exact original lines specified",
+      "rootCause": "Old finalizers cleared newer loading state; disposed stores could receive late completions.",
+      "correctedFunction": "_doRefreshAll",
+      "changedFiles": [
+        "apps/api/src/requests/request-recovery.service.ts",
+        "apps/nurse_app/lib/app/nurse_router.dart",
+        "apps/nurse_app/lib/core/nurse_session_coordinator.dart",
+        "apps/nurse_app/lib/features/visit/visit_store.dart",
+        "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart",
+        "apps/nurse_app/lib/guardian.dart",
+        "apps/nurse_app/lib/guardian_location.dart",
+        "apps/nurse_app/test/rc2_guardian_isolation_test.dart",
+        "apps/nurse_app/test/rc2_visit_isolation_test.dart",
+        "apps/patient_app/lib/features/requests/request_detail_screen.dart",
+        "apps/patient_app/lib/features/requests/requests_store.dart",
+        "apps/patient_app/test/rc2_requests_store_test.dart",
+        "packages/flutter_core/lib/src/core/api_models.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/features/requests/requests_store.dart",
+      "correctedLines": 229,
+      "commitSha": "c6c18f718dc8cfd55a0cd8eba461d72602338a19",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app); flutter test --no-pub (apps/nurse_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt",
+          "docs/rc2-evidence/nurse-tests-final-finance.txt",
+          "docs/rc2-evidence/nurse-analyze-final-finance.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately."
+      }
+    },
+    {
+      "fixId": "RC2-030",
+      "originalFile": "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+      "originalLines": "720-766",
+      "rootCause": "Operation records were removed before durable reconciliation and used a patient fallback owner.",
+      "correctedFunction": "_executeOperation",
+      "changedFiles": [
+        "apps/patient_app/lib/core/patient_session_coordinator.dart",
+        "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+        "apps/patient_app/lib/features/booking/booking_wizard_screen.dart",
+        "apps/patient_app/lib/features/booking/pending_clinical_upload_store.dart",
+        "apps/patient_app/lib/features/booking/pending_request_operation_store.dart",
+        "apps/patient_app/pubspec.lock",
+        "apps/patient_app/pubspec.yaml",
+        "apps/patient_app/test/rc2_booking_recovery_test.dart",
+        "apps/nurse_app/lib/features/visit/visit_store.dart",
+        "apps/nurse_app/test/rc2_visit_isolation_test.dart"
+      ],
+      "correctedFile": "apps/patient_app/lib/features/booking/booking_draft_store.dart",
+      "correctedLines": 1040,
+      "commitSha": "c6c18f718dc8cfd55a0cd8eba461d72602338a19",
+      "verificationResult": "VERIFIED",
+      "remainingBlocker": null,
+      "verificationCommand": "pnpm exec node --test --test-concurrency=2 apps/api/tests/*.test.mjs apps/api/tests/concurrency.integration.mjs; flutter test --no-pub (apps/patient_app)",
+      "verificationEvidence": {
+        "behavioralExitCode": 0,
+        "files": [
+          "docs/rc2-evidence/api-regression-delivery28.txt",
+          "docs/rc2-evidence/worker-regression-delivery28.txt",
+          "docs/rc2-evidence/patient-tests-final28.txt",
+          "docs/rc2-evidence/patient-analyze-final28.txt",
+          "docs/rc2-evidence/nurse-tests-final-finance.txt"
+        ],
+        "scope": "Executed behavioral contract tests; operational limitations are listed separately.",
+        "additional": "Nurse cases execute the original cash retry key across upgrade and no-service completion without fetching a bill."
+      }
+    }
+  ]
+}

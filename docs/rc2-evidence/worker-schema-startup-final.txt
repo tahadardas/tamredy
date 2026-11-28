@@ -1,0 +1,9 @@
+✔ RC2-027 worker stops before polling when release migration manifest is unavailable (2149.9562ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2502.2293

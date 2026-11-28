@@ -1,0 +1,3 @@
+Analyzing flutter_core...
+No issues found! (ran in 48.1s)
+EXIT_CODE=0

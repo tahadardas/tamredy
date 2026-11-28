@@ -1,0 +1,11 @@
+✔ every controller class is registered in AppModule (2.3636ms)
+✔ every URL the dashboard calls exists on the API (23.4343ms)
+✔ every URL the Flutter apps call exists on the API (128.4526ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5533.5802

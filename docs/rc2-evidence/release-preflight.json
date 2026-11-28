@@ -1,0 +1,27 @@
+{
+  "release": "Tamreedy 3.1 RC2",
+  "baseCommit": "b1427e0f3f2afbdb468a89f343ebaaade02bfbee",
+  "apiBaseUrl": "https://tamredy.dardus.com.sy/api",
+  "environmentDefine": "ENVIRONMENT=production",
+  "demo": false,
+  "versionName": "3.1.0-rc.2",
+  "versionCode": 7,
+  "versionCodeNote": "Review build uses repository baseline6+1; Play Store uniqueness has not been verified.",
+  "applicationIds": {
+    "patient": "com.tamreedy.patient",
+    "nurse": "com.tamreedy.nurse"
+  },
+  "firebasePackageMatch": {
+    "patient": true,
+    "nurse": true
+  },
+  "signing": "Existing Android release configuration uses Android debug keystore for both apps.",
+  "publishable": false,
+  "remainingBlockers": [
+    "Production release signing keys/configuration unavailable in repository configuration; artifacts are explicitly debug-signed review builds.",
+    "Real two-device WebRTC/ICE/TURN and real FCM delivery not exercised.",
+    "Full10patient+10nurse and50patient+30nurse app workflows not executed on devices.",
+    "Redis runtime outage/recovery not exercised; shared reader fallback behavioral tests executed.",
+    "Historical financial balances require currency proof and administrative reconciliation before currency-account funding."
+  ]
+}

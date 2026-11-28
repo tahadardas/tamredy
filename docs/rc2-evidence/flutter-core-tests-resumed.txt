@@ -1,0 +1,44 @@
+00:00 +0: loading D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart
+00:00 +0: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroChatView renders messages, advisory, and triggers send
+00:00 +1: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroChatView renders messages, advisory, and triggers send
+00:01 +2: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroChatView renders messages, advisory, and triggers send
+00:01 +3: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroChatView renders messages, advisory, and triggers send
+00:01 +4: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroChatView renders messages, advisory, and triggers send
+00:01 +5: D:/Tamreedy/packages/flutter_core/test/pricing_test.dart: short cash payment is flagged, then completed with change
+00:01 +6: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroSchedulePickerSheet switches modes and captures schedule
+00:02 +7: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroCarePlanCard renders progress and handles tap
+00:02 +8: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroFavoriteNurseCard displays nurse details and direct request button
+00:02 +9: D:/Tamreedy/packages/flutter_core/test/rc2_call_ordering_test.dart: older call state cannot replace a newer version and terminal state cannot reopen
+00:02 +10: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroBookingModePickerSheet selects mode properly
+00:02 +11: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroInstantTimeoutSheet triggers recovery actions
+00:02 +12: D:/Tamreedy/packages/flutter_core/test/aero_components_test.dart: AeroProposalCard displays nurse details and accepts proposal
+00:03 +13: D:/Tamreedy/packages/flutter_core/test/rc2_credential_races_test.dart: logout cannot erase a newer login while remote revocation is delayed
+00:03 +14: D:/Tamreedy/packages/flutter_core/test/rc2_credential_races_test.dart: session invalidation during secure token write cannot overwrite next account
+00:03 +15: D:/Tamreedy/packages/flutter_core/test/rc2_credential_races_test.dart: refresh response from previous account cannot replace new credentials
+00:03 +16: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: domain, presentation and tap remain independent for [FCM, WS]
+00:03 +17: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: domain, presentation and tap remain independent for [WS, FCM]
+00:03 +18: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: domain, presentation and tap remain independent for [FCM]
+00:03 +19: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: domain, presentation and tap remain independent for [WS]
+00:03 +20: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: domain-only ingestion does not consume presentation eligibility
+00:03 +21: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: private events require authenticated identity and cannot cross accounts
+00:03 +22: D:/Tamreedy/packages/flutter_core/test/rc2_event_ingestion_test.dart: expiration applies to every private domain event
+00:04 +23: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer standard local format 0987080330 converts to +963987080330
+00:04 +24: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer arabic indic digits ٠٩٨٧٠٨٠٣٣٠ converts accurately
+00:04 +25: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer pasted international E.164 +963987080330 normalizes correctly
+00:04 +26: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer input with spaces, hyphens, and parentheses is sanitized
+00:04 +27: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer incomplete number is rejected
+00:04 +28: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer number not starting with 09 is rejected
+00:04 +29: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer number longer than 10 digits is rejected
+00:04 +30: D:/Tamreedy/packages/flutter_core/test/syrian_phone_normalizer_test.dart: SyrianPhoneNormalizer never generates +96309...
+00:04 +31: D:/Tamreedy/packages/flutter_core/test/tamreedy3_core_test.dart: NotificationCoordinator role & app isolation + dedupe Patient coordinator accepts PATIENT/PATIENT_APP and rejects NURSE/NURSE_APP
+00:04 +32: D:/Tamreedy/packages/flutter_core/test/tamreedy3_core_test.dart: NotificationCoordinator role & app isolation + dedupe Nurse coordinator rejects expired offers and patient events
+00:04 +33: D:/Tamreedy/packages/flutter_core/test/tamreedy3_core_test.dart: RealtimeEventBus deduplication drops duplicate eventId while forwarding distinct types
+00:04 +34: D:/Tamreedy/packages/flutter_core/test/tamreedy3_core_test.dart: ApiFailure mapping & categorization accurately categorizes status codes and offline vs server errors
+00:05 +35: D:/Tamreedy/packages/flutter_core/test/tamreedy_31_core_test.dart: TypedAssignmentSnapshot separates assignment_status from request_status (BUG-001)
+00:05 +36: D:/Tamreedy/packages/flutter_core/test/tamreedy_31_core_test.dart: TypedCareRequest mergePreferRicher retains version and richer non-empty details (BUG-004/005)
+00:05 +37: D:/Tamreedy/packages/flutter_core/test/tamreedy_31_core_test.dart: NotificationCoordinator enforces role/app/user isolation and deduplicates eventId (BUG-028/029)
+00:05 +38: D:/Tamreedy/packages/flutter_core/test/tamreedy_31_core_test.dart: ServerCapabilities and SessionInitState map runtime capability flags cleanly (BUG-046/047)
+00:05 +39: D:/Tamreedy/packages/flutter_core/test/tamreedy_31_core_test.dart: CallManager keeps phase at connecting on server CONNECTED until local ICE connects (BUG-040)
+00:05 +40: D:/Tamreedy/packages/flutter_core/test/tam_scaffold_layout_test.dart: scrollable body ends above the bottom navigation dock
+00:06 +41: All tests passed!
+EXIT_CODE=0

@@ -1,0 +1,3 @@
+Analyzing nurse_app...
+No issues found! (ran in 61.3s)
+EXIT_CODE=0

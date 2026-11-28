@@ -3,7 +3,6 @@ on:
   workflow_dispatch:
   push:
     branches: [feature/tamreedy-rc2-regression-closure]
-    paths-ignore: ['docs/**', 'handoff/**', 'RC2_FIX_MATRIX.json']
 permissions:
   contents: read
 concurrency:

@@ -1,0 +1,61 @@
+(node:12680) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/dispatch.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[Dispatch] Request 85150e5e-6cc1-45dc-a450-539e8c00be42 Wave 1/3 (r: 3000m): 2 offers created. Excluded reasons: {"OUTSIDE_SERVICE_RADIUS":3,"LOCATION_STALE":1}
+[Dispatch] Request 85150e5e-6cc1-45dc-a450-539e8c00be42 Wave 2/3 (r: 6000m): 1 offers created. Excluded reasons: {"OUTSIDE_SERVICE_RADIUS":2,"LOCATION_STALE":1}
+[Dispatch] Request 85150e5e-6cc1-45dc-a450-539e8c00be42 Wave 3/3 (r: 10000m): 1 offers created. Excluded reasons: {"LOCATION_STALE":1,"OUTSIDE_SERVICE_RADIUS":1}
+[Dispatch] Request a46766c1-4e4b-4219-b1aa-78f34d12c5a2 Wave 1/3 (r: 3000m): 0 offers created. Excluded reasons: {"NURSE_NOT_AVAILABLE":6}
+[Dispatch] Request a46766c1-4e4b-4219-b1aa-78f34d12c5a2 Wave 2/3 (r: 6000m): 0 offers created. Excluded reasons: {"NURSE_NOT_AVAILABLE":6}
+[Dispatch] Request a46766c1-4e4b-4219-b1aa-78f34d12c5a2 Wave 3/3 (r: 10000m): 0 offers created. Excluded reasons: {"NURSE_NOT_AVAILABLE":6}
+[Dispatch] Request a46766c1-4e4b-4219-b1aa-78f34d12c5a2 exhausted all 3 waves with no acceptance. Marking UNFULFILLED (AWAITING_RECOVERY_CHOICE).
+✔ alerts all eligible nurses in each wave and stops widening after assignment (6648.235ms)
+(node:18492) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/push.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ new-request alarm: data-only on Android, long loud tone on iOS, TTL = offer lifetime (2.5332ms)
+✔ broadcast: sent once to the right audience (opt-in patients only), counts recorded, dead tokens pruned (5404.3616ms)
+✔ broadcast without FCM configured is marked FAILED, never faked as sent (3846.2553ms)
+✔ win-back: only while switched on, only opted-in lapsed customers, one personal single-use code each, once per period (4328.9149ms)
+(node:23448) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/dispatch.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[Dispatch] Open search 142f9d30-77e4-4c4e-8555-fbba00a16f29 created 100 offers
+[Dispatch] Open search 142f9d30-77e4-4c4e-8555-fbba00a16f29 created 1 offers
+✔ open dispatch wakes for new eligible nurses, deduplicates, and enforces the fixed deadline (7528.6567ms)
+(node:16600) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/outbox.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ outbox leases prevent overlapping delivery and permit recovery after a worker crash (4259.3815ms)
+(node:6892) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/push.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ copy never contains personal data and unknown events are silent (2.9102ms)
+✔ FCM client authenticates once, caches the token, and classifies results (65.0507ms)
+[FCM] Incomplete service account structure
+✔ push delivery enforces role/app isolation, active_status filtering, full envelope metadata, and ledger dedupe (4293.9348ms)
+✔ incomplete service account is rejected; absence disables push (0.978ms)
+✔ offer closure is a data message addressed to the specific offer (7.4259ms)
+(node:9288) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/voice-lifecycle.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ ring timeout emits independent private envelopes with real role and monotonic terminal session version (4095.81ms)
+(node:19932) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/scheduling.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ scheduled visits wait, then release once; late and cancelled visits do not dispatch (4366.0278ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32441.131
+EXIT_CODE=0

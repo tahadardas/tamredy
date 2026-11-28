@@ -1,0 +1,46 @@
+{
+  "status": "PASS",
+  "runId": "74dd3d1f-b2d9-46fe-a95e-dccd049de607",
+  "startedAt": "2026-11-28T06:25:08.287Z",
+  "completedAt": "2026-11-28T06:25:11.731Z",
+  "runtime": "v26.13.0",
+  "database": {
+    "host": "127.0.0.1",
+    "database": "tamreedy_test_rc2",
+    "poolMax": 16
+  },
+  "scope": "Actual LiveGateway, Socket.IO server, Engine.IO4 native WebSocket clients; single replica direct delivery; synthetic accounts only",
+  "redisTested": false,
+  "fcmTested": false,
+  "mediaTested": false,
+  "requestedConnections": 500,
+  "connectionLaunchBatchSize": 25,
+  "authenticatedConnections": 500,
+  "peakConcurrentConnections": 500,
+  "receivedPrivateEvents": 500,
+  "crossAccountDeliveryViolations": 0,
+  "revokedSessionDisconnected": true,
+  "revokedSessionEvents": 0,
+  "connections": {
+    "count": 500,
+    "p50Ms": 97.366,
+    "p95Ms": 143.327,
+    "p99Ms": 464.102
+  },
+  "realtimePropagation": {
+    "count": 500,
+    "p50Ms": 326.015,
+    "p95Ms": 407.8,
+    "p99Ms": 411.31
+  },
+  "databaseQuery": {
+    "count": 2506,
+    "p50Ms": 75.711,
+    "p95Ms": 184.238,
+    "p99Ms": 193.884
+  },
+  "databaseQueries": 2506,
+  "databaseErrors": 0,
+  "poolWaitPeak": 500,
+  "syntheticFixtureRetention": "Users marked DELETED and device sessions revoked; rows preserved for audit references"
+}

@@ -1,0 +1,42 @@
+{
+  "sourceCommit": "c6c18f718dc8cfd55a0cd8eba461d72602338a19",
+  "publishable": false,
+  "artifacts": [
+    {
+      "path": "handoff/rc2-artifacts/tamreedy-nurse-3.1.0-rc.2-debug-signed-release.aab",
+      "sha256": "6d281ad418b6152fa1a364440e70464a7cebcd22f4bb4682e84e1cad028f2d30",
+      "bytes": 80112838,
+      "applicationId": "com.tamreedy.nurse",
+      "signing": "Android Debug",
+      "versionName": "3.1.0-rc.2",
+      "versionCode": 7
+    },
+    {
+      "path": "handoff/rc2-artifacts/tamreedy-nurse-3.1.0-rc.2-debug-signed-release.apk",
+      "sha256": "d8cd608e874c90b23eddf0f206d40c6157a2559148906f38650b57bcc3a0e0da",
+      "bytes": 99277585,
+      "applicationId": "com.tamreedy.nurse",
+      "signing": "Android Debug",
+      "versionName": "3.1.0-rc.2",
+      "versionCode": 7
+    },
+    {
+      "path": "handoff/rc2-artifacts/tamreedy-patient-3.1.0-rc.2-debug-signed-release.aab",
+      "sha256": "fa056563bed685d06abcf2604b750133977a92739d34d348d640b0dd5edcc4ac",
+      "bytes": 80984195,
+      "applicationId": "com.tamreedy.patient",
+      "signing": "Android Debug",
+      "versionName": "3.1.0-rc.2",
+      "versionCode": 7
+    },
+    {
+      "path": "handoff/rc2-artifacts/tamreedy-patient-3.1.0-rc.2-debug-signed-release.apk",
+      "sha256": "a4ca561c18a53d62a910bd1f97c94b9da56ef0eea1927532f859f9a2b607f2f4",
+      "bytes": 100277613,
+      "applicationId": "com.tamreedy.patient",
+      "signing": "Android Debug",
+      "versionName": "3.1.0-rc.2",
+      "versionCode": 7
+    }
+  ]
+}

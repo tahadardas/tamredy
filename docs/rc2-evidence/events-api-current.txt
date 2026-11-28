@@ -1,0 +1,18 @@
+✔ device-bound token requires a matching active session for its owner (10.1805ms)
+✔ device session lookup failure prevents authentication (0.4274ms)
+✔ connected sockets stop receiving private events after device revocation (2722.4147ms)
+✔ call transitions carry server recipient PATIENT and session version (8.2046ms)
+✔ call transitions carry server recipient NURSE and session version (0.3221ms)
+✔ private envelope rejects missing identity, role, app, creation timestamp and wrong event type (0.3308ms)
+✔ signal ingestion rejects malformed frames before entering database transaction (3.5742ms)
+✔ high frequency streams require explicit sequencing and signal kind (0.5892ms)
+✔ shared HTTP/socket signal ingestion persists once, replays same key and rejects payload or sequence conflicts (4462.5405ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11496.2731
+EXIT_CODE=0

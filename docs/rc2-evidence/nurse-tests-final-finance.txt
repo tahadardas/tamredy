@@ -1,0 +1,26 @@
+00:00 +0: loading D:/Tamreedy/apps/nurse_app/test/alarm_test.dart
+00:00 +0: D:/Tamreedy/apps/nurse_app/test/alarm_test.dart: a new-request push becomes an alarm that lasts exactly as long as the offer
+00:00 +1: D:/Tamreedy/apps/nurse_app/test/alarm_test.dart: stale offers and normal notifications never ring
+00:00 +2: D:/Tamreedy/apps/nurse_app/test/alarm_test.dart: falls back to the TTL and is capped at one minute
+00:01 +3: D:/Tamreedy/apps/nurse_app/test/guardian_location_test.dart: foreground point survives failure and is acknowledged with its original sequence
+00:01 +4: D:/Tamreedy/apps/nurse_app/test/guardian_test.dart: silent SOS survives restart, retries the same event, and isolates accounts
+00:03 +5: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:04 +6: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:04 +7: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:04 +8: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:06 +9: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:06 +10: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:06 +10: D:/Tamreedy/apps/nurse_app/test/rc2_nurse_capabilities_test.dart: late capability results cannot restore an older snapshot or previous session
+[HTTP ERROR] NET /v1/nurse/me/availability [trace:null]: session_changed
+00:06 +11: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:07 +12: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:07 +13: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:07 +14: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:07 +15: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:07 +16: D:/Tamreedy/apps/nurse_app/test/nurse_rebirth_test.dart: Global IncomingOfferOverlay displays above ALL tabs including Finance & Marketplace
+00:07 +17: D:/Tamreedy/apps/nurse_app/test/rc2_nurse_capabilities_test.dart: disabled marketplace keeps the existing visit history tab accessible
+00:07 +18: D:/Tamreedy/apps/nurse_app/test/rc2_nurse_capabilities_test.dart: disabled marketplace keeps the existing visit history tab accessible
+00:08 +19: D:/Tamreedy/apps/nurse_app/test/rc2_nurse_capabilities_test.dart: disabled marketplace keeps the existing visit history tab accessible
+00:08 +20: D:/Tamreedy/apps/nurse_app/test/visual_qa_nurse_test.dart: Nurse Visual QA across 320, 360, 390, 430, 600, 768 widths + RTL + 2.0x + dark/light + offer overlay
+00:15 +21: All tests passed!
+EXIT_CODE=0

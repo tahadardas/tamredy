@@ -1,0 +1,13 @@
+{
+  "date": "2026-11-28",
+  "timezone": "Asia/Damascus",
+  "os": "Windows-11-10.0.26300-SP0",
+  "node": "v26.13.0",
+  "flutter": "3.44.0",
+  "dart": "3.12.0",
+  "database": "Explicit disposable PostgreSQL on127.0.0.1:55439; UTF8; no production database used",
+  "ci": "GitHub Actions isolated PostGIS18-3.7; Flutter3.44.0",
+  "mediaDeviceTests": false,
+  "redisRuntimeTests": false,
+  "data": "Synthetic fixtures only"
+}

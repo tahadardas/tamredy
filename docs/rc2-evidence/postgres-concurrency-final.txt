@@ -1,0 +1,10 @@
+✔ database partial unique indexes prevent double assignment under concurrent INSERTs (605.8841ms)
+✔ 100 simultaneous acceptors and a cancel/accept race leave one durable outcome (1684.3142ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2512.2964

@@ -1,0 +1,24 @@
+(node:25324) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/push.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ copy never contains personal data and unknown events are silent (2.5939ms)
+✔ FCM client authenticates once, caches the token, and classifies results (58.2556ms)
+[FCM] Incomplete service account structure
+✔ push delivery enforces role/app isolation, active_status filtering, full envelope metadata, and ledger dedupe (5429.7452ms)
+✔ incomplete service account is rejected; absence disables push (10.3783ms)
+✔ offer closure is a data message addressed to the specific offer (11.5304ms)
+(node:7236) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/Tamreedy/apps/worker/src/voice-lifecycle.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\Tamreedy\apps\worker\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ ring timeout emits independent private envelopes with real role and monotonic terminal session version (5011.5119ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7003.2827
+EXIT_CODE=0

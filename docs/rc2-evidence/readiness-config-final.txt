@@ -1,0 +1,20 @@
+{"event":"readiness.unavailable","codes":["MIGRATION_COMPATIBILITY_ERROR"]}
+{"event":"readiness.unavailable","codes":["WORKER_UNAVAILABLE"]}
+{"event":"readiness.unavailable","codes":["OUTBOX_UNHEALTHY"]}
+{"event":"readiness.unavailable","codes":["OUTBOX_MONITOR_UNAVAILABLE"]}
+✔ release manifest requires every migration including an interior missing migration (5.6197ms)
+✔ missing orders settings fail closed; optional feature gates do not auto enable (0.8387ms)
+✔ readiness rejects database, monitor, missing migration, heartbeat and backlog failures (9.2739ms)
+{"event":"readiness.unavailable","codes":["FCM_NOT_CONFIGURED"]}
+{"event":"readiness.unavailable","codes":["FCM_NOT_CONFIGURED"]}
+{"event":"readiness.unavailable","codes":["VOICE_NOT_CONFIGURED"]}
+✔ actual PostgreSQL outbox monitor counts required channels, expiry and dead letters (4323.3869ms)
+✔ readiness validates configured FCM key and TURN URL without claiming provider delivery (323.1705ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6734.2513
