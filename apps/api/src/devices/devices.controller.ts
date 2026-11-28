@@ -38,6 +38,7 @@ export class DevicesController {
     const appType = dto.appType ?? expectedApp;
     const deviceId = dto.deviceId?.trim() || null;
     const sessionId = r.user!.deviceSessionId ?? null;
+    if (!sessionId) throw new ForbiddenException({ code: 'DEVICE_SESSION_REQUIRED' });
 
     await this.db.transaction(async c => {
       if (deviceId) {
@@ -58,7 +59,7 @@ export class DevicesController {
            device_id = COALESCE(EXCLUDED.device_id, device_tokens.device_id),
            app_type = EXCLUDED.app_type,
            role = EXCLUDED.role,
-           session_id = COALESCE(EXCLUDED.session_id, device_tokens.session_id),
+           session_id = EXCLUDED.session_id,
            active_status = 'ACTIVE',
            last_seen_at = now(),
            updated_at = now()`,

@@ -10,16 +10,19 @@ export async function expireVoiceCalls(pool: pg.Pool): Promise<boolean> {
          session_version=session_version+1
        WHERE (call_status IN ('INITIATED','RINGING') AND ring_expires_at<=statement_timestamp())
           OR (call_status IN ('ACCEPTED','CONNECTING') AND accepted_at<statement_timestamp()-interval '90 seconds')
-       RETURNING id,request_id,caller_user_id,receiver_user_id,call_status,end_reason
+       RETURNING id,request_id,caller_user_id,receiver_user_id,call_status,end_reason,session_version
      ), events AS (
        INSERT INTO outbox_events(event_type,aggregate_id,payload)
-       SELECT CASE WHEN call_status='MISSED' THEN 'call.missed' ELSE 'call.failed' END,id,
+       SELECT CASE WHEN call_status='MISSED' THEN 'call.missed' ELSE 'call.failed' END,expired.id,
          jsonb_build_object(
            'eventType',CASE WHEN call_status='MISSED' THEN 'call.missed' ELSE 'call.failed' END,
-           'recipientUserIds',ARRAY[caller_user_id,receiver_user_id],
-           'callId',id,'requestId',request_id,'reason',end_reason,
+           'eventId',gen_random_uuid()::text,
+           'recipientUserId',u.id,'recipientRole',u.role,
+           'targetApp',CASE u.role WHEN 'NURSE' THEN 'NURSE_APP' ELSE 'PATIENT_APP' END,
+           'createdAt',statement_timestamp(),'sessionVersion',session_version,
+           'callId',expired.id,'requestId',request_id,'reason',end_reason,
            'priority','HIGH')
-       FROM expired RETURNING aggregate_id
+       FROM expired JOIN users u ON u.id IN (caller_user_id,receiver_user_id) RETURNING aggregate_id
      ), removed AS (
        DELETE FROM voice_call_events e USING expired x
        WHERE e.session_id=x.id AND e.event_type IN ('SDP_OFFER','SDP_ANSWER','ICE_CANDIDATE','ICE_RESTART')

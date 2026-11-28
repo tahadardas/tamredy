@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
-import { FcmClient, pushDeliverBatch, pushCopy, loadServiceAccount } from '../src/push.ts';
+import { FcmClient, pushDeliverBatch, retryPendingPushes, pushCopy, loadServiceAccount } from '../src/push.ts';
 
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const sa = { project_id: 'proj', client_email: 'svc@proj.iam.gserviceaccount.com', private_key: privateKey };
@@ -44,14 +44,14 @@ test('push delivery enforces role/app isolation, active_status filtering, full e
   const pg = new PGlite();
   t.after(() => pg.close());
   const root = new URL('../../../infra/db/migrations/', import.meta.url);
-  for (const name of ['001_core', '005_password_accounts_push', '018_dispatch_diagnostics_and_deliveries']) {
+  for (const name of ['001_core', '005_password_accounts_push', '018_dispatch_diagnostics_and_deliveries', '023_outbox_delivery_leases']) {
     const sql = readFileSync(new URL(`${name}.sql`, root), 'utf8')
       .replace(/CREATE EXTENSION[^;]*;/g, '')
       .replace(/geography\(Point,4326\)/g, 'text')
       .replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
     await pg.exec(sql);
   }
-  await pg.exec('CREATE TABLE IF NOT EXISTS device_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), revoked_at timestamptz);');
+  await pg.exec('CREATE TABLE IF NOT EXISTS device_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id), revoked_at timestamptz);');
   await pg.exec(readFileSync(new URL('063_notifications_routing_and_device_tokens.sql', root), 'utf8'));
   const U1 = '11111111-1111-1111-1111-111111111111', U2 = '22222222-2222-2222-2222-222222222222';
   await pg.query("INSERT INTO users(id,phone_e164,role) VALUES($1,'+1','PATIENT'),($2,'+2','PATIENT')", [U1, U2]);
@@ -64,6 +64,11 @@ test('push delivery enforces role/app isolation, active_status filtering, full e
       ($2,'b-token','ios','PATIENT_APP','PATIENT','ACTIVE')`,
     [U1, U2],
   );
+  await pg.query("INSERT INTO device_sessions(id,user_id) VALUES($1,$1),($2,$2)",[U1,U2]);
+  await pg.exec('UPDATE device_tokens SET session_id=user_id');
+  await pg.query(`INSERT INTO device_tokens(user_id,token,platform,app_type,role,active_status,session_id) VALUES
+    ($1,'unbound','android','PATIENT_APP','PATIENT','ACTIVE',NULL),
+    ($1,'foreign-session','android','PATIENT_APP','PATIENT','ACTIVE',$2)`,[U1,U2]);
   await pg.query("INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES ('request.assigned',$1,'{}'),('visit.arrive',$2,'{}')", [U1, U2]);
   let tokenQueries = 0;
   const db = { query: (s, p) => {
@@ -77,12 +82,14 @@ test('push delivery enforces role/app isolation, active_status filtering, full e
     { id: 3, event_type: 'test.unknown', payload: { recipientUserId: U2 } },
   ]);
   assert.deepEqual(res, { sent: 2, failed: 1, pruned: 1 });
-  assert.equal(tokenQueries, 1);
+  assert.equal(tokenQueries, 4); // batch selection plus immediate session check per candidate
   assert.equal(f.calls.filter(x => x.url.includes('oauth2')).length, 1);
 
   const sentTokens = f.calls.filter(x => x.url.includes('messages:send')).map(x => JSON.parse(x.init.body).message.token);
   assert.equal(sentTokens.includes('wrong-app-tok'), false);
   assert.equal(sentTokens.includes('logged-out-tok'), false);
+  assert.equal(sentTokens.includes('unbound'),false);
+  assert.equal(sentTokens.includes('foreign-session'),false);
 
   const bodies = f.calls.filter(x => x.url.includes('messages:send')).map(x => JSON.parse(x.init.body));
   const normal = bodies.find(b => b.message.data.type === 'visit.arrive');
@@ -99,6 +106,21 @@ test('push delivery enforces role/app isolation, active_status filtering, full e
   ]);
   assert.equal(replay.sent, 0);
   assert.equal(f.calls.filter(x => x.url.includes('messages:send')).length, 3);
+  await pg.query('UPDATE device_sessions SET revoked_at=now() WHERE user_id=$1',[U2]);
+  await pg.query("INSERT INTO outbox_events(event_type,aggregate_id) VALUES('visit.arrive',$1)",[U2]);
+  const revoked=await pushDeliverBatch(db,new FcmClient(sa,f),[
+    {id:3,event_type:'visit.arrive',payload:{recipientUserId:U2,recipientRole:'PATIENT',targetApp:'PATIENT_APP',requestId:'r1'}},
+  ]);
+  assert.equal(revoked.sent,0);
+  assert.equal(f.calls.filter(x=>x.url.includes('messages:send')).length,3);
+  const retryPayload=JSON.stringify({type:'visit.arrive',eventType:'visit.arrive',recipientUserId:U2,recipientRole:'PATIENT',targetApp:'PATIENT_APP'});
+  const retryRow=await pg.query(`INSERT INTO notification_deliveries(recipient_user_id,device_token,status,attempts,payload)
+    VALUES($1,'b-token','FAILED',1,$2::jsonb) RETURNING id`,[U2,retryPayload]);
+  assert.equal(await retryPendingPushes(db,new FcmClient(sa,f)),0);
+  assert.equal((await pg.query('SELECT status FROM notification_deliveries WHERE id=$1',[retryRow.rows[0].id])).rows[0].status,'ABANDONED');
+  assert.equal(f.calls.filter(x=>x.url.includes('messages:send')).length,3);
+
+
 });
 
 test('incomplete service account is rejected; absence disables push', () => {

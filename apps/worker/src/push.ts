@@ -278,6 +278,9 @@ export interface OutboxEvent {
     expiresAt?: string | null;
     priority?: string | null;
     deepLink?: string | null;
+    sessionVersion?: number;
+    callerRole?: string;
+    ringExpiresAt?: string;
     skipPush?: boolean;
     snippet?: string;
     percent?: number;
@@ -324,6 +327,9 @@ function buildFcmDataMap(e: OutboxEvent, userId: string, role?: string, targetAp
     conversationId: p.conversationId ? String(p.conversationId) : '',
     callId: p.callId ? String(p.callId) : '',
     entityVersion: p.entityVersion != null ? String(p.entityVersion) : '',
+    sessionVersion: p.sessionVersion != null ? String(p.sessionVersion) : '',
+    callerRole: p.callerRole ? String(p.callerRole) : '',
+    ringExpiresAt: p.ringExpiresAt ? String(p.ringExpiresAt) : '',
     createdAt: p.createdAt ? String(p.createdAt) : (e.created_at ? String(e.created_at) : new Date().toISOString()),
     expiresAt: p.expiresAt ? String(p.expiresAt) : '',
     priority: p.priority ? String(p.priority) : (ALARM_EVENT_TYPES.has(eventType) ? 'CRITICAL' : 'HIGH'),
@@ -378,10 +384,11 @@ export async function pushDeliverBatch(
       `SELECT dt.user_id, dt.token, dt.platform, dt.app_type, dt.role AS token_role, u.role AS user_role
        FROM device_tokens dt
        JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
-       LEFT JOIN device_sessions ds ON ds.id = dt.session_id
+       JOIN device_sessions ds ON ds.id = dt.session_id AND ds.user_id = dt.user_id AND ds.revoked_at IS NULL
        WHERE dt.user_id = ANY($1::uuid[])
          AND dt.active_status = 'ACTIVE'
-         AND (dt.session_id IS NULL OR ds.revoked_at IS NULL)`,
+         AND dt.role = u.role
+         AND dt.app_type = CASE u.role WHEN 'NURSE' THEN 'NURSE_APP' WHEN 'PATIENT' THEN 'PATIENT_APP' END`,
       [uniqueUsers],
     )
   ).rows;
@@ -453,6 +460,14 @@ export async function pushDeliverBatch(
         continue;
       }
 
+      // Re-check immediately before transport delivery: an earlier query must not
+      // authorize a token after logout or reassignment to a different account.
+      const valid = await db.query(`SELECT 1 FROM device_tokens dt
+        JOIN users u ON u.id=dt.user_id AND u.status='ACTIVE' AND u.role=dt.role
+        JOIN device_sessions ds ON ds.id=dt.session_id AND ds.user_id=dt.user_id AND ds.revoked_at IS NULL
+        WHERE dt.token=$1 AND dt.user_id=$2 AND dt.active_status='ACTIVE'
+          AND dt.role=$3 AND dt.app_type=$4`,[dev.token,item.user,dev.tokenRole,dev.appType]);
+      if (!valid.rowCount) continue;
       const resolvedRole = item.recipientRole ?? dev.userRole ?? item.data.recipientRole ?? '';
       const eventType = item.data.type ?? '';
       const copy = pushCopy(eventType, item.data, resolvedRole || undefined) ?? item.copy;
@@ -550,13 +565,14 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
     const deviceCount = (await db.query(
       `SELECT 1 FROM device_tokens dt
        JOIN users u ON u.id = dt.user_id AND u.status = 'ACTIVE'
-       LEFT JOIN device_sessions ds ON ds.id = dt.session_id
+       JOIN device_sessions ds ON ds.id = dt.session_id AND ds.user_id = dt.user_id AND ds.revoked_at IS NULL
        WHERE dt.token = $1
          AND dt.user_id = $2
          AND dt.active_status = 'ACTIVE'
-         AND (dt.session_id IS NULL OR ds.revoked_at IS NULL)
-         AND ($3::text IS NULL OR (u.role = $3 AND dt.role = $3))
-         AND ($4::text IS NULL OR dt.app_type = $4)`,
+         AND dt.role = u.role
+         AND dt.app_type = CASE u.role WHEN 'NURSE' THEN 'NURSE_APP' WHEN 'PATIENT' THEN 'PATIENT_APP' END
+         AND $3::text IS NOT NULL AND u.role = $3 AND dt.role = $3
+         AND $4::text IS NOT NULL AND dt.app_type = $4`,
       [row.device_token, row.recipient_user_id, expectedRole, expectedApp],
     )).rowCount;
     if (!row.device_token || !deviceCount) {

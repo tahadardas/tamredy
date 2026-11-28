@@ -4,7 +4,9 @@ import { Injectable } from '@nestjs/common';
 export class OperationalMetricsService {
   private readonly counters = new Map<string, number>();
 
-  increment(name: 'location_updates_total'|'location_rejections_total'|'voice_calls_started_total'|'voice_signals_total', amount = 1) {
+  increment(name: 'location_updates_total'|'location_rejections_total'|'voice_calls_started_total'|'voice_signals_total'
+    |'private_event_delivery_failures_total'|'realtime_malformed_messages_total'|'realtime_publish_failures_total'
+    |'voice_signal_rejections_total'|'private_event_contract_rejections_total', amount = 1) {
     this.counters.set(name, (this.counters.get(name) ?? 0) + amount);
   }
 

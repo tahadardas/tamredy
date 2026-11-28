@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { buildNotificationPayload } from '../dist/notifications/notification-routing.js';
 import { requireActiveDeviceSession } from '../dist/auth/auth.guard.js';
 
 const session = '081cea3b-7f75-4863-94e1-b1950a6155e5';
@@ -29,14 +30,14 @@ test('connected sockets stop receiving private events after device revocation', 
   let revoked = false;
   const gateway = new LiveGateway({
     async query(sql) {
-      if (sql.includes('FROM users')) return { rowCount: 1, rows: [{ auth_version: null }] };
+      if (sql.includes('FROM users')) return { rowCount: 1, rows: [{ auth_version: null,role:'PATIENT' }] };
       return { rows: revoked ? [] : [{}] };
     },
-  }, {});
+  }, {}, {}, {increment(){}}, {});
   let delivered = 0;
   let disconnected = false;
   const socket = {
-    data: { auth: { sub: owner, dsi: session, exp: Math.floor(Date.now() / 1000) + 60 } },
+    data: { role:'PATIENT',appType:'PATIENT_APP',auth: { sub: owner, dsi: session, exp: Math.floor(Date.now() / 1000) + 60 } },
     emit() { delivered++; },
     disconnect() { disconnected = true; },
   };
@@ -44,9 +45,10 @@ test('connected sockets stop receiving private events after device revocation', 
     sockets: new Map([['socket', socket]]),
     adapter: { rooms: new Map([['user:' + owner, new Set(['socket'])]]) },
   };
-  await gateway.deliverPrivateEvent(owner, 'request.updated', {});
+  const envelope=buildNotificationPayload({eventType:'request.updated',recipientUserId:owner,recipientRole:'PATIENT'});
+  await gateway.deliverPrivateEvent(owner, 'request.updated', envelope);
   revoked = true;
-  await gateway.deliverPrivateEvent(owner, 'request.updated', {});
+  await gateway.deliverPrivateEvent(owner, 'request.updated', envelope);
   assert.equal(delivered, 1);
   assert.equal(disconnected, true);
 });

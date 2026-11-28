@@ -4,7 +4,7 @@ import { DbService } from '../db/db.service.js';
 import { LiveGateway } from '../realtime/live.gateway.js';
 import { TrustService } from '../trust/trust.service.js';
 import { OperationalMetricsService } from '../observability/operational-metrics.service.js';
-import { buildNotificationPayload } from '../notifications/notification-routing.js';
+import { buildNotificationPayload, targetAppForRole, type RecipientRole } from '../notifications/notification-routing.js';
 
 const ACTIVE_CALL_STATES = ['INITIATED', 'RINGING', 'ACCEPTED', 'CONNECTING', 'CONNECTED', 'RECONNECTING'] as const;
 const TERMINAL_CALL_STATES = ['ENDED', 'REJECTED', 'MISSED', 'FAILED', 'CANCELLED'] as const;
@@ -36,6 +36,19 @@ export class VoiceService {
     private readonly metrics: OperationalMetricsService,
   ) {}
 
+  private async sendCallEvent(receiverId: string, eventType: string, call: Record<string, any>, extra: Record<string, unknown> = {}) {
+    const recipient = await this.db.query("SELECT role FROM users WHERE id=$1 AND status='ACTIVE'", [receiverId]);
+    if (!recipient.rowCount) return;
+    const recipientRole = recipient.rows[0].role as RecipientRole;
+    const payload = buildNotificationPayload({
+      eventType, recipientUserId: receiverId, recipientRole,
+      callId: call.id, requestId: call.request_id, entityVersion: Number(call.session_version),
+      expiresAt: eventType === 'call.incoming' ? new Date(call.ring_expires_at).toISOString() : null,
+      extra: { ...extra, sessionVersion: Number(call.session_version) },
+    });
+    await this.live.sendToUser(receiverId, eventType, payload);
+  }
+
   private getIceServers(userId: string, callId: string) {
     const servers: Record<string, unknown>[] = [];
     const stunUrls = (process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302')
@@ -54,7 +67,7 @@ export class VoiceService {
 
   async initiateCall(callerUserId: string, requestId: string, idempotencyKey?: string) {
     const request = await this.db.query(
-      `SELECT r.id,r.status,r.requester_user_id,n.user_id AS nurse_user_id
+      `SELECT r.id,r.status,r.requester_user_id,n.user_id AS nurse_user_id,patient.role AS patient_role,nurse_user.role AS nurse_role
        FROM care_requests r
        JOIN request_assignments a ON a.request_id=r.id AND a.status='ACTIVE'
        JOIN nurses n ON n.id=a.nurse_id
@@ -115,8 +128,8 @@ export class VoiceService {
         [row.id, callerUserId],
       );
       const callEventId = randomUUID();
-      const receiverRole = isPatient ? 'NURSE' : 'PATIENT';
-      const receiverTargetApp = isPatient ? 'NURSE_APP' : 'PATIENT_APP';
+      const receiverRole = (isPatient ? visit.nurse_role : visit.patient_role) as RecipientRole;
+      const receiverTargetApp = targetAppForRole(receiverRole);
       const callPayload = buildNotificationPayload({
         eventId: callEventId,
         eventType: 'call.incoming',
@@ -127,8 +140,9 @@ export class VoiceService {
         callId: row.id,
         expiresAt: updated.rows[0].ring_expires_at ? new Date(updated.rows[0].ring_expires_at).toISOString() : null,
         extra: {
-          callerRole: isPatient ? 'PATIENT' : 'NURSE',
+          callerRole: isPatient ? visit.patient_role : visit.nurse_role,
           ringExpiresAt: updated.rows[0].ring_expires_at,
+          sessionVersion: Number(updated.rows[0].session_version),
         },
       });
       await client.query(
@@ -164,7 +178,7 @@ export class VoiceService {
       await client.query(`INSERT INTO voice_call_events(session_id,actor_user_id,event_type) VALUES($1,$2,'ACCEPTED')`, [callId, receiverUserId]);
       return updated.rows[0];
     });
-    await this.live.sendToUser(result.caller_user_id, 'call.accepted', {
+    await this.sendCallEvent(result.caller_user_id, 'call.accepted', result, {
       eventId: randomUUID(),
       callId,
       acceptedAt: result.accepted_at,
@@ -183,7 +197,7 @@ export class VoiceService {
     if (!result.rowCount) throw new ConflictException({ code: 'CALL_CANNOT_CONNECT' });
     const call = result.rows[0];
     const peer = call.caller_user_id === userId ? call.receiver_user_id : call.caller_user_id;
-    await this.live.sendToUser(peer, 'call.connected', {
+    await this.sendCallEvent(peer, 'call.connected', call, {
       eventId: randomUUID(),
       callId,
       connectedAt: call.connected_at,
@@ -195,7 +209,7 @@ export class VoiceService {
   async rejectCall(userId: string, callId: string, reason = 'DECLINED') {
     const result = await this.finish(userId, callId, 'REJECTED', reason, ['INITIATED', 'RINGING']);
     const peer = result.caller_user_id === userId ? result.receiver_user_id : result.caller_user_id;
-    await this.live.sendToUser(peer, 'call.rejected', {
+    await this.sendCallEvent(peer, 'call.rejected', result, {
       eventId: randomUUID(),
       callId,
       reason,
@@ -211,7 +225,7 @@ export class VoiceService {
     const cancelled = ['INITIATED', 'RINGING'].includes(current.rows[0].call_status);
     const result = await this.finish(userId, callId, cancelled ? 'CANCELLED' : 'ENDED', reason, [...ACTIVE_CALL_STATES]);
     const peer = result.caller_user_id === userId ? result.receiver_user_id : result.caller_user_id;
-    await this.live.sendToUser(peer, cancelled ? 'call.cancel' : 'call.ended', {
+    await this.sendCallEvent(peer, cancelled ? 'call.cancel' : 'call.ended', result, {
       eventId: randomUUID(),
       callId,
       durationSeconds: result.duration_seconds,
@@ -241,6 +255,12 @@ export class VoiceService {
 
   /** BUG-038: Serialize WebRTC signals per session + actor inside one transaction lock to eliminate sequence races. */
   async relaySignal(senderUserId: string, callId: string, dto: CallSignalDto) {
+    if (!dto || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(dto.eventId) ||
+        !Number.isSafeInteger(dto.sequenceNumber) || dto.sequenceNumber < 1 ||
+        !['SDP_OFFER','SDP_ANSWER','ICE_CANDIDATE','ICE_RESTART'].includes(dto.eventType) ||
+        !dto.data || typeof dto.data !== 'object' || Array.isArray(dto.data)) {
+      throw new BadRequestException({ code: 'INVALID_CALL_SIGNAL' });
+    }
     const serialized = JSON.stringify(dto.data);
     if (Buffer.byteLength(serialized, 'utf8') > Number(process.env.CALL_SIGNAL_MAX_BYTES ?? 32_768)) {
       throw new BadRequestException({ code: 'CALL_SIGNAL_TOO_LARGE' });
@@ -260,8 +280,14 @@ export class VoiceService {
       if (!(ACTIVE_CALL_STATES as readonly string[]).includes(call.call_status)) {
         throw new ConflictException({ code: 'CALL_TERMINAL' });
       }
-      const duplicate = await client.query('SELECT id FROM voice_call_events WHERE event_id=$1', [dto.eventId]);
+      const duplicate = await client.query('SELECT id,session_id,actor_user_id,sequence_number,event_type,(event_data=$2::jsonb) AS same_data FROM voice_call_events WHERE event_id=$1', [dto.eventId,serialized]);
       if (duplicate.rowCount) {
+        const previous = duplicate.rows[0];
+        if (previous.session_id !== callId || previous.actor_user_id !== senderUserId ||
+            Number(previous.sequence_number) !== dto.sequenceNumber || previous.event_type !== dto.eventType ||
+            !previous.same_data) {
+          throw new ConflictException({ code: 'CALL_SIGNAL_IDEMPOTENCY_CONFLICT' });
+        }
         return { duplicate: true as const, recipientUserId: null as string | null };
       }
       const latest = await client.query(
@@ -308,11 +334,12 @@ export class VoiceService {
     });
 
     if (txResult.duplicate || !txResult.recipientUserId) {
-      return { relayed: true, duplicate: true };
+      return { relayed: true, duplicate: true, eventId:dto.eventId, sequenceNumber:dto.sequenceNumber };
     }
     await this.live.sendToUser(txResult.recipientUserId, 'call.signal', {
       callId,
       ...dto,
+      signalType: dto.eventType,
       event_id: dto.eventId,
       fromUserId: senderUserId,
     });

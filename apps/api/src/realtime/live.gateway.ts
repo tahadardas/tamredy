@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { ModuleRef } from '@nestjs/core';
+import { buildNotificationPayload, type RecipientRole } from '../notifications/notification-routing.js';
+import { isPrivateEventEnvelope, validHighFrequencyEvent, type PrivateEventEnvelope } from './private-event.js';
 import { HttpException, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConnectedSocket, MessageBody, OnGatewayConnection, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Namespace, Socket } from 'socket.io';
@@ -23,6 +25,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     private readonly cache:ReferenceCacheService,
     private readonly liveLocation:LiveLocationService,
     private readonly metrics:OperationalMetricsService,
+    private readonly moduleRef:ModuleRef,
   ){}
   async onModuleInit() {
     if(!process.env.REDIS_URL)return;
@@ -41,9 +44,9 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         const resolvedEventId = evt.payload.eventId ?? evt.eventId;
         // Never rely on a client-selected room or broadcast private patient data publicly.
         for (const userId of new Set(users)) {
-          void this.deliverPrivateEvent(userId,evt.type,{...evt.payload, ...(resolvedEventId ? { eventId: resolvedEventId } : {})});
+          void this.sendToUserLocal(userId,evt.type,{...evt.payload, ...(resolvedEventId ? { eventId: resolvedEventId } : {})}).catch(() => this.metrics.increment('private_event_delivery_failures_total'));
         }
-      }catch { /* malformed worker message ignored and logged upstream */ }
+      }catch { this.metrics.increment('realtime_malformed_messages_total'); }
     });
   }
   async handleConnection(client:Socket) {
@@ -55,6 +58,7 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       const access=await this.assertSocketAccess(payload);
       client.data.auth = payload;
       client.data.role = access.role;
+      client.data.appType = client.handshake.auth?.appType;
       await client.join(`user:${payload.sub}`);
       client.emit('connected',{resyncRequired:true});
     }catch { client.disconnect(true); }
@@ -71,22 +75,71 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     await requireActiveDeviceSession(this.db, payload.sub, payload.dsi, payload.sgen);
     return {role:result.rows[0].role};
   }
+  private async sendToUserLocal(userId: string, type: string, payload: Record<string, unknown>) {
+    const recipient = await this.db.query("SELECT role FROM users WHERE id=$1 AND status='ACTIVE'", [userId]);
+    if (!recipient.rowCount) return;
+    const envelope = buildNotificationPayload({
+      eventId: typeof payload.eventId === 'string' ? payload.eventId : undefined,
+      eventType:type, recipientUserId:userId, recipientRole:recipient.rows[0].role as RecipientRole,
+      requestId:typeof payload.requestId === 'string' ? payload.requestId : null,
+      callId:typeof payload.callId === 'string' ? payload.callId : null,
+      createdAt:typeof payload.createdAt === 'string' ? payload.createdAt : null,
+      expiresAt:typeof payload.expiresAt === 'string' ? payload.expiresAt : null,
+      assignmentId: typeof payload.assignmentId === 'string' ? payload.assignmentId : null,
+      offerId: typeof payload.offerId === 'string' ? payload.offerId : null,
+      proposalId: typeof payload.proposalId === 'string' ? payload.proposalId : null,
+      conversationId: typeof payload.conversationId === 'string' ? payload.conversationId : null,
+      entityVersion: typeof payload.entityVersion === 'number' ? payload.entityVersion : null,
+      extra:payload,
+    });
+    await this.deliverPrivateEvent(userId,type,envelope);
+  }
+
   async sendToUser(userId: string, type: string, payload: unknown) {
-    const obj = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
-    const eventId = typeof obj.eventId === 'string' && obj.eventId ? obj.eventId : randomUUID();
-    const enriched = { ...obj, eventId, recipientUserId: userId };
+    const obj = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+    const recipient = await this.db.query("SELECT role FROM users WHERE id=$1 AND status='ACTIVE'", [userId]);
+    if (!recipient.rowCount) return;
+    const enriched = buildNotificationPayload({
+      eventId: typeof obj.eventId === 'string' ? obj.eventId : undefined,
+      eventType: type, recipientUserId: userId, recipientRole: recipient.rows[0].role as RecipientRole,
+      requestId: typeof obj.requestId === 'string' ? obj.requestId : null,
+      callId: typeof obj.callId === 'string' ? obj.callId : null,
+      assignmentId: typeof obj.assignmentId === 'string' ? obj.assignmentId : null,
+      offerId: typeof obj.offerId === 'string' ? obj.offerId : null,
+      proposalId: typeof obj.proposalId === 'string' ? obj.proposalId : null,
+      conversationId: typeof obj.conversationId === 'string' ? obj.conversationId : null,
+      entityVersion: typeof obj.entityVersion === 'number' ? obj.entityVersion : null,
+      extra: obj,
+      expiresAt: typeof obj.expiresAt === 'string' ? obj.expiresAt : null,
+    });
+    if (!isPrivateEventEnvelope(enriched, userId, type)) throw Error('PRIVATE_EVENT_CONTRACT_INVALID');
     if (this.publisher) {
       try {
-        await this.publisher.publish('tamreedy:events',JSON.stringify({
-          eventId, type, payload: enriched,
-        }));
+        await this.publisher.publish('tamreedy:events',JSON.stringify({eventId:enriched.eventId,type,payload:enriched}));
         return;
       } catch {
-        // Local delivery remains available; durable outbox and REST reconcile
-        // events for clients connected to another replica.
+        this.metrics.increment('realtime_publish_failures_total');
       }
     }
     await this.deliverPrivateEvent(userId,type,enriched);
+  }
+
+  @SubscribeMessage('call.signal')
+  async callSignal(@ConnectedSocket() client:Socket, @MessageBody() body: Record<string, unknown>) {
+    try {
+      const auth = client.data.auth as JwtPayload;
+      await this.assertSocketAccess(auth);
+      if (!body || typeof body.callId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(body.callId)) {
+        return {code:'INVALID_CALL_SIGNAL'};
+      }
+      // Resolve lazily: VoiceService already depends on this gateway.
+      const { VoiceService } = await import('../voice/voice.service.js');
+      const voice = this.moduleRef.get(VoiceService, {strict:false});
+      return await voice.relaySignal(auth.sub!, body.callId, body as unknown as import('../voice/voice.service.js').CallSignalDto);
+    } catch(error) {
+      this.metrics.increment('voice_signal_rejections_total');
+      return error instanceof HttpException ? error.getResponse() : {code:'CALL_SIGNAL_FAILED'};
+    }
   }
 
   @SubscribeMessage('location.update')
@@ -126,22 +179,47 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     const users = this.io?.sockets;
     const recipients = this.io?.adapter.rooms.get(`user:${userId}`);
     if (!users || !recipients) return;
-    const targetRole = (payload && typeof payload === 'object' && 'recipientRole' in payload)
-      ? (payload as { recipientRole?: unknown }).recipientRole
-      : undefined;
+    if (!isPrivateEventEnvelope(payload, userId, type) || !validHighFrequencyEvent(payload)) {
+      this.metrics.increment('private_event_contract_rejections_total');
+      return;
+    }
+    if (typeof payload.expiresAt === 'string' && Date.parse(payload.expiresAt) <= Date.now()) return;
     for (const socketId of [...recipients]) {
       const socket = users.get(socketId);
       if (!socket) continue;
-      if (typeof targetRole === 'string' && socket.data.role && socket.data.role !== targetRole) {
+      if (socket.data.role !== payload.recipientRole ||
+          (socket.data.appType && socket.data.appType !== payload.targetApp)) {
         continue;
       }
       try {
-        await this.assertSocketAccess(socket.data.auth);
+        const access = await this.assertSocketAccess(socket.data.auth);
+        if (access.role !== payload.recipientRole) continue;
+        if (!await this.canAccessEntity(userId, type, payload)) continue;
         socket.emit(type, payload);
       } catch {
         socket.disconnect(true);
       }
     }
+  }
+  private async canAccessEntity(userId: string, type: string, payload: PrivateEventEnvelope): Promise<boolean> {
+    if (typeof payload.callId === 'string') {
+      const call = await this.db.query('SELECT 1 FROM voice_call_sessions WHERE id=$1 AND $2 IN (caller_user_id,receiver_user_id)', [payload.callId,userId]);
+      return !!call.rowCount;
+    }
+    if (typeof payload.conversationId === 'string') {
+      const member = await this.db.query('SELECT 1 FROM conversation_members WHERE conversation_id=$1 AND user_id=$2',[payload.conversationId,userId]);
+      return !!member.rowCount;
+    }
+    if (typeof payload.requestId !== 'string') return true;
+    // Published marketplace notices only identify a browsable request; protected
+    // clinical and financial contents always require participant access.
+    const publicListing = ['marketplace.request.published','marketplace.request.updated','marketplace.recovery.alert'].includes(type);
+    const result = await this.db.query(`SELECT 1 FROM care_requests r WHERE r.id=$1 AND (
+      r.requester_user_id=$2 OR EXISTS(SELECT 1 FROM request_assignments a JOIN nurses n ON n.id=a.nurse_id WHERE a.request_id=r.id AND n.user_id=$2)
+      OR ($4::boolean AND EXISTS(SELECT 1 FROM request_offers o JOIN nurses n ON n.id=o.nurse_id WHERE o.request_id=r.id AND n.user_id=$2))
+      OR ($5::boolean AND EXISTS(SELECT 1 FROM marketplace_proposals p JOIN nurses n ON n.id=p.nurse_id WHERE p.request_id=r.id AND n.user_id=$2))
+      OR ($3::boolean AND EXISTS(SELECT 1 FROM nurses n WHERE n.user_id=$2)))`, [payload.requestId,userId,publicListing,type.startsWith('offer.'),type.startsWith('marketplace.')]);
+    return !!result.rowCount;
   }
   async onModuleDestroy() { await Promise.all([this.subscriber?.quit(),this.publisher?.quit()]); }
 }
