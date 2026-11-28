@@ -53,6 +53,17 @@ class _BookingWizardScreenState extends State<BookingWizardScreen> {
     }
   }
 
+  Future<void> _recoverOrder() async {
+    final request = await draft.recoverPendingRequest();
+    if (!mounted) return;
+    if (request == null) {
+      TamToast.show(context, draft.submitError ?? 'لا توجد عملية معلقة قابلة للاستعادة', tone: TamToastTone.warning);
+      return;
+    }
+    widget.session.requests.registerCreatedRequest(request);
+    await PatientRouter.openRequestSmart(context, widget.session, request);
+  }
+
   Future<void> _submitOrder() async {
     final created = await draft.submit();
     if (!mounted) return;
@@ -127,6 +138,24 @@ class _BookingWizardScreenState extends State<BookingWizardScreen> {
             ),
             body: Column(
               children: [
+                if (draft.hasUnresolvedRequest)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        const NoticeBox('توجد عملية حجز سابقة لم تُحسم نتيجتها. استعد الطلب قبل إرسال حجز مختلف.'),
+                        TextButton(
+                          onPressed: draft.recoveringRequest || draft.submitting ? null : _recoverOrder,
+                          child: Text(draft.recoveringRequest ? 'جارٍ استعادة الطلب...' : 'استعادة نتيجة الطلب السابق'),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (!draft.capabilities.ordersAccepting)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: NoticeBox(draft.capabilities.pausedMessage ?? 'استقبال الطلبات غير متاح حالياً.'),
+                  ),
                 _StepIndicator(
                   step: _step,
                   onTapStep: (idx) {
@@ -183,7 +212,8 @@ class _BookingWizardScreenState extends State<BookingWizardScreen> {
                                 ? 'التالي'
                                 : (draft.submitting ? 'جارٍ إرسال الطلب...' : 'تأكيد وإرسال الطلب'),
                             isLoading: draft.submitting,
-                            onPressed: (!_canProceed || draft.submitting)
+                            onPressed: (!_canProceed || draft.submitting || draft.recoveringRequest ||
+                                (_step == 3 && (!draft.capabilities.ordersAccepting || draft.hasUnresolvedRequest)))
                                 ? null
                                 : () {
                                     if (_step < 3) {
@@ -635,7 +665,10 @@ class _StepModeSchedule extends StatelessWidget {
           selected: draft.bookingMode == 'OPEN',
           icon: Icons.storefront_rounded,
           title: 'السوق المفتوح للعروض',
-          subtitle: 'استقبل عروض الجاهزية من عدة ممرضين مع وقت الوصول المتوقع وقارن بينهم.',
+          subtitle: draft.capabilities.openMarketplaceEnabled
+              ? 'استقبل عروض الجاهزية من عدة ممرضين مع وقت الوصول المتوقع وقارن بينهم.'
+              : 'السوق المفتوح غير متاح حالياً من الخادم.',
+          enabled: draft.capabilities.openMarketplaceEnabled,
           onTap: () => draft.setBookingMode('OPEN'),
         ),
         _ModeTile(

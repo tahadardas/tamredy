@@ -9,6 +9,8 @@ dependencies:
     sdk: flutter
   tamreedy_core:
     path: ../../packages/flutter_core
+  cryptography: ^2.7.0
+  path_provider: ^2.1.5
   dio: ^5.0.0
   file_picker: ^13.4.0
   geolocator: ^14.0.0

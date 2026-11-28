@@ -1,22 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart';
+import 'pending_clinical_upload_store.dart';
+import 'pending_request_operation_store.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../catalog/catalog_store.dart';
 
-enum EstimateStatus {
-  verified,
-  unavailable,
-  stale,
-}
+enum EstimateStatus { verified, unavailable, stale }
 
 class RegionArea {
   final String governorate;
   final String name;
   final double? lat;
   final double? lng;
-  const RegionArea({required this.governorate, required this.name, this.lat, this.lng});
+  const RegionArea({
+    required this.governorate,
+    required this.name,
+    this.lat,
+    this.lng,
+  });
 }
 
 class SavedPlaceModel {
@@ -51,26 +55,27 @@ class SavedPlaceModel {
   LatLng get point => LatLng(latitude, longitude);
 
   String get detailsSummary => [
-        if (building != null && building!.trim().isNotEmpty) 'البناء ${building!.trim()}',
-        if (floor != null && floor!.trim().isNotEmpty) 'الطابق ${floor!.trim()}',
-        if (landmark != null && landmark!.trim().isNotEmpty) landmark!.trim(),
-        if (notes != null && notes!.trim().isNotEmpty) notes!.trim(),
-      ].join(' • ');
+    if (building != null && building!.trim().isNotEmpty)
+      'البناء ${building!.trim()}',
+    if (floor != null && floor!.trim().isNotEmpty) 'الطابق ${floor!.trim()}',
+    if (landmark != null && landmark!.trim().isNotEmpty) landmark!.trim(),
+    if (notes != null && notes!.trim().isNotEmpty) notes!.trim(),
+  ].join(' • ');
 
   factory SavedPlaceModel.fromJson(Map<String, dynamic> j) => SavedPlaceModel(
-        id: '${j['id'] ?? ''}',
-        label: '${j['label'] ?? 'عنوان محفوظ'}',
-        placeType: '${j['place_type'] ?? 'CUSTOM'}',
-        formattedAddress: '${j['formatted_address'] ?? ''}',
-        latitude: (num.tryParse('${j['latitude'] ?? 0}') ?? 0).toDouble(),
-        longitude: (num.tryParse('${j['longitude'] ?? 0}') ?? 0).toDouble(),
-        accuracy: (num.tryParse('${j['accuracy'] ?? 0}') ?? 0).toDouble(),
-        building: j['building']?.toString(),
-        floor: j['floor']?.toString(),
-        landmark: j['landmark']?.toString(),
-        notes: j['notes']?.toString(),
-        isDefault: j['is_default'] == true,
-      );
+    id: '${j['id'] ?? ''}',
+    label: '${j['label'] ?? 'عنوان محفوظ'}',
+    placeType: '${j['place_type'] ?? 'CUSTOM'}',
+    formattedAddress: '${j['formatted_address'] ?? ''}',
+    latitude: (num.tryParse('${j['latitude'] ?? 0}') ?? 0).toDouble(),
+    longitude: (num.tryParse('${j['longitude'] ?? 0}') ?? 0).toDouble(),
+    accuracy: (num.tryParse('${j['accuracy'] ?? 0}') ?? 0).toDouble(),
+    building: j['building']?.toString(),
+    floor: j['floor']?.toString(),
+    landmark: j['landmark']?.toString(),
+    notes: j['notes']?.toString(),
+    isDefault: j['is_default'] == true,
+  );
 }
 
 class StagedEvidence {
@@ -90,7 +95,40 @@ class BookingDraftStore extends ChangeNotifier {
   final TamreedyApi api;
   final CatalogStore catalog;
 
-  BookingDraftStore({required this.api, required this.catalog});
+  BookingDraftStore({
+    required this.api,
+    required this.catalog,
+    PendingClinicalUploadStore? clinicalUploads,
+  }) {
+    _clinicalUploads = clinicalUploads ?? PendingClinicalUploadStore(api: api);
+    _requestOperations = PendingRequestOperationStore(api);
+  }
+
+  late final PendingClinicalUploadStore _clinicalUploads;
+  late final PendingRequestOperationStore _requestOperations;
+  int _sessionGeneration = 0;
+  CancelToken _sessionReads = CancelToken();
+  String? _ownerUserId;
+  bool hasUnresolvedRequest = false;
+  bool recoveringRequest = false;
+  TypedCareRequest? recoveredRequest;
+  String? prerequisitesError;
+
+  void _requireCurrent(int generation) {
+    if (generation != _sessionGeneration) throw StateError('Session changed');
+  }
+
+  Future<String> _authenticatedOwner(int generation) async {
+    final owner = await api.currentUserId();
+    _requireCurrent(generation);
+    if (owner == null || owner.isEmpty) {
+      throw StateError('يلزم تسجيل الدخول قبل حفظ أو إرسال الطلب.');
+    }
+    _ownerUserId = owner;
+    return owner;
+  }
+
+  String _draftKey(String owner) => '${_draftStorageKey}_$owner';
 
   // Step 1: Services & pricing
   final Map<String, int> serviceQuantities = {};
@@ -100,6 +138,7 @@ class BookingDraftStore extends ChangeNotifier {
   EstimateStatus estimateStatus = EstimateStatus.stale;
   int _estimateGeneration = 0;
   Timer? _estimateDebounce;
+  Completer<void>? _estimateWaiter;
   bool estimating = false;
 
   int get unverifiedLocalSubtotal {
@@ -147,7 +186,6 @@ class BookingDraftStore extends ChangeNotifier {
   );
 
   // Step 4: Submission state & BUG-026 clinical evidence retry state
-  String? _idempotencyKey;
   bool submitting = false;
   String? submitError;
   String? pendingEvidenceRequestId;
@@ -178,12 +216,24 @@ class BookingDraftStore extends ChangeNotifier {
     return beneficiaries.isEmpty ? null : beneficiaries.first;
   }
 
-  String get fullAddress =>
-      [addressLabel.trim(), addressDetails.trim()].where((e) => e.isNotEmpty).join(' • ');
+  String get fullAddress => [
+    addressLabel.trim(),
+    addressDetails.trim(),
+  ].where((e) => e.isNotEmpty).join(' • ');
 
   Future<void> restoreDraft() async {
+    final generation = _sessionGeneration;
     try {
-      final raw = await api.readLocal(_draftStorageKey);
+      final owner = await _authenticatedOwner(generation);
+      // Legacy drafts were not owner scoped. Never import them into an account.
+      await api.writeLocal(_draftStorageKey, null);
+      final operation = await _requestOperations.read(owner);
+      _requireCurrent(generation);
+      hasUnresolvedRequest =
+          operation != null && operation['status'] != 'RECONCILED';
+      await _restorePendingEvidence(owner, generation);
+      final raw = await api.readLocal(_draftKey(owner));
+      _requireCurrent(generation);
       if (raw == null || raw.isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
@@ -193,7 +243,12 @@ class BookingDraftStore extends ChangeNotifier {
           ..clear()
           ..addEntries(
             items.entries
-                .map((e) => MapEntry('${e.key}', (num.tryParse('${e.value}') ?? 1).toInt().clamp(1, 10)))
+                .map(
+                  (e) => MapEntry(
+                    '${e.key}',
+                    (num.tryParse('${e.value}') ?? 1).toInt().clamp(1, 10),
+                  ),
+                )
                 .take(10),
           );
       }
@@ -207,34 +262,52 @@ class BookingDraftStore extends ChangeNotifier {
       addressLabel = '${decoded['addressLabel'] ?? ''}';
       addressDetails = '${decoded['addressDetails'] ?? ''}';
       bookingMode = '${decoded['bookingMode'] ?? 'INSTANT'}';
-      openDurationMinutes = (num.tryParse('${decoded['openDurationMinutes'] ?? 60}') ?? 60).toInt();
-      scheduledAt = DateTime.tryParse('${decoded['scheduledAt'] ?? ''}')?.toLocal();
+      openDurationMinutes =
+          (num.tryParse('${decoded['openDurationMinutes'] ?? 60}') ?? 60)
+              .toInt();
+      scheduledAt = DateTime.tryParse(
+        '${decoded['scheduledAt'] ?? ''}',
+      )?.toLocal();
       notifyListeners();
-    } catch (_) {}
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      prerequisitesError = explainError(
+        error,
+        fallback: 'تعذر استعادة المسودة الآمنة',
+      );
+      notifyListeners();
+    }
   }
 
   Future<void> _persistDraft() async {
+    final generation = _sessionGeneration;
     try {
-      await api.writeLocal(
-        _draftStorageKey,
-        jsonEncode({
-          'quantities': serviceQuantities,
-          'promoCode': promoCode,
-          'beneficiaryId': selectedBeneficiaryId,
-          'lat': locationPoint?.latitude,
-          'lng': locationPoint?.longitude,
-          'addressLabel': addressLabel,
-          'addressDetails': addressDetails,
-          'bookingMode': bookingMode,
-          'openDurationMinutes': openDurationMinutes,
-          'scheduledAt': scheduledAt?.toUtc().toIso8601String(),
-        }),
+      final owner = await _authenticatedOwner(generation);
+      final snapshot = jsonEncode({
+        'quantities': serviceQuantities,
+        'promoCode': promoCode,
+        'beneficiaryId': selectedBeneficiaryId,
+        'lat': locationPoint?.latitude,
+        'lng': locationPoint?.longitude,
+        'addressLabel': addressLabel,
+        'addressDetails': addressDetails,
+        'bookingMode': bookingMode,
+        'openDurationMinutes': openDurationMinutes,
+        'scheduledAt': scheduledAt?.toUtc().toIso8601String(),
+      });
+      _requireCurrent(generation);
+      await api.writeLocal(_draftKey(owner), snapshot);
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      prerequisitesError = explainError(
+        error,
+        fallback: 'تعذر حفظ المسودة الآمنة',
       );
-    } catch (_) {}
+      notifyListeners();
+    }
   }
 
   void _invalidateSubmissionKey() {
-    _idempotencyKey = null;
     submitError = null;
   }
 
@@ -254,7 +327,8 @@ class BookingDraftStore extends ChangeNotifier {
     if (qty <= 0) {
       serviceQuantities.remove(svc.id);
     } else {
-      if (!serviceQuantities.containsKey(svc.id) && serviceQuantities.length >= 10) {
+      if (!serviceQuantities.containsKey(svc.id) &&
+          serviceQuantities.length >= 10) {
         return;
       }
       serviceQuantities[svc.id] = qty.clamp(1, 10);
@@ -267,8 +341,16 @@ class BookingDraftStore extends ChangeNotifier {
     refreshEstimate();
   }
 
-  Future<void> refreshEstimate({bool immediate = false}) async {
+  void _cancelEstimateDebounce() {
     _estimateDebounce?.cancel();
+    _estimateDebounce = null;
+    final waiter = _estimateWaiter;
+    _estimateWaiter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  Future<void> refreshEstimate({bool immediate = false}) async {
+    _cancelEstimateDebounce();
     if (serviceQuantities.isEmpty) {
       _estimateGeneration++;
       estimate = null;
@@ -279,9 +361,14 @@ class BookingDraftStore extends ChangeNotifier {
     }
     if (!immediate) {
       final completer = Completer<void>();
+      _estimateWaiter = completer;
       _estimateDebounce = Timer(const Duration(milliseconds: 280), () async {
-        await refreshEstimate(immediate: true);
-        if (!completer.isCompleted) completer.complete();
+        _estimateWaiter = null;
+        try {
+          await refreshEstimate(immediate: true);
+        } finally {
+          if (!completer.isCompleted) completer.complete();
+        }
       });
       return completer.future;
     }
@@ -297,14 +384,19 @@ class BookingDraftStore extends ChangeNotifier {
       );
       if (gen != _estimateGeneration) return;
       estimate = result;
-      estimateStatus = result != null ? EstimateStatus.verified : EstimateStatus.unavailable;
+      estimateStatus = result != null
+          ? EstimateStatus.verified
+          : EstimateStatus.unavailable;
     } catch (e) {
       if (gen != _estimateGeneration) return;
       // BUG-009: never forge a verified CatalogEstimateResult from local sums; preserve error state.
       estimate = null;
       estimateStatus = EstimateStatus.unavailable;
       if (promoCode.trim().isNotEmpty) {
-        promoFeedback = explainError(e, fallback: 'تعذر التحقق من الكود أو السعر الرسمي حالياً');
+        promoFeedback = explainError(
+          e,
+          fallback: 'تعذر التحقق من الكود أو السعر الرسمي حالياً',
+        );
       }
     } finally {
       if (gen == _estimateGeneration) {
@@ -335,8 +427,11 @@ class BookingDraftStore extends ChangeNotifier {
       );
       if (gen != _estimateGeneration) return;
       estimate = result;
-      estimateStatus = result != null ? EstimateStatus.verified : EstimateStatus.unavailable;
-      if ((estimate?.promoDiscount ?? 0) > 0 || estimate?.promoAppliedCode != null) {
+      estimateStatus = result != null
+          ? EstimateStatus.verified
+          : EstimateStatus.unavailable;
+      if ((estimate?.promoDiscount ?? 0) > 0 ||
+          estimate?.promoAppliedCode != null) {
         promoFeedback = 'تم تطبيق الكود ($code)';
       } else {
         promoFeedback = 'تم تسجيل الكود وسيُتحقق منه عند التثبيت';
@@ -344,7 +439,10 @@ class BookingDraftStore extends ChangeNotifier {
     } catch (e) {
       if (gen != _estimateGeneration) return;
       estimateStatus = EstimateStatus.unavailable;
-      promoFeedback = explainError(e, fallback: 'رمز الخصم غير صالح أو تعذر التحقق من السعر');
+      promoFeedback = explainError(
+        e,
+        fallback: 'رمز الخصم غير صالح أو تعذر التحقق من السعر',
+      );
     } finally {
       if (gen == _estimateGeneration) {
         estimating = false;
@@ -356,6 +454,7 @@ class BookingDraftStore extends ChangeNotifier {
   }
 
   Future<void> loadPrerequisites() async {
+    final generation = _sessionGeneration;
     await Future.wait([
       catalog.load(),
       loadBeneficiaries(),
@@ -363,15 +462,23 @@ class BookingDraftStore extends ChangeNotifier {
       loadRegions(),
       loadSchedulingPolicy(),
     ]);
+    if (generation != _sessionGeneration) return;
     if (serviceQuantities.isNotEmpty && estimate == null) {
       await refreshEstimate(immediate: true);
     }
   }
 
   Future<void> loadBeneficiaries() async {
+    final generation = _sessionGeneration;
     if (kDemoMode) {
       if (beneficiaries.isEmpty) {
-        beneficiaries = const [TypedBeneficiary(id: 'demo-ben-1', displayName: 'المستخدم الحالي', relationship: 'SELF')];
+        beneficiaries = const [
+          TypedBeneficiary(
+            id: 'demo-ben-1',
+            displayName: 'المستخدم الحالي',
+            relationship: 'SELF',
+          ),
+        ];
       }
       selectedBeneficiaryId ??= beneficiaries.first.id;
       notifyListeners();
@@ -380,19 +487,33 @@ class BookingDraftStore extends ChangeNotifier {
     loadingBeneficiaries = true;
     notifyListeners();
     try {
-      final rows = await api.getList('/v1/beneficiaries/mine');
+      final rows = await api.getList(
+        '/v1/beneficiaries/mine',
+        cancelToken: _sessionReads,
+      );
+      if (generation != _sessionGeneration) return;
       beneficiaries = [
         for (final row in rows)
-          if (row is Map) TypedBeneficiary.fromJson(Map<String, dynamic>.from(row)),
+          if (row is Map)
+            TypedBeneficiary.fromJson(Map<String, dynamic>.from(row)),
       ];
       if (beneficiaries.isNotEmpty &&
           (selectedBeneficiaryId == null ||
               !beneficiaries.any((b) => b.id == selectedBeneficiaryId))) {
         selectedBeneficiaryId = beneficiaries.first.id;
       }
-    } catch (_) {}
-    loadingBeneficiaries = false;
-    notifyListeners();
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      prerequisitesError = explainError(
+        error,
+        fallback: 'تعذر تحميل المستفيدين',
+      );
+    } finally {
+      if (generation == _sessionGeneration) {
+        loadingBeneficiaries = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<TypedBeneficiary?> createBeneficiary({
@@ -401,6 +522,7 @@ class BookingDraftStore extends ChangeNotifier {
     String? gender,
     String? emergencyContactPhone,
   }) async {
+    final generation = _sessionGeneration;
     if (kDemoMode) {
       final ben = TypedBeneficiary(
         id: 'demo-ben-${DateTime.now().millisecondsSinceEpoch}',
@@ -418,10 +540,12 @@ class BookingDraftStore extends ChangeNotifier {
       'displayName': displayName.trim(),
       'relationship': relationship,
       'gender': ?gender,
-      if (emergencyContactPhone != null && emergencyContactPhone.trim().isNotEmpty)
+      if (emergencyContactPhone != null &&
+          emergencyContactPhone.trim().isNotEmpty)
         'emergencyContactPhone': emergencyContactPhone.trim(),
       'consentConfirmed': true,
     });
+    _requireCurrent(generation);
     final created = TypedBeneficiary.fromJson(res);
     beneficiaries = [created, ...beneficiaries];
     selectedBeneficiaryId = created.id;
@@ -431,10 +555,14 @@ class BookingDraftStore extends ChangeNotifier {
   }
 
   Future<void> removeBeneficiary(String id) async {
+    final generation = _sessionGeneration;
     await api.delete('/v1/beneficiaries/$id');
+    _requireCurrent(generation);
     beneficiaries.removeWhere((b) => b.id == id);
     if (selectedBeneficiaryId == id) {
-      selectedBeneficiaryId = beneficiaries.isEmpty ? null : beneficiaries.first.id;
+      selectedBeneficiaryId = beneficiaries.isEmpty
+          ? null
+          : beneficiaries.first.id;
     }
     notifyListeners();
   }
@@ -447,32 +575,63 @@ class BookingDraftStore extends ChangeNotifier {
   }
 
   Future<void> loadSavedPlaces() async {
+    final generation = _sessionGeneration;
     if (kDemoMode) return;
     try {
-      final rows = await api.getList('/v1/patient/saved-places');
+      final rows = await api.getList(
+        '/v1/patient/saved-places',
+        cancelToken: _sessionReads,
+      );
+      if (generation != _sessionGeneration) return;
       savedPlaces = [
         for (final row in rows)
-          if (row is Map) SavedPlaceModel.fromJson(Map<String, dynamic>.from(row)),
+          if (row is Map)
+            SavedPlaceModel.fromJson(Map<String, dynamic>.from(row)),
       ];
       // Pre-fill default place if no location set yet
       if (locationPoint == null && savedPlaces.isNotEmpty) {
-        final def = savedPlaces.where((p) => p.isDefault).firstOrNull ?? savedPlaces.first;
+        final def =
+            savedPlaces.where((p) => p.isDefault).firstOrNull ??
+            savedPlaces.first;
         applySavedPlace(def, persistUse: false);
       }
       notifyListeners();
-    } catch (_) {}
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      prerequisitesError = explainError(
+        error,
+        fallback: 'تعذر تحميل العناوين المحفوظة',
+      );
+      notifyListeners();
+    }
   }
 
-  Future<void> applySavedPlace(SavedPlaceModel place, {bool persistUse = true}) async {
+  Future<void> applySavedPlace(
+    SavedPlaceModel place, {
+    bool persistUse = true,
+  }) async {
+    final generation = _sessionGeneration;
     SavedPlaceModel chosen = place;
     if (persistUse && !kDemoMode) {
       try {
-        final res = await api.post('/v1/patient/saved-places/${place.id}/use', {});
+        final res = await api.post(
+          '/v1/patient/saved-places/${place.id}/use',
+          {},
+        );
         chosen = SavedPlaceModel.fromJson(res);
-      } catch (_) {}
+      } catch (error) {
+        if (generation != _sessionGeneration) return;
+        prerequisitesError = explainError(
+          error,
+          fallback: 'تعذر تأكيد استخدام العنوان المحفوظ',
+        );
+      }
     }
+    _requireCurrent(generation);
     locationPoint = chosen.point;
-    addressLabel = chosen.formattedAddress.isNotEmpty ? chosen.formattedAddress : chosen.label;
+    addressLabel = chosen.formattedAddress.isNotEmpty
+        ? chosen.formattedAddress
+        : chosen.label;
     addressDetails = chosen.detailsSummary;
     accuracyMeters = chosen.accuracy;
     locationSource = 'MANUAL_PIN';
@@ -483,46 +642,91 @@ class BookingDraftStore extends ChangeNotifier {
   }
 
   Future<void> loadRegions() async {
+    final generation = _sessionGeneration;
     if (kDemoMode) {
       regions = const [
-        RegionArea(governorate: 'دمشق', name: 'المزة', lat: 33.5000, lng: 36.2500),
-        RegionArea(governorate: 'دمشق', name: 'المالكي', lat: 33.5200, lng: 36.2800),
-        RegionArea(governorate: 'دمشق', name: 'كفرسوسة', lat: 33.4930, lng: 36.2760),
-        RegionArea(governorate: 'ريف دمشق', name: 'جرمانا', lat: 33.4750, lng: 36.3500),
+        RegionArea(
+          governorate: 'دمشق',
+          name: 'المزة',
+          lat: 33.5000,
+          lng: 36.2500,
+        ),
+        RegionArea(
+          governorate: 'دمشق',
+          name: 'المالكي',
+          lat: 33.5200,
+          lng: 36.2800,
+        ),
+        RegionArea(
+          governorate: 'دمشق',
+          name: 'كفرسوسة',
+          lat: 33.4930,
+          lng: 36.2760,
+        ),
+        RegionArea(
+          governorate: 'ريف دمشق',
+          name: 'جرمانا',
+          lat: 33.4750,
+          lng: 36.3500,
+        ),
       ];
       notifyListeners();
       return;
     }
     try {
-      final d = await api.getMap('/v1/catalog/regions');
+      final d = await api.getMap(
+        '/v1/catalog/regions',
+        cancelToken: _sessionReads,
+      );
+      if (generation != _sessionGeneration) return;
       final list = <RegionArea>[];
       for (final g in (d['governorates'] as List? ?? const [])) {
         if (g is! Map) continue;
         final govName = '${g['name'] ?? ''}';
         for (final a in (g['areas'] as List? ?? const [])) {
           if (a is! Map) continue;
-          list.add(RegionArea(
-            governorate: govName,
-            name: '${a['name'] ?? ''}',
-            lat: double.tryParse('${a['lat'] ?? ''}'),
-            lng: double.tryParse('${a['lng'] ?? ''}'),
-          ));
+          list.add(
+            RegionArea(
+              governorate: govName,
+              name: '${a['name'] ?? ''}',
+              lat: double.tryParse('${a['lat'] ?? ''}'),
+              lng: double.tryParse('${a['lng'] ?? ''}'),
+            ),
+          );
         }
       }
       regions = list;
       notifyListeners();
-    } catch (_) {}
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      prerequisitesError = explainError(error, fallback: 'تعذر تحميل المناطق');
+      notifyListeners();
+    }
   }
 
   Future<void> loadSchedulingPolicy() async {
+    final generation = _sessionGeneration;
     if (kDemoMode) return;
     try {
-      schedulingPolicy = await api.getMap('/v1/requests/scheduling');
+      final result = await api.getMap(
+        '/v1/requests/scheduling',
+        cancelToken: _sessionReads,
+      );
+      if (generation != _sessionGeneration) return;
+      schedulingPolicy = result;
       notifyListeners();
-    } catch (_) {}
+    } catch (error) {
+      if (generation != _sessionGeneration) return;
+      prerequisitesError = explainError(
+        error,
+        fallback: 'تعذر تحميل سياسة المواعيد',
+      );
+      notifyListeners();
+    }
   }
 
   Future<bool> captureGpsLocation() async {
+    final generation = _sessionGeneration;
     locationError = null;
     locatingGps = true;
     notifyListeners();
@@ -535,16 +739,20 @@ class BookingDraftStore extends ChangeNotifier {
         return true;
       }
       final enabled = await Geolocator.isLocationServiceEnabled();
+      if (generation != _sessionGeneration) return false;
       if (!enabled) {
-        locationError = 'خدمة تحديد الموقع (GPS) مغلقة على جهازك. فعّلها ثم أعد المحاولة.';
+        locationError =
+            'خدمة تحديد الموقع (GPS) مغلقة على جهازك. فعّلها ثم أعد المحاولة.';
         return false;
       }
       var perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
       }
+      if (generation != _sessionGeneration) return false;
       if (perm == LocationPermission.deniedForever) {
-        locationError = 'تم رفض إذن الموقع نهائياً. اسمح بالوصول من إعدادات التطبيق.';
+        locationError =
+            'تم رفض إذن الموقع نهائياً. اسمح بالوصول من إعدادات التطبيق.';
         return false;
       }
       if (perm == LocationPermission.denied) {
@@ -557,6 +765,7 @@ class BookingDraftStore extends ChangeNotifier {
           timeLimit: Duration(seconds: 12),
         ),
       );
+      if (generation != _sessionGeneration) return false;
       locationPoint = LatLng(pos.latitude, pos.longitude);
       accuracyMeters = pos.accuracy;
       locationSource = 'GPS_CONFIRMED';
@@ -565,11 +774,15 @@ class BookingDraftStore extends ChangeNotifier {
       await _persistDraft();
       return true;
     } catch (_) {
-      locationError = 'تعذر التقاط إشارة GPS حالياً. حدّد موقعك على الخريطة أو اختر المنطقة.';
+      if (generation != _sessionGeneration) return false;
+      locationError =
+          'تعذر التقاط إشارة GPS حالياً. حدّد موقعك على الخريطة أو اختر المنطقة.';
       return false;
     } finally {
-      locatingGps = false;
-      notifyListeners();
+      if (generation == _sessionGeneration) {
+        locatingGps = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -596,7 +809,8 @@ class BookingDraftStore extends ChangeNotifier {
 
   void updateCapabilities(ServerCapabilities next) {
     capabilities = next;
-    if (!capabilities.scheduledVisitsEnabled && bookingMode == 'SCHEDULED') {
+    if ((!capabilities.scheduledVisitsEnabled && bookingMode == 'SCHEDULED') ||
+        (!capabilities.openMarketplaceEnabled && bookingMode == 'OPEN')) {
       bookingMode = 'INSTANT';
       scheduledAt = null;
       _invalidateSubmissionKey();
@@ -606,7 +820,8 @@ class BookingDraftStore extends ChangeNotifier {
   }
 
   void setBookingMode(String mode) {
-    if (mode == 'SCHEDULED' && !capabilities.scheduledVisitsEnabled) {
+    if ((mode == 'SCHEDULED' && !capabilities.scheduledVisitsEnabled) ||
+        (mode == 'OPEN' && !capabilities.openMarketplaceEnabled)) {
       return;
     }
     bookingMode = mode;
@@ -643,7 +858,23 @@ class BookingDraftStore extends ChangeNotifier {
 
   /// Submits the request with single-flight protection & Idempotency-Key.
   Future<TypedCareRequest?> submit() async {
-    if (submitting || serviceQuantities.isEmpty) return null;
+    if (submitting || recoveringRequest || serviceQuantities.isEmpty) {
+      return null;
+    }
+    final generation = _sessionGeneration;
+    if (!kDemoMode && !capabilities.ordersAccepting) {
+      submitError =
+          capabilities.pausedMessage ??
+          'استقبال الطلبات غير متاح حالياً؛ حدّث حالة الخادم وأعد المحاولة.';
+      notifyListeners();
+      return null;
+    }
+    if ((bookingMode == 'SCHEDULED' && !capabilities.scheduledVisitsEnabled) ||
+        (bookingMode == 'OPEN' && !capabilities.openMarketplaceEnabled)) {
+      submitError = 'طريقة الحجز المحددة غير متاحة حالياً.';
+      notifyListeners();
+      return null;
+    }
     final pt = locationPoint;
     if (pt == null) {
       submitError = 'يرجى تحديد موقع الزيارة على الخريطة قبل الإرسال.';
@@ -663,6 +894,7 @@ class BookingDraftStore extends ChangeNotifier {
     try {
       if (kDemoMode) {
         await Future<void>.delayed(const Duration(milliseconds: 500));
+        _requireCurrent(generation);
         final firstSvc = selectedServices.first;
         final created = TypedCareRequest(
           id: 'demo-req-${DateTime.now().millisecondsSinceEpoch}',
@@ -682,7 +914,9 @@ class BookingDraftStore extends ChangeNotifier {
         return created;
       }
 
+      final ownerUserId = await _authenticatedOwner(generation);
       if (selectedBeneficiaryId == null) await loadBeneficiaries();
+      _requireCurrent(generation);
       final benId = selectedBeneficiaryId;
       if (benId == null || benId.isEmpty) {
         submitError = 'تعذر العثور على ملف المستفيد. أضف مستفيداً أولاً.';
@@ -691,8 +925,10 @@ class BookingDraftStore extends ChangeNotifier {
 
       if (estimateStatus != EstimateStatus.verified) {
         await refreshEstimate(immediate: true);
+        _requireCurrent(generation);
         if (estimateStatus != EstimateStatus.verified) {
-          submitError = 'تعذر التحقق من السعر الرسمي من الخادم. أعد المحاولة قبل التثبيت.';
+          submitError =
+              'تعذر التحقق من السعر الرسمي من الخادم. أعد المحاولة قبل التثبيت.';
           return null;
         }
       }
@@ -707,124 +943,259 @@ class BookingDraftStore extends ChangeNotifier {
         'longitude': pt.longitude,
         'accuracyMeters': accuracyMeters.round(),
         'locationSource': locationSource,
-        'addressText': fullAddress.isEmpty ? 'الموقع المحدد على الخريطة' : fullAddress,
+        'addressText': fullAddress.isEmpty
+            ? 'الموقع المحدد على الخريطة'
+            : fullAddress,
         'nonEmergencyConfirmed': true,
         if (requiresPrescription) 'prescriptionConfirmed': true,
-        if (promoCode.trim().isNotEmpty) 'promoCode': promoCode.trim().toUpperCase(),
+        if (promoCode.trim().isNotEmpty)
+          'promoCode': promoCode.trim().toUpperCase(),
         'bookingMode': scheduledAt != null ? 'SCHEDULED' : bookingMode,
         'scheduledAt': ?scheduledAt?.toUtc().toIso8601String(),
         if (scheduledAt == null && bookingMode == 'OPEN')
           'openDurationMinutes': openDurationMinutes,
       };
 
-      // BUG-015: Persist PendingOperation (operationId, idempotencyKey, payloadHash,
-      // canonicalPayload, ownerUserId, createdAt, status) so phone reboot after lost
-      // commit response deterministically replays without duplicate request creation.
-      final ownerUserId = (await api.currentUserId()) ?? 'patient';
-      final canonicalPayload = jsonEncode(_canonicalize(payload));
-      final payloadHash = _fnv1a64Hex(canonicalPayload);
-      final opStorageKey = 'pending_create_op_$ownerUserId';
-      final existingRaw = await api.readLocal(opStorageKey);
-      String? persistedKey;
-      String? operationId;
-      if (existingRaw != null && existingRaw.isNotEmpty) {
-        try {
-          final prev = jsonDecode(existingRaw);
-          if (prev is Map &&
-              prev['ownerUserId'] == ownerUserId &&
-              prev['payloadHash'] == payloadHash &&
-              prev['status'] == 'PENDING') {
-            persistedKey = prev['idempotencyKey']?.toString();
-            operationId = prev['operationId']?.toString();
-          }
-        } catch (_) {}
-      }
-      _idempotencyKey = (persistedKey != null && persistedKey.isNotEmpty)
-          ? persistedKey
-          : (_idempotencyKey ?? api.newIdempotencyKey());
-      operationId ??= api.newIdempotencyKey();
-      await api.writeLocal(
-        opStorageKey,
-        jsonEncode({
-          'operationId': operationId,
-          'idempotencyKey': _idempotencyKey,
-          'payloadHash': payloadHash,
-          'canonicalPayload': canonicalPayload,
-          'ownerUserId': ownerUserId,
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-          'status': 'PENDING',
-        }),
-      );
-
-      final res = await api.post(
-        '/v1/requests',
+      final operation = await _requestOperations.begin(
+        ownerUserId,
         payload,
-        {'Idempotency-Key': _idempotencyKey!},
+        expectsClinicalUpload: stagedEvidence != null,
       );
-      await api.writeLocal(opStorageKey, null);
-      final reqId = '${res['id'] ?? ''}';
-      final created = TypedCareRequest.fromJson(res, fullDetail: true);
-
-      // BUG-026: Separate request creation success from staged clinical evidence upload;
-      // never swallow upload errors or wipe stagedEvidence before upload succeeds.
-      if (stagedEvidence != null && reqId.isNotEmpty) {
-        try {
-          await api.uploadClinicalEvidence(
-            reqId,
-            stagedEvidence!.evidenceType,
-            stagedEvidence!.bytes,
-            stagedEvidence!.filename,
-          );
-          pendingEvidenceRequestId = null;
-          pendingEvidenceError = null;
-        } catch (e) {
-          pendingEvidenceRequestId = reqId;
-          pendingEvidenceError = explainError(
-            e,
-            fallback: 'تم إنشاء الطلب بنجاح، لكن تعذر رفع الوصفة/التقرير. يمكنك إعادة المحاولة دون إنشاء طلب جديد.',
-          );
-          await _clearOrderSelectionPreserveEvidence();
-          return created;
-        }
+      _requireCurrent(generation);
+      hasUnresolvedRequest = true;
+      if (stagedEvidence != null && operation['status'] == 'PENDING') {
+        final evidence = stagedEvidence!;
+        await _clinicalUploads.prepare(
+          ownerUserId: ownerUserId,
+          operationId: operation['operationId'] as String,
+          evidenceType: evidence.evidenceType,
+          filename: evidence.filename,
+          bytes: evidence.bytes,
+        );
+        _requireCurrent(generation);
       }
-
-      await clearDraft();
-      return created;
+      return await _executeOperation(ownerUserId, operation, generation);
     } catch (e) {
+      if (generation != _sessionGeneration) return null;
       submitError = explainError(
         e,
-        fallback: 'تعذر إرسال الطلب. تحقق من البيانات والاتصال ثم أعد المحاولة.',
+        fallback:
+            'تعذر إرسال الطلب. تحقق من البيانات والاتصال ثم أعد المحاولة.',
       );
       return null;
     } finally {
-      submitting = false;
-      notifyListeners();
+      if (generation == _sessionGeneration) {
+        submitting = false;
+        notifyListeners();
+      }
     }
+  }
+
+  Future<TypedCareRequest?> recoverPendingRequest() async {
+    if (recoveringRequest || submitting || kDemoMode) return null;
+    final generation = _sessionGeneration;
+    recoveringRequest = true;
+    submitError = null;
+    notifyListeners();
+    try {
+      final owner = await _authenticatedOwner(generation);
+      final operation = await _requestOperations.read(owner);
+      _requireCurrent(generation);
+      if (operation == null || operation['status'] == 'RECONCILED') {
+        hasUnresolvedRequest = false;
+        return null;
+      }
+      if (operation['status'] == 'PENDING' &&
+          operation['expectsClinicalUpload'] == true &&
+          await _clinicalUploads.metadata(owner) == null &&
+          stagedEvidence != null) {
+        _requireCurrent(generation);
+        final evidence = stagedEvidence!;
+        await _clinicalUploads.prepare(
+          ownerUserId: owner,
+          operationId: operation['operationId'] as String,
+          evidenceType: evidence.evidenceType,
+          filename: evidence.filename,
+          bytes: evidence.bytes,
+        );
+      }
+      _requireCurrent(generation);
+      return await _executeOperation(owner, operation, generation);
+    } catch (error) {
+      if (generation != _sessionGeneration) return null;
+      submitError = explainError(
+        error,
+        fallback:
+            'تعذر استعادة نتيجة الطلب السابق. يمكنك إعادة المحاولة بالمفتاح نفسه.',
+      );
+      return null;
+    } finally {
+      if (generation == _sessionGeneration) {
+        recoveringRequest = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<TypedCareRequest> _executeOperation(
+    String owner,
+    Map<String, dynamic> operation,
+    int generation,
+  ) async {
+    _requireCurrent(generation);
+    Map<String, dynamic> response;
+    if (operation['status'] == 'CONFIRMED') {
+      // Revalidate request ownership on the server after restoring a process.
+      response = await api.getMap(
+        '/v1/requests/${operation['requestId']}',
+        cancelToken: _sessionReads,
+      );
+    } else {
+      if (operation['expectsClinicalUpload'] == true &&
+          await _clinicalUploads.metadata(owner) == null) {
+        throw StateError(
+          'يلزم إعادة اختيار المستند الطبي وحفظه بأمان قبل استعادة إرسال الطلب.',
+        );
+      }
+      _requireCurrent(generation);
+      final payload = Map<String, dynamic>.from(
+        jsonDecode(operation['canonicalPayload'] as String) as Map,
+      );
+      response = await api.post('/v1/requests', payload, {
+        'Idempotency-Key': operation['idempotencyKey'] as String,
+      });
+    }
+    // Durable confirmation belongs to the original owner even if logout races
+    // the HTTP response. UI state is updated only after the generation check.
+    await _requestOperations.confirm(owner, operation, response);
+    final requestId = '${response['id'] ?? ''}';
+    final uploadMetadata = await _clinicalUploads.metadata(owner);
+    final hasOwnEvidence =
+        uploadMetadata?['operationId'] == operation['operationId'];
+    if (hasOwnEvidence) await _clinicalUploads.bindRequest(owner, requestId);
+    _requireCurrent(generation);
+    final request = TypedCareRequest.fromJson(response, fullDetail: true);
+    await api.writeLocal(
+      'confirmed_request_$owner',
+      jsonEncode({'requestId': request.id}),
+    );
+    _requireCurrent(generation);
+    recoveredRequest = request;
+    if (hasOwnEvidence) await _restorePendingEvidence(owner, generation);
+    _requireCurrent(generation);
+    if (pendingEvidenceRequestId == requestId) {
+      await retryPendingEvidenceUpload();
+      _requireCurrent(generation);
+      if (pendingEvidenceRequestId != null) {
+        await _clearOrderSelectionPreserveEvidence();
+        await _requestOperations.reconcile(owner, requestId);
+        _requireCurrent(generation);
+        hasUnresolvedRequest = false;
+        return request;
+      }
+    }
+    if (uploadMetadata != null && !hasOwnEvidence) {
+      await _clearOrderSelectionPreserveEvidence();
+    } else {
+      await clearDraft();
+    }
+    await _requestOperations.reconcile(owner, requestId);
+    _requireCurrent(generation);
+    hasUnresolvedRequest = false;
+    return request;
+  }
+
+  Future<void> _restorePendingEvidence(String owner, int generation) async {
+    final metadata = await _clinicalUploads.metadata(owner);
+    _requireCurrent(generation);
+    if (metadata == null || metadata['requestId'] == null) return;
+    final requestId = metadata['requestId'] as String;
+    final request = await api.getMap(
+      '/v1/requests/$requestId',
+      cancelToken: _sessionReads,
+    );
+    _requireCurrent(generation);
+    // GET validates ownership. A terminal/approved request is not re-uploaded.
+    final clinicalStatus =
+        request['clinicalApprovalStatus'] ??
+        request['clinical_approval_status'];
+    final status = request['status'];
+    pendingEvidenceRequestId = requestId;
+    if (!const ['PENDING', 'REJECTED'].contains(clinicalStatus) ||
+        const [
+          'COMPLETED',
+          'CANCELLED',
+          'EXPIRED',
+          'FAILED',
+          'UNFULFILLED',
+          'ESCALATED',
+        ].contains(status)) {
+      pendingEvidenceError =
+          'الطلب لم يعد يقبل مستندات طبية؛ يلزم مراجعة حالة الطلب.';
+      stagedEvidence = null;
+      return;
+    }
+    final bytes = await _clinicalUploads.readBytes(owner);
+    _requireCurrent(generation);
+    stagedEvidence = StagedEvidence(
+      evidenceType: metadata['evidenceType'] as String,
+      filename: metadata['filename'] as String,
+      bytes: bytes,
+    );
+    pendingEvidenceError =
+        'يوجد مستند طبي محفوظ بأمان لهذا الطلب. يمكنك إعادة رفعه دون إنشاء طلب جديد.';
   }
 
   Future<bool> retryPendingEvidenceUpload() async {
     final reqId = pendingEvidenceRequestId;
-    final ev = stagedEvidence;
-    if (kDemoMode || reqId == null || ev == null || uploadingPendingEvidence) return false;
+    if (kDemoMode || reqId == null || uploadingPendingEvidence) return false;
+    final generation = _sessionGeneration;
     uploadingPendingEvidence = true;
     pendingEvidenceError = null;
     notifyListeners();
     try {
-      await api.uploadClinicalEvidence(reqId, ev.evidenceType, ev.bytes, ev.filename);
+      final owner = await _authenticatedOwner(generation);
+      await _restorePendingEvidence(owner, generation);
+      _requireCurrent(generation);
+      final evidence = stagedEvidence;
+      if (evidence == null || pendingEvidenceRequestId != reqId) return false;
+      await _clinicalUploads.markAttempt(owner, failed: false);
+      _requireCurrent(generation);
+      await api.uploadClinicalEvidence(
+        reqId,
+        evidence.evidenceType,
+        evidence.bytes,
+        evidence.filename,
+      );
+      // Keep cleanup tied to the original owner even if the account changed.
+      await _clinicalUploads.complete(owner);
+      _requireCurrent(generation);
       pendingEvidenceRequestId = null;
+      pendingEvidenceError = null;
       stagedEvidence = null;
       return true;
-    } catch (e) {
-      pendingEvidenceError = explainError(e, fallback: 'تعذر رفع المستند السريري، أعد المحاولة');
+    } catch (error) {
+      if (generation != _sessionGeneration) return false;
+      final owner = _ownerUserId;
+      if (owner != null && await _clinicalUploads.metadata(owner) != null) {
+        await _clinicalUploads.markAttempt(owner, failed: true);
+      }
+      if (generation != _sessionGeneration) return false;
+      pendingEvidenceError = explainError(
+        error,
+        fallback: 'تعذر رفع المستند السريري، أعد المحاولة',
+      );
       return false;
     } finally {
-      uploadingPendingEvidence = false;
-      notifyListeners();
+      if (generation == _sessionGeneration) {
+        uploadingPendingEvidence = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> _clearOrderSelectionPreserveEvidence() async {
-    _estimateDebounce?.cancel();
+    _cancelEstimateDebounce();
     _estimateGeneration++;
     serviceQuantities.clear();
     promoCode = '';
@@ -834,14 +1205,14 @@ class BookingDraftStore extends ChangeNotifier {
     bookingMode = 'INSTANT';
     scheduledAt = null;
     prescriptionConfirmed = false;
-    _idempotencyKey = null;
     submitError = null;
-    await api.writeLocal(_draftStorageKey, null);
+    final owner = _ownerUserId;
+    if (owner != null) await api.writeLocal(_draftKey(owner), null);
     notifyListeners();
   }
 
   Future<void> clearDraft() async {
-    _estimateDebounce?.cancel();
+    _cancelEstimateDebounce();
     _estimateGeneration++;
     serviceQuantities.clear();
     promoCode = '';
@@ -854,36 +1225,63 @@ class BookingDraftStore extends ChangeNotifier {
     pendingEvidenceRequestId = null;
     pendingEvidenceError = null;
     prescriptionConfirmed = false;
-    _idempotencyKey = null;
     submitError = null;
-    await api.writeLocal(_draftStorageKey, null);
+    final owner = _ownerUserId;
+    if (owner != null) await api.writeLocal(_draftKey(owner), null);
+    notifyListeners();
+  }
+
+  /// Destroy in-memory account state synchronously before awaiting logout.
+  /// Durable unresolved operations stay encrypted and scoped to their owner.
+  void resetForSessionChange() {
+    _sessionGeneration++;
+    _estimateGeneration++;
+    _sessionReads.cancel('session_changed');
+    _sessionReads = CancelToken();
+    _cancelEstimateDebounce();
+    _ownerUserId = null;
+    beneficiaries = [];
+    selectedBeneficiaryId = null;
+    loadingBeneficiaries = false;
+    savedPlaces = [];
+    regions = [];
+    locationPoint = null;
+    accuracyMeters = 0;
+    addressLabel = '';
+    addressDetails = '';
+    locationSource = 'MANUAL_PIN';
+    locationError = null;
+    locatingGps = false;
+    stagedEvidence = null;
+    pendingEvidenceRequestId = null;
+    pendingEvidenceError = null;
+    uploadingPendingEvidence = false;
+    serviceQuantities.clear();
+    promoCode = '';
+    promoFeedback = null;
+    estimate = null;
+    estimating = false;
+    estimateStatus = EstimateStatus.stale;
+    bookingMode = 'INSTANT';
+    openDurationMinutes = 60;
+    scheduledAt = null;
+    schedulingPolicy = null;
+    prescriptionConfirmed = false;
+    submitting = false;
+    recoveringRequest = false;
+    recoveredRequest = null;
+    hasUnresolvedRequest = false;
+    prerequisitesError = null;
+    submitError = null;
+    capabilities = const ServerCapabilities(ordersAccepting: false);
     notifyListeners();
   }
 
   @override
   void dispose() {
-    _estimateDebounce?.cancel();
+    _sessionGeneration++;
+    _sessionReads.cancel('disposed');
+    _cancelEstimateDebounce();
     super.dispose();
-  }
-
-  Object? _canonicalize(Object? value) {
-    if (value is Map) {
-      final keys = value.keys.map((k) => '$k').toList()..sort();
-      return {for (final k in keys) k: _canonicalize(value[k])};
-    }
-    if (value is List) {
-      return value.map(_canonicalize).toList();
-    }
-    return value;
-  }
-
-  String _fnv1a64Hex(String input) {
-    var hash = BigInt.parse('14695981039346656037');
-    final prime = BigInt.parse('1099511628211');
-    final mask = (BigInt.one << 64) - BigInt.one;
-    for (final byte in utf8.encode(input)) {
-      hash = ((hash ^ BigInt.from(byte)) * prime) & mask;
-    }
-    return hash.toRadixString(16).padLeft(16, '0');
   }
 }
