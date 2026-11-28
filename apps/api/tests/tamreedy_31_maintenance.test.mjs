@@ -237,6 +237,8 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
   assert.equal(readiness.isLocationFresh, false);
 
   // BUG-035: LiveLocationService rejects BEFORE Postgres persistence when Redis failed & fallback disabled
+  // Keep this outage test independent of runner speed and GPS jump validation.
+  await pg.query(`UPDATE nurse_locations SET captured_at=statement_timestamp()-interval '1 second' WHERE nurse_id=$1`, [winNurse.nurseId]);
   const liveSvc = new LiveLocationService(
     {
       active: true,
@@ -251,8 +253,8 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
   );
   await assert.rejects(
     liveSvc.ingest(winNurse.userId, winNurse.sessionId, {
-      latitude: 33.5001,
-      longitude: 36.2501,
+      latitude: 33.5,
+      longitude: 36.25,
       accuracyMeters: 10,
       capturedAt: new Date().toISOString(),
       sequenceNumber: 2,
