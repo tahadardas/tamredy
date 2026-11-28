@@ -38,7 +38,7 @@ for (const c of controllerClasses) {
 
 // 'x' marks a dynamic segment in the caller (e.g. /assignments/$id/$action); ':id' marks one in the route.
 const matches = (url, route) => { const u = url.split('/'); return u.length === route.length && u.every((seg, i) => seg === 'x' || route[i].startsWith(':') || seg === route[i]); };
-const norm = u => u.split('?')[0].replace(/\$\{[^}]*\}/g, 'x').replace(/\$\{?[A-Za-z_.]+\}?/g, 'x').replace(/\/+$/, '');
+const norm = u => u.split('?')[0].replace(/\$\{[^}]*\}/g, 'x').replace(/\$[A-Za-z_]\w*/g, 'x').replace(/\/+$/, '');
 function used(files, re) {
   const out = new Set();
   for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(re)) out.add(norm(m[1]));
@@ -57,8 +57,9 @@ test('every URL the dashboard calls exists on the API', () => {
 });
 
 test('every URL the Flutter apps call exists on the API', () => {
-  const files = [...walk(join(root, 'apps'), p => p.endsWith('.dart') && !p.includes('admin_web')), ...walk(join(root, 'packages'), p => p.endsWith('.dart'))];
-  const urls = used(files, /'(\/v1\/[^']*)'/g);
+  const productionDart = p => p.endsWith('.dart') && /[/\\]lib[/\\]/.test(p);
+  const files = [...walk(join(root, 'apps'), productionDart), ...walk(join(root, 'packages'), productionDart)];
+  const urls = used(files, /'(\/v1\/(?:\$\{[^}]*\}|[^'])*)'/g);
   assert.ok(urls.length > 15);
   const unknown = urls.filter(u => !routes.some(r => matches(u, r)));
   assert.deepEqual(unknown, [], `apps call routes that do not exist: ${unknown.join(', ')}`);

@@ -31,6 +31,7 @@ test('PostgreSQL preserves assignment, lifecycle, billing and recovery invariant
   const q=(sql,params)=>db.query(sql,params);
   const createUser=async role=>(await q('INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id',
     [`+963${BigInt('0x'+randomUUID().replaceAll('-',''))%10000000000n}`,role])).rows[0].id;
+  await q(`INSERT INTO app_settings(key,value) VALUES('orders','{"accepting":true}') ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
   const patient=await createUser('PATIENT');
   const beneficiary=(await q(`INSERT INTO beneficiaries(owner_user_id,display_name,consent_status)
     VALUES($1,'أحمد الحسن','GRANTED') RETURNING id,display_name`,[patient])).rows[0];
@@ -45,8 +46,11 @@ test('PostgreSQL preserves assignment, lifecycle, billing and recovery invariant
     await q(`INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved)
       VALUES($1,$2,now()+interval '1 year',true)`,[nurse,`${tag}-${i}`]);
     await q('INSERT INTO nurse_skills(nurse_id,service_id,approved) VALUES($1,$2,true)',[nurse,service]);
-    await q(`INSERT INTO nurse_locations(nurse_id,location,accuracy_m)
-      VALUES($1,ST_SetSRID(ST_MakePoint(36.29,33.51),4326)::geography,15)`,[nurse]);
+    const session=(await q(`INSERT INTO device_sessions(user_id,device_id,app_kind) VALUES($1,$2,'nurse') RETURNING id`,[user,`${tag}-${i}`])).rows[0].id;
+    await q(`INSERT INTO nurse_locations(nurse_id,location,accuracy_m,captured_at,received_at,sequence_number,location_source,session_id)
+      VALUES($1,ST_SetSRID(ST_MakePoint(36.29,33.51),4326)::geography,15,now(),now(),1,'GPS',$2)`,[nurse,session]);
+    await q(`INSERT INTO nurse_financial_currency_accounts(nurse_id,currency_code,financial_model,credit_limit)
+      VALUES($1,'SYP_NEW','RECEIVABLES',100000)`,[nurse]);
     nurseEntries.push({user,nurse});
   }
   const requests=new RequestsService(db,new PromoService());
@@ -109,7 +113,7 @@ test('PostgreSQL preserves assignment, lifecycle, billing and recovery invariant
     FROM invoices i JOIN cash_collections c ON c.visit_id=i.visit_id WHERE i.request_id=$1 GROUP BY i.id`,[request.id])).rows[0];
   assert.deepEqual(reconciled,{total_amount:'2000.00',paid_amount:'2000.00',receipts:2});
   assert.equal((await q('SELECT count(*)::int AS count FROM financial_unbalanced_transactions')).rows[0].count,0);
-  const nursePosition=await new DuesService().balance(db,winner.nurse);
+  const nursePosition=await new DuesService().balance(db,winner.nurse,'SYP_NEW');
   assert.equal(nursePosition.balance,400);
   await assert.rejects(q(`UPDATE financial_ledger_entries SET debit_amount=10
     WHERE transaction_id IN (SELECT transaction_id FROM cash_collections WHERE visit_id=
@@ -144,12 +148,13 @@ test('PostgreSQL preserves assignment, lifecycle, billing and recovery invariant
   const financial=await requests.create(patient,input,`${tag}-financial`);
   await q(`INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit,prepaid_balance)
     VALUES($1,'RECEIVABLES',399,0)`,[other.nurse]);
+  await q(`UPDATE nurse_financial_currency_accounts SET credit_limit=399 WHERE nurse_id=$1 AND currency_code='SYP_NEW'`,[other.nurse]);
   let assessment=await eligibility.evaluate(other.nurse,financial.id,{context:'ASSIGN'});
   assert.ok(assessment.reasons.some(reason=>reason.code==='FINANCIAL_LIMIT_REACHED'));
-  await q("UPDATE nurse_financial_accounts SET financial_model='PREPAID',prepaid_balance=399 WHERE nurse_id=$1",[other.nurse]);
+  await q("UPDATE nurse_financial_currency_accounts SET financial_model='PREPAID',prepaid_balance=399 WHERE nurse_id=$1 AND currency_code='SYP_NEW'",[other.nurse]);
   assessment=await eligibility.evaluate(other.nurse,financial.id,{context:'ASSIGN'});
   assert.ok(assessment.reasons.some(reason=>reason.code==='INSUFFICIENT_PREPAID_BALANCE'));
-  await q(`UPDATE nurse_financial_accounts SET financial_model='HYBRID',prepaid_balance=250,credit_limit=150
+  await q(`UPDATE nurse_financial_currency_accounts SET financial_model='HYBRID',prepaid_balance=250,credit_limit=150
     WHERE nurse_id=$1`,[other.nurse]);
   const financeOffer=(await q(`INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at)
     VALUES($1,$2,1,now()+interval '5 minutes') RETURNING id`,[financial.id,other.nurse])).rows[0].id;
@@ -160,7 +165,7 @@ test('PostgreSQL preserves assignment, lifecycle, billing and recovery invariant
   await db.transaction(c=>cancelRequest(c,patient,financial.id,{reasonCode:'OTHER',reasonNote:'إلغاء اختبار',
     idempotencyKey:`${tag}-cancel`}));
   assert.equal((await q("SELECT status FROM financial_reservations WHERE reference_id=$1",[financial.id])).rows[0].status,'RELEASED');
-  assert.equal((await q("SELECT reserved_balance::text FROM nurse_financial_accounts WHERE nurse_id=$1",[other.nurse])).rows[0].reserved_balance,'0.00');
+  assert.equal((await q("SELECT reserved_balance::text FROM nurse_financial_currency_accounts WHERE nurse_id=$1",[other.nurse])).rows[0].reserved_balance,'0.00');
 
   await q('UPDATE services SET requires_prescription=true WHERE id=$1',[service]);
   const clinical=await requests.create(patient,{...input,prescriptionConfirmed:true},`${tag}-clinical`);

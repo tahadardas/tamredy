@@ -42,13 +42,15 @@ test('database partial unique indexes prevent double assignment under concurrent
  }
 });
 
-test('ten simultaneous acceptors and a cancel/accept race leave one durable outcome', { skip: !databaseUrl }, async (t) => {
+test('100 simultaneous acceptors and a cancel/accept race leave one durable outcome', { skip: !databaseUrl }, async (t) => {
   const {DispatchService} = await import('../dist/dispatch/dispatch.service.js');
+  const {NurseEligibilityEngine} = await import('../dist/dispatch/nurse-eligibility.engine.js');
+  const {AssignmentOrchestrator} = await import('../dist/dispatch/assignment.orchestrator.js');
   const {cancelRequest} = await import('../dist/requests/cancellation.service.js');
-  const pool = new pg.Pool({connectionString:databaseUrl,max:12,statement_timeout:15000});
+  const pool = new pg.Pool({connectionString:databaseUrl,max:20,statement_timeout:30000});
   const ids = {patient:randomUUID(), beneficiary:randomUUID(), service:randomUUID()};
   const requests = [randomUUID(),randomUUID()];
-  const workers = Array.from({length:10}, () => ({user:randomUUID(),nurse:randomUUID()}));
+  const workers = Array.from({length:100}, () => ({user:randomUUID(),nurse:randomUUID()}));
   const userIds = [ids.patient,...workers.map(worker => worker.user)];
   const nurseIds = workers.map(worker => worker.nurse);
   const db = {
@@ -69,26 +71,9 @@ test('ten simultaneous acceptors and a cancel/accept race leave one durable outc
     },
   };
 
-  t.after(async () => {
-    try {
-      await db.transaction(async client => {
-        for (const table of ['outbox_events','request_events','request_cancellations','request_offers','dispatch_jobs','request_assignments']) {
-          const key = table === 'outbox_events' ? 'aggregate_id' : 'request_id';
-          await client.query(`DELETE FROM ${table} WHERE ${key}=ANY($1::uuid[])`,[requests]);
-        }
-        await client.query('DELETE FROM care_requests WHERE id=ANY($1::uuid[])',[requests]);
-        for (const table of ['nurse_locations','nurse_skills','nurse_credentials']) {
-          await client.query(`DELETE FROM ${table} WHERE nurse_id=ANY($1::uuid[])`,[nurseIds]);
-        }
-        await client.query('DELETE FROM nurses WHERE id=ANY($1::uuid[])',[nurseIds]);
-        await client.query('DELETE FROM services WHERE id=$1',[ids.service]);
-        await client.query('DELETE FROM beneficiaries WHERE id=$1',[ids.beneficiary]);
-        await client.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[userIds]);
-      });
-    } finally {
-      await pool.end();
-    }
-  });
+  // Preserve append-only audit history in the disposable database. The caller owns
+  // the isolated test cluster lifecycle; this test never deletes clinical history.
+  t.after(() => pool.end());
 
   const location = 'ST_SetSRID(ST_MakePoint(36.25,33.50),4326)::geography';
   await db.transaction(async client => {
@@ -99,7 +84,7 @@ test('ten simultaneous acceptors and a cancel/accept race leave one durable outc
     `,[userIds,ids.patient]);
     await client.query("INSERT INTO beneficiaries(id,owner_user_id,display_name,consent_status) VALUES($1,$2,'اختبار','GRANTED')",
       [ids.beneficiary,ids.patient]);
-    await client.query("INSERT INTO services(id,code,title_ar,price_amount) VALUES($1,$2,'خدمة اختبارية',100)",
+    await client.query("INSERT INTO services(id,code,title_ar,price_amount,dispatch_approved) VALUES($1,$2,'خدمة اختبارية',100,true)",
       [ids.service,`test-${ids.service}`]);
     await client.query(`
       INSERT INTO nurses(id,user_id,verified,availability_intent,work_status,last_heartbeat_at)
@@ -107,12 +92,16 @@ test('ten simultaneous acceptors and a cancel/accept race leave one durable outc
     `,[nurseIds,workers.map(worker => worker.user)]);
     await client.query("INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved) SELECT id,'test',now()+interval '1 day',true FROM unnest($1::uuid[]) AS id",[nurseIds]);
     await client.query('INSERT INTO nurse_skills(nurse_id,service_id,approved) SELECT id,$2,true FROM unnest($1::uuid[]) AS id',[nurseIds,ids.service]);
-    await client.query(`INSERT INTO nurse_locations(nurse_id,location,accuracy_m) SELECT id,${location},20 FROM unnest($1::uuid[]) AS id`,[nurseIds]);
+    await client.query(`INSERT INTO device_sessions(user_id,device_id,app_kind) SELECT id,'rc2-'||id,'nurse' FROM unnest($1::uuid[]) AS id`,[workers.map(worker=>worker.user)]);
+    await client.query(`INSERT INTO nurse_locations(nurse_id,location,accuracy_m,captured_at,received_at,sequence_number,location_source,session_id)
+      SELECT n.id,${location},20,now(),now(),1,'GPS',d.id FROM nurses n JOIN device_sessions d ON d.user_id=n.user_id WHERE n.id=ANY($1::uuid[])`,[nurseIds]);
+    await client.query(`INSERT INTO nurse_financial_currency_accounts(nurse_id,currency_code,financial_model,credit_limit)
+      SELECT id,'SYP_NEW','RECEIVABLES',100000 FROM unnest($1::uuid[]) AS id`,[nurseIds]);
     await client.query(`
       INSERT INTO care_requests(id,requester_user_id,beneficiary_id,service_id,location,location_source,address_text,
         price_amount,currency_code,commission_bps,search_started_at,search_expires_at,search_radius_meters,
         search_max_heartbeat_seconds,search_max_location_seconds,search_max_accuracy_meters)
-      SELECT id,$2,$3,$4,${location},'MANUAL_PIN','اختبار',100,'SYP',2000,
+      SELECT id,$2,$3,$4,${location},'MANUAL_PIN','اختبار',100,'SYP_NEW',2000,
         now(),now()+interval '1 minute',3000,60,120,100 FROM unnest($1::uuid[]) AS id
     `,[requests,ids.patient,ids.beneficiary,ids.service]);
     await client.query(`
@@ -121,13 +110,15 @@ test('ten simultaneous acceptors and a cancel/accept race leave one durable outc
       WHERE r.id=ANY($1::uuid[]) AND n.id=ANY($2::uuid[])
     `,[requests,nurseIds]);
   });
-  const dispatch = new DispatchService(db);
+  const eligibility = new NurseEligibilityEngine(db);
+  const dispatch = new DispatchService(db,eligibility,new AssignmentOrchestrator(eligibility));
   const offers = async (request) => (await db.query(`
     SELECT n.user_id,o.id FROM request_offers o JOIN nurses n ON n.id=o.nurse_id WHERE o.request_id=$1
   `,[request])).rows;
   const first = await offers(requests[0]);
   const results = await Promise.allSettled(first.map(offer => dispatch.accept(offer.user_id,offer.id)));
-  assert.equal(results.filter(result => result.status==='fulfilled').length,1);
+  assert.equal(results.filter(result => result.status==='fulfilled').length,1,
+    JSON.stringify(results.filter(result=>result.status==='rejected').slice(0,3).map(result=>result.reason.getResponse?.() ?? result.reason.message)));
   const winner = first[results.findIndex(result => result.status==='fulfilled')];
   assert.equal((await dispatch.accept(winner.user_id,winner.id)).replayed,true);
   assert.equal((await db.query("SELECT 1 FROM request_assignments WHERE request_id=$1 AND status='ACTIVE'",[requests[0]])).rowCount,1);

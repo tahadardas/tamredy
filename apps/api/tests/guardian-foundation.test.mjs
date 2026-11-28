@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+import { migrateBillingFixtures } from './helpers/billing-fixture.mjs';
 import { closeNightIneligibleOffers } from '../../worker/src/night-safety.ts';
 import { VisitRiskService } from '../dist/safety/visit-risk.js';
 import { NightPolicyService } from '../dist/safety/night-policy.js';
@@ -32,7 +34,7 @@ const migrations = new URL('../../../infra/db/migrations/', import.meta.url);
 const read = (name) => readFile(new URL(name + '.sql', migrations), 'utf8');
 
 test('Guardian binds sessions to the assigned nurse and stores immutable points and one SOS', async (t) => {
-  const db = new PGlite();
+  const db = new PGlite({extensions:{pgcrypto}});
   t.after(() => db.close());
   await db.exec((await read('001_core')).replace(/CREATE EXTENSION[^;]*;/g, '')
     .replaceAll('geography(Point,4326)', 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, ''));
@@ -64,6 +66,9 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   await db.exec(await read('021_open_dispatch_and_cancellation_foundation'));
   await db.exec(await read('041_guardian_evidence_exports'));
   await db.exec(await read('042_guardian_retention'));
+  await db.exec(await read('006_pricing_promos_rewards'));
+  await db.exec(await read('007_fees_tiers_dues_referrals'));
+  await migrateBillingFixtures(db);
   const makeUser = async (phone, role) => (await db.query(
     'INSERT INTO users(phone_e164,role) VALUES($1,$2) RETURNING id', [phone, role])).rows[0].id;
   const requester = await makeUser('patient', 'PATIENT');
@@ -151,7 +156,12 @@ test('Guardian binds sessions to the assigned nurse and stores immutable points 
   assert.equal((await svc.event(nurse, sos.id)).state, 'RECEIVED');
   const patientNotice = (await db.query(`SELECT payload FROM outbox_events WHERE event_type='visit.interrupted'`)).rows[0].payload;
   assert.equal(patientNotice.recipientUserId, requester);
-  assert.deepEqual(Object.keys(patientNotice).sort(), ['recipientUserId', 'requestId']);
+  const abortedRequest=(await db.query('SELECT request_id FROM request_assignments WHERE id=$1',[assignment])).rows[0].request_id;
+  assert.equal(patientNotice.requestId,abortedRequest);
+  assert.equal(patientNotice.eventType,'visit.interrupted');
+  assert.equal(patientNotice.recipientRole,'PATIENT');
+  assert.equal(patientNotice.targetApp,'PATIENT_APP');
+  assert.equal(patientNotice.assignmentId,assignment);
   const grants = new StaffCasesRepository(adapter);
   const shiftRepository = new ShiftsRepository(adapter);
   const shiftService = new ShiftsService(shiftRepository, grants);

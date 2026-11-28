@@ -50,6 +50,8 @@ const A = { user: { id: adminU, role: 'ADMIN' } };
 const mkPatient = async n => { const u = await id(`INSERT INTO users(phone_e164,role) VALUES($1,'PATIENT') RETURNING id`, ['+10' + n]); const b = await id(`INSERT INTO beneficiaries(owner_user_id,display_name,consent_status) VALUES($1,'م','GRANTED') RETURNING id`, [u]); return { u, b, ctx: { user: { id: u, role: 'PATIENT' } } }; };
 const nurseU = await id(`INSERT INTO users(phone_e164,role,display_name) VALUES('+3','NURSE','ممرضة') RETURNING id`);
 const nurseId = await id(`INSERT INTO nurses(user_id,verified,availability_intent,work_status,last_heartbeat_at) VALUES($1,true,'AVAILABLE','AVAILABLE',now()) RETURNING id`, [nurseU]);
+await pg.query(`INSERT INTO nurse_financial_currency_accounts(nurse_id,currency_code,financial_model,credit_limit)
+  VALUES($1,'SYP_NEW','RECEIVABLES',100000)`,[nurseId]);
 const N = { user: { id: nurseU, role: 'NURSE' } };
 await pg.query(`INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,approved,review_status) VALUES($1,'L1',now()+interval '1 year',true,'APPROVED')`, [nurseId]);
 const svc = await id(`INSERT INTO services(code,title_ar,active,dispatch_approved,price_amount,included_minutes,block_minutes,block_price,expected_minutes,rounding_step,commission_bps)
@@ -147,12 +149,13 @@ test('company dues: what the nurse owes from cash, settlements, and the stop-rec
   for(const invoice of open) await pricing.collect(N,invoice.request_id,{amount:Number(invoice.total_amount)},`closing:${invoice.request_id}`);
   const d0 = (await adminFees.allDues(A)).items.find(x => x.nurse_id === nurseId);
   assert.ok(Number(d0.balance) > 0 && d0.visits >= 1);
-  const mine = await new (await import('../dist/nurses/nurse-me.controller.js')).NurseMeController(db,undefined,dues).duesView(N);
+  const positions = await new (await import('../dist/nurses/nurse-me.controller.js')).NurseMeController(db,undefined,dues).duesView(N);
+  const mine = positions.balancesByCurrency.find(position=>position.currencyCode==='SYP_NEW');
   assert.equal(mine.balance, Number(d0.balance));
   // limit below the balance -> the nurse cannot go AVAILABLE until she settles with the company
-  await adminFees.updateSettings(A, { nurseDebtLimit: 100 });
+  await pg.query("UPDATE nurse_financial_currency_accounts SET credit_limit=100 WHERE nurse_id=$1 AND currency_code='SYP_NEW'",[nurseId]);
   await assert.rejects(nursesSvc.availability(nurseU, { availability: 'AVAILABLE' }), code('SETTLEMENT_REQUIRED'));
-  const after = await adminFees.settle(A,nurseId,{direction:'FROM_NURSE',amount:mine.balance,note:'استلام نقدي'},'full-settlement');
+  const after = await adminFees.settle(A,nurseId,{currencyCode:'SYP_NEW',direction:'FROM_NURSE',amount:mine.balance,note:'استلام نقدي'},'full-settlement');
   assert.equal(after.balance, 0);
   assert.equal((await nursesSvc.availability(nurseU, { availability: 'AVAILABLE' })).availabilityIntent, 'AVAILABLE'); // allowed again after settling
 });

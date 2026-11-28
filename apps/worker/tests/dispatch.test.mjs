@@ -1,3 +1,4 @@
+import {installRc2PolicyFixture} from '../../api/tests/helpers/rc2-policy-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -90,6 +91,7 @@ test('alerts all eligible nurses in each wave and stops widening after assignmen
       SELECT u.id,u.phone_e164 || repeat('x',30),'android',ds.id,'NURSE','NURSE_APP'
       FROM users u JOIN device_sessions ds ON ds.user_id=u.id WHERE u.role='NURSE';
   `);
+  await installRc2PolicyFixture(db);
   const pool = { connect: async () => ({ query: db.query.bind(db), release() {} }) };
   const offers = async () => (await db.query(`
     SELECT u.phone_e164 AS nurse,o.wave_no AS wave FROM request_offers o

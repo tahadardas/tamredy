@@ -4,7 +4,9 @@
 **/.dart_tool
 apps/patient_app
 apps/nurse_app
-packages
+packages/*
+!packages/backend-policy
+!packages/backend-policy/**
 reference_design
 docs
 .env

@@ -1,3 +1,4 @@
+import {installRc2PolicyFixture} from './helpers/rc2-policy-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -41,6 +42,8 @@ test('submitting readiness commits the offer and patient event using the product
   [patient,beneficiary,service,status])).rows[0].id;
   const open = await request('OPEN_FOR_PROPOSALS');
   await db.query('INSERT INTO care_request_items(request_id,service_id,unit_price,expected_minutes) VALUES($1,$2,100,45)',[open,service]);
+  await db.query(`INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit) VALUES($1,'RECEIVABLES',10000)`,[nurse]);
+  await installRc2PolicyFixture(database);
   const proposals = new ProposalsService(db,new MarketplaceEligibilityService(new NurseEligibilityEngine(db)));
   const busy = await request('ASSIGNED');
   await db.query('INSERT INTO request_assignments(request_id,nurse_id) VALUES($1,$2)',[busy,nurse]);

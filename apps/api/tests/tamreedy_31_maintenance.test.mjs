@@ -28,6 +28,8 @@ const { LocationValidator } = await import('../dist/live-location/location-valid
 const { TrackingAuthorizationService } = await import('../dist/live-location/tracking-authorization.service.js');
 const { OperationalMetricsService } = await import('../dist/observability/operational-metrics.service.js');
 const { VoiceService } = await import('../dist/voice/voice.service.js');
+const { ReadinessService } = await import('../dist/capabilities/readiness.service.js');
+const { FeatureCapabilitiesService } = await import('../dist/capabilities/feature-capabilities.service.js');
 const { AppController } = await import('../dist/app.controller.js');
 const { requireActiveDeviceSession } = await import('../dist/auth/auth.guard.js');
 const { NurseMeController } = await import('../dist/nurses/nurse-me.controller.js');
@@ -95,9 +97,12 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
   process.env.SCHEDULED_VISITS_ENABLED = 'true';
   process.env.OPEN_DISPATCH_ENABLED = 'true';
   process.env.LOCATION_POSTGRES_FALLBACK_ENABLED = 'false';
+  process.env.ACCOUNTING_CURRENCY_CODE = 'SYP_NEW';
 
   const { pg, db } = await buildPglite();
   t.after(() => pg.close());
+
+  await pg.query(`INSERT INTO app_settings(key,value) VALUES('orders','{"accepting":true}') ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
 
   // Seed patient, nurses, beneficiary, services
   const pat = (await pg.query(`INSERT INTO users(phone_e164,role,display_name) VALUES ('+963900000001','PATIENT','خالد') RETURNING id`)).rows[0].id;
@@ -171,6 +176,7 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
     await pg.query(`INSERT INTO nurse_locations(nurse_id,location,accuracy_m,recorded_at,captured_at,received_at,sequence_number,session_id,location_source) VALUES ($1,0,15,now(),now(),now(),1,$2,'GPS')`, [nid, dsId]);
     if (i < 19) {
       await pg.query(`INSERT INTO nurse_financial_accounts(nurse_id,financial_model,credit_limit,prepaid_balance) VALUES ($1,'RECEIVABLES',100000,0)`, [nid]);
+      await pg.query(`INSERT INTO nurse_financial_currency_accounts(nurse_id,currency_code,financial_model,credit_limit) VALUES($1,'SYP_NEW','RECEIVABLES',100000)`, [nid]);
     }
     const offId = (await pg.query(`INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at) VALUES ($1,$2,1,now()+interval '1 minute') RETURNING id`, [instantReq.id, nid])).rows[0].id;
     nurseUsers.push({ userId: nu, nurseId: nid, sessionId: dsId, offerId: offId });
@@ -291,14 +297,29 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
   );
 
   // BUG-047 & BUG-048: AppController.capabilities() and /health/ready
-  const appCtrl = new AppController(db, { async assertReady() {}, async healthStatus() { return { enabled: false, connected: false }; } }, new OperationalMetricsService());
+  const features = new FeatureCapabilitiesService(db);
+  const healthDb = { ...db, query: async (sql,params) => {
+    if (sql.includes('FROM outbox_events')) return {rows:[{pending_realtime:0,pending_push:0,oldest_realtime:null,oldest_push:null,dead_letter_count:0}]};
+    return db.query(sql,params);
+  }};
+  await pg.query("INSERT INTO worker_heartbeats(worker_id) VALUES('isolated-test-worker')");
+  const readinessSvc = new ReadinessService(healthDb, {async healthStatus(){return {enabled:true,connected:true};}},features);
+  const appCtrl = new AppController(readinessSvc, features, new OperationalMetricsService());
   const caps = await appCtrl.capabilities();
   assert.equal(caps.scheduledVisitsEnabled, true);
   assert.equal(caps.openDispatchEnabled, true);
-  const ready = await appCtrl.healthReady();
-  assert.equal(ready.status, 'ready');
-  assert.equal(ready.checks.database.ok, true);
-  assert.ok(ready.checks.migrations.appliedCount >= 30);
+  // Disabled external services are explicit in this isolated test, not inferred from missing config.
+  const savedPush=process.env.PUSH_ENABLED, savedVoice=process.env.VOICE_ENABLED;
+  process.env.PUSH_ENABLED='false';process.env.VOICE_ENABLED='false';
+  try {
+    const ready = await appCtrl.healthReady();
+    assert.equal(ready.status, 'ready');
+    assert.equal(ready.checks.database.ok, true);
+    assert.ok(ready.checks.migrations.appliedCount >= 30);
+  } finally {
+    if(savedPush===undefined)delete process.env.PUSH_ENABLED;else process.env.PUSH_ENABLED=savedPush;
+    if(savedVoice===undefined)delete process.env.VOICE_ENABLED;else process.env.VOICE_ENABLED=savedVoice;
+  }
 
   // BUG-006: BookingModeService switches an unfulfilled/offering request to OPEN_FOR_PROPOSALS cleanly
   const openTarget = await requestsSvc.create(pat, {

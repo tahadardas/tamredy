@@ -1,3 +1,4 @@
+import {installRc2PolicyFixture} from '../../api/tests/helpers/rc2-policy-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -9,6 +10,8 @@ const scripts = new URL('../../../infra/db/migrations/', import.meta.url);
 const migration = (name) => readFileSync(new URL(`${name}.sql`, scripts), 'utf8');
 
 test('open dispatch wakes for new eligible nurses, deduplicates, and enforces the fixed deadline', async (t) => {
+  const previousOpen=process.env.OPEN_DISPATCH_ENABLED;
+  t.after(()=>{if(previousOpen===undefined)delete process.env.OPEN_DISPATCH_ENABLED;else process.env.OPEN_DISPATCH_ENABLED=previousOpen;});
   const db = new PGlite({ extensions: { pgcrypto } });
   t.after(() => db.close());
   await db.exec('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
@@ -84,12 +87,18 @@ test('open dispatch wakes for new eligible nurses, deduplicates, and enforces th
       SELECT n.id,100,CASE WHEN u.phone_e164='test-nurse-102' THEN 101 ELSE 100 END
       FROM nurses n JOIN users u ON u.id=n.user_id;
   `);
+  await installRc2PolicyFixture(db);
   const pool = { connect: async () => ({ query: db.query.bind(db), release() {} }) };
   const count = async (table) => (await db.query(`SELECT count(*)::int AS total FROM ${table}`)).rows[0].total;
   const makeAvailable = async (where) => db.exec(`
     UPDATE nurses n SET work_status='AVAILABLE',availability_intent='AVAILABLE'
     FROM users u WHERE u.id=n.user_id AND ${where};
   `);
+  process.env.OPEN_DISPATCH_ENABLED='false';
+  assert.equal(await doDispatch(pool), false);
+  assert.equal(await count('request_offers'), 0);
+  assert.equal(await count('dispatch_jobs'), 1);
+  process.env.OPEN_DISPATCH_ENABLED='true';
   assert.equal(await doDispatch(pool), true);
   assert.equal(await count('request_offers'), 0);
 

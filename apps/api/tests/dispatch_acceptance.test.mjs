@@ -1,3 +1,4 @@
+import {installRc2PolicyFixture} from './helpers/rc2-policy-fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -77,6 +78,7 @@ test('acceptance, fixed ETA and cancellation maintain a single replayable result
     INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at)
       SELECT r.id,n.id,1,now()-interval '1 second' FROM care_requests r CROSS JOIN nurses n;
   `);
+  await installRc2PolicyFixture(pg);
   const query = pg.query.bind(pg);
   let inTransaction = false;
   const db = {

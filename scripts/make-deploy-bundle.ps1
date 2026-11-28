@@ -15,7 +15,7 @@ $excluded = @(
 $included = @(
     'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml',
     '.dockerignore', '.env.example', 'apps/api', 'apps/worker',
-    'apps/admin_web', 'infra', 'scripts/enable-all-features.sql'
+    'apps/admin_web', 'packages/backend-policy', 'infra', 'scripts/enable-all-features.sql'
 )
 $outputs = @(
     @{ File = 'deploy/tamreedy-server.tar.gz'; Staged = 'deploy/.tamreedy-server.staging.tar.gz'; Format = '-czf' },
@@ -23,7 +23,8 @@ $outputs = @(
 )
 $required = @(
     '.dockerignore', 'pnpm-lock.yaml',
-    'apps/worker/src/dispatch.ts', 'infra/docker/docker-compose.prod.yml'
+    'apps/worker/src/dispatch.ts', 'packages/backend-policy/schema.mjs',
+    'packages/backend-policy/live-location.d.mts', 'infra/docker/docker-compose.prod.yml'
 )
 
 try {

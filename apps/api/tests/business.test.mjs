@@ -51,7 +51,8 @@ let svc;
 test('admin adds a service with a time-based price; it stays hidden until approved', async () => {
   const { id: sid } = await admin.createService(A, { code: 'DRESSING', titleAr: 'تغيير ضماد', price: 1200, includedMinutes: 30, blockMinutes: 15, blockPrice: 400, expectedMinutes: 40, roundingStep: 50 });
   svc = sid;
-  await assert.rejects(pricing.quote(P, { serviceId: svc }), e => e.getStatus() === 404); // inactive -> invisible
+  await assert.rejects(pricing.quote(P, { serviceId: svc }), e =>
+    e.getStatus() === 400 && e.getResponse().code === 'INVALID_REQUEST'); // unavailable services cannot enter a quote
   await admin.updateService(A, svc, { active: true, dispatchApproved: true });
   const q = await pricing.quote(P, { serviceId: svc });
   assert.equal(q.min, 1200); assert.equal(q.expected, 1600);

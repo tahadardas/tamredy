@@ -14,7 +14,7 @@ const { AdminUsersController } = await import('../dist/admin/admin-users.control
 
 const pg = new PGlite();
 const strip = s => s.replace(/CREATE EXTENSION[^;]*;/g, '').replace(/geography\(Point,4326\)/g, 'text').replace(/CREATE INDEX[^;]*GIST[^;]*;/g, '');
-for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '019_device_sessions_and_persistent_auth', '025_manual_password_recovery'])
+for (const f of ['001_core', '003_admin_reads_audit', '004_auth_otp_refresh', '005_password_accounts_push', '019_device_sessions_and_persistent_auth', '025_manual_password_recovery', '047_financial_ledger_and_multi_model', '067_device_session_generation'])
   await pg.exec(strip(readFileSync(resolve(root, `infra/db/migrations/${f}.sql`), 'utf8')));
 let chain = Promise.resolve();
 const db = {

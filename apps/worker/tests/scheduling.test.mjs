@@ -34,6 +34,7 @@ test('scheduled visits wait, then release once; late and cancelled visits do not
     INSERT INTO beneficiaries(owner_user_id,display_name,consent_status) SELECT id,'موعد','GRANTED' FROM users;
     INSERT INTO services(code,title_ar,price_amount) VALUES ('TEST','خدمة اختبارية',100);
     INSERT INTO app_settings(key,value) VALUES ('dispatch','{"openEnabled":true}') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
+    INSERT INTO app_settings(key,value) VALUES ('orders','{"accepting":true}') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
   `);
   const makeVisit = async (status) => (await db.query(`
     INSERT INTO care_requests(requester_user_id,beneficiary_id,service_id,location,location_source,address_text,
@@ -46,6 +47,13 @@ test('scheduled visits wait, then release once; late and cancelled visits do not
   await saveSchedule(db, due, validateAppointment(new Date(Date.now() + 3600000).toISOString()));
   assert.equal(await releaseScheduledVisit(pool), false);
   await db.query("UPDATE scheduled_visits SET appointment_at=now()+interval '10 minutes',release_at=now()-interval '5 minutes' WHERE request_id=$1", [due]);
+  process.env.SCHEDULED_VISITS_ENABLED='false';
+  assert.equal(await releaseScheduledVisit(pool), false);
+  assert.equal((await db.query('SELECT status FROM care_requests WHERE id=$1',[due])).rows[0].status,'SCHEDULED');
+  process.env.SCHEDULED_VISITS_ENABLED='true';
+  await db.query("DELETE FROM app_settings WHERE key='orders'");
+  assert.equal(await releaseScheduledVisit(pool), false);
+  await db.query(`INSERT INTO app_settings(key,value) VALUES('orders','{"accepting":true}')`);
   assert.equal(await releaseScheduledVisit(pool), true);
   assert.equal(await releaseScheduledVisit(pool), false);
   const started = (await db.query('SELECT status, search_expires_at FROM care_requests WHERE id=$1', [due])).rows[0];
