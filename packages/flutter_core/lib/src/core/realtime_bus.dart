@@ -24,6 +24,10 @@ class RealtimeEventBus {
   final _seenOrder = <String>[];
   static const int _maxSeen = 1024;
   bool _connected = false;
+  Future<Map<String, dynamic>?> Function(String callId, Map<String, dynamic> payload)? signalSender;
+
+  Future<Map<String, dynamic>?> sendCallSignal(String callId, Map<String, dynamic> payload) async =>
+      signalSender == null ? null : await signalSender!(callId, payload);
 
   Stream<RealtimeEvent> get stream => _controller.stream;
   bool get isConnected => _connected;

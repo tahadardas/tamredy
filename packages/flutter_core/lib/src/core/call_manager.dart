@@ -35,8 +35,8 @@ class CallManager extends ChangeNotifier {
     _connSub = eventBus.connectionStateStream.listen((connected) {
       if (_callId == null || isTerminal) return;
       if (connected) {
-        _pollTimer?.cancel();
-        _pollTimer = null;
+        _snapshotReconciled = false;
+        _ensureFallbackPolling();
         unawaited(refresh());
       } else {
         _ensureFallbackPolling();
@@ -78,6 +78,9 @@ class CallManager extends ChangeNotifier {
   bool _localMediaConnected = false;
   int _signalSequence = 0;
   int _signalEpoch = 0;
+  int _sessionVersion = -1;
+  final _terminalCallIds = <String>{};
+  bool _snapshotReconciled = false;
   Future<void> _signalQueue = Future<void>.value();
   int _reconnectAttempts = 0;
 
@@ -141,6 +144,7 @@ class CallManager extends ChangeNotifier {
     _localMediaConnected = false;
     _signalSequence = 0;
     _signalEpoch++;
+    _snapshotReconciled = false;
     _signalQueue = Future<void>.value();
     _reconnectAttempts = 0;
   }
@@ -168,6 +172,7 @@ class CallManager extends ChangeNotifier {
     }
     _resetMediaState();
     _callId = null;
+    _sessionVersion = -1;
     _requestId = requestId;
     _peerName = peerName;
     _peerRole = peerRole;
@@ -187,7 +192,7 @@ class CallManager extends ChangeNotifier {
         {'Idempotency-Key': _uuid.v4()},
       );
       _callId = res['id']?.toString();
-      _phase = _parsePhase(res['call_status']?.toString()) ?? CallPhase.ringing;
+      _applyServerPhase(_parsePhase(res['call_status']?.toString()) ?? CallPhase.ringing, int.tryParse('${res['session_version'] ?? ''}'));
       notifyListeners();
       try {
         await _initPeerConnection(res['ice_servers'] as List?);
@@ -211,14 +216,18 @@ class CallManager extends ChangeNotifier {
     required String peerRole,
     CallPhase initialPhase = CallPhase.ringing,
     List<dynamic>? iceServers,
+    int? initialSessionVersion,
   }) async {
+    if (_terminalCallIds.contains(callId) || (_callId == callId && isTerminal)) return;
     if (_callId == callId && isActive) {
       _overlayVisible = true;
       notifyListeners();
       return;
     }
     _resetMediaState();
+    if (_callId != callId) _sessionVersion = -1;
     _callId = callId;
+    if (initialSessionVersion != null) _sessionVersion = initialSessionVersion;
     _requestId = requestId;
     _peerName = peerName;
     _peerRole = peerRole;
@@ -264,6 +273,7 @@ class CallManager extends ChangeNotifier {
       if (isCaller) {
         _resetMediaState();
         _callId = id;
+        _sessionVersion = int.tryParse('${raw['session_version'] ?? ''}') ?? -1;
         _requestId = raw['request_id']?.toString();
         _peerName = resolvedPeerName;
         _peerRole = defaultPeerRole;
@@ -297,6 +307,7 @@ class CallManager extends ChangeNotifier {
         peerName: resolvedPeerName,
         peerRole: defaultPeerRole,
         initialPhase: serverPhase,
+        initialSessionVersion: int.tryParse('${raw["session_version"] ?? ""}'),
         iceServers: iceServers,
       );
     } catch (_) {}
@@ -309,7 +320,8 @@ class CallManager extends ChangeNotifier {
     notifyListeners();
     try {
       final res = await api.post('/v1/calls/$id/accept', {});
-      _phase = _parsePhase(res['call_status']?.toString()) ?? CallPhase.accepted;
+      if (_callId != id || isTerminal) return;
+      _applyServerPhase(_parsePhase(res['call_status']?.toString()) ?? CallPhase.accepted, int.tryParse('${res['session_version'] ?? ''}'));
       notifyListeners();
       await _initPeerConnection(res['ice_servers'] as List?);
       await refresh();
@@ -357,6 +369,7 @@ class CallManager extends ChangeNotifier {
   void dismissOverlay() {
     _overlayVisible = false;
     if (isTerminal) {
+      if (_callId != null) _terminalCallIds.add(_callId!);
       _phase = CallPhase.idle;
       _callId = null;
       _requestId = null;
@@ -412,6 +425,8 @@ class CallManager extends ChangeNotifier {
             {'urls': 'stun:stun1.l.google.com:19302'},
           ];
 
+    final callAtCreation = _callId;
+    final epochAtCreation = _signalEpoch;
     final pc = await createPeerConnection({
       'iceServers': iceServers,
       'sdpSemantics': 'unified-plan',
@@ -431,6 +446,7 @@ class CallManager extends ChangeNotifier {
     }
 
     pc.onIceCandidate = (candidate) {
+      if (_callId != callAtCreation || _signalEpoch != epochAtCreation || isTerminal) return;
       final id = _callId;
       if (id == null || candidate.candidate == null) return;
       _sendSignal('ICE_CANDIDATE', {
@@ -441,6 +457,7 @@ class CallManager extends ChangeNotifier {
     };
 
     pc.onConnectionState = (state) {
+      if (_callId != callAtCreation || _signalEpoch != epochAtCreation || isTerminal) return;
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _reconnectTimer?.cancel();
         _reconnectTimer = null;
@@ -465,6 +482,11 @@ class CallManager extends ChangeNotifier {
       }
     };
 
+    if (_callId != callAtCreation || _signalEpoch != epochAtCreation || isTerminal) {
+      await stream.dispose();
+      await pc.close();
+      return;
+    }
     _pc = pc;
     _localStream = stream;
     try {
@@ -477,14 +499,20 @@ class CallManager extends ChangeNotifier {
     final pc = _pc;
     if (id == null || pc == null || _offerSent) return;
     _offerSent = true;
+    final epoch = _signalEpoch;
     final offer = await pc.createOffer({'offerToReceiveAudio': true});
+    if (_callId != id || _signalEpoch != epoch || isTerminal) return;
     await pc.setLocalDescription(offer);
+    if (_callId != id || _signalEpoch != epoch || isTerminal) return;
     await _sendSignal('SDP_OFFER', {'sdp': offer.sdp, 'type': offer.type});
   }
 
   Future<void> _consumeSignals(List<dynamic>? rawSignals) async {
     if (rawSignals == null || rawSignals.isEmpty || _pc == null) return;
+    final pc = _pc!;
+    final epoch = _signalEpoch;
     for (final raw in rawSignals) {
+      if (_signalEpoch != epoch || _pc != pc || isTerminal) return;
       final sig = Map<String, dynamic>.from(raw as Map);
       // BUG-041: Key signal deduplication canonically on event_id (shared across WS & REST)
       final sigId = sig['event_id']?.toString() ?? sig['eventId']?.toString() ?? sig['id']?.toString() ?? '';
@@ -498,13 +526,16 @@ class CallManager extends ChangeNotifier {
         final sdp = data['sdp']?.toString();
         final sdpType = data['type']?.toString() ?? 'offer';
         if (sdp != null && (!_remoteDescriptionSet || type == 'ICE_RESTART')) {
-          await _pc!.setRemoteDescription(RTCSessionDescription(sdp, sdpType));
+          if (type == 'ICE_RESTART') _answerSent = false;
+          await pc.setRemoteDescription(RTCSessionDescription(sdp, sdpType));
+          if (_signalEpoch != epoch || _pc != pc || isTerminal) return;
           _remoteDescriptionSet = true;
-          await _flushPendingCandidates();
+          await _flushPendingCandidates(pc,epoch);
           if (!_answerSent && _callId != null) {
             _answerSent = true;
-            final answer = await _pc!.createAnswer();
-            await _pc!.setLocalDescription(answer);
+            final answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            if (_signalEpoch != epoch || _pc != pc || isTerminal) return;
             await _sendSignal('SDP_ANSWER', {'sdp': answer.sdp, 'type': answer.type});
           }
         }
@@ -512,9 +543,10 @@ class CallManager extends ChangeNotifier {
         final sdp = data['sdp']?.toString();
         final sdpType = data['type']?.toString() ?? 'answer';
         if (sdp != null && !_remoteDescriptionSet) {
-          await _pc!.setRemoteDescription(RTCSessionDescription(sdp, sdpType));
+          await pc.setRemoteDescription(RTCSessionDescription(sdp, sdpType));
+          if (_signalEpoch != epoch || _pc != pc || isTerminal) return;
           _remoteDescriptionSet = true;
-          await _flushPendingCandidates();
+          await _flushPendingCandidates(pc,epoch);
         }
       } else if (type == 'ICE_CANDIDATE') {
         final candStr = data['candidate']?.toString();
@@ -525,7 +557,7 @@ class CallManager extends ChangeNotifier {
             int.tryParse('${data['sdpMLineIndex'] ?? 0}'),
           );
           if (_remoteDescriptionSet) {
-            await _pc!.addCandidate(cand);
+            await pc.addCandidate(cand);
           } else {
             _pendingCandidates.add(cand);
           }
@@ -534,11 +566,13 @@ class CallManager extends ChangeNotifier {
     }
   }
 
-  Future<void> _flushPendingCandidates() async {
-    for (final c in _pendingCandidates) {
-      await _pc?.addCandidate(c);
+  Future<void> _flushPendingCandidates(RTCPeerConnection pc, int epoch) async {
+    final pending = List<RTCIceCandidate>.from(_pendingCandidates);
+    for (final c in pending) {
+      if (_signalEpoch != epoch || _pc != pc || isTerminal) return;
+      await pc.addCandidate(c);
     }
-    _pendingCandidates.clear();
+    if (_signalEpoch == epoch && _pc == pc) _pendingCandidates.clear();
   }
 
   /// BUG-038: Async FIFO serialized queue guaranteeing monotonic sequence numbers and stable retry eventId.
@@ -562,7 +596,16 @@ class CallManager extends ChangeNotifier {
       };
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
-          final res = await api.post('/v1/calls/$id/signal', payload);
+          if (_callId != id || _signalEpoch != epoch || isTerminal) {
+            completer.complete(<String,dynamic>{});
+            return;
+          }
+          final acknowledged = await eventBus.sendCallSignal(id,payload);
+          if (_callId != id || _signalEpoch != epoch || isTerminal) {
+            completer.complete(<String,dynamic>{});
+            return;
+          }
+          final res = acknowledged ?? await api.post('/v1/calls/$id/signal', payload);
           completer.complete(res);
           return;
         } catch (e) {
@@ -588,8 +631,13 @@ class CallManager extends ChangeNotifier {
       if (pc == null || _phase == CallPhase.connected || isTerminal) return;
       _reconnectAttempts++;
       try {
+        final epoch = _signalEpoch;
+        final id = _callId;
+        _remoteDescriptionSet = false;
         final offer = await pc.createOffer({'iceRestart': true, 'offerToReceiveAudio': true});
+        if (_callId != id || _signalEpoch != epoch || isTerminal) return;
         await pc.setLocalDescription(offer);
+        if (_callId != id || _signalEpoch != epoch || isTerminal) return;
         await _sendSignal('ICE_RESTART', {'sdp': offer.sdp, 'type': offer.type});
       } catch (_) {}
       if (_phase != CallPhase.connected && _reconnectAttempts >= 3) {
@@ -615,6 +663,7 @@ class CallManager extends ChangeNotifier {
           requestId: evt.payload['requestId']?.toString() ?? '',
           peerName: evt.payload['callerRole'] == 'NURSE' ? 'الممرض المعتمد' : 'المريض',
           peerRole: 'مكالمة صوتية آمنة',
+          initialSessionVersion: int.tryParse('${evt.payload['sessionVersion'] ?? ''}'),
         );
       }
       return;
@@ -622,7 +671,8 @@ class CallManager extends ChangeNotifier {
 
     if (evt.payload['callId']?.toString() != _callId) return;
     if (evt.type == 'call.signal') {
-      final eventType = evt.payload['eventType']?.toString();
+      if (isTerminal) return;
+      final eventType = (evt.payload['signalType'] ?? evt.payload['eventType'])?.toString();
       final data = evt.payload['data'];
       if (eventType != null && data is Map) {
         _consumeSignals([
@@ -649,7 +699,8 @@ class CallManager extends ChangeNotifier {
       _ => null,
     };
     if (next != null) {
-      _phase = next;
+      final version = int.tryParse('${evt.payload['sessionVersion'] ?? ''}');
+      if (!_applyServerPhase(next,version)) return;
       // BUG-040: Start call duration timer ONLY after local RTCPeerConnection confirms ICE/DTLS media connected
       if (next == CallPhase.connected && _localMediaConnected && _pc != null) {
         _ensureDurationTimer();
@@ -663,7 +714,7 @@ class CallManager extends ChangeNotifier {
   }
 
   void _startPolling() {
-    if (eventBus.isConnected) {
+    if (eventBus.isConnected && _snapshotReconciled) {
       _pollTimer?.cancel();
       _pollTimer = null;
       return;
@@ -674,7 +725,7 @@ class CallManager extends ChangeNotifier {
   void _ensureFallbackPolling() {
     if (_pollTimer != null || _callId == null || isTerminal) return;
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
-      if (eventBus.isConnected) {
+      if (eventBus.isConnected && _snapshotReconciled) {
         _pollTimer?.cancel();
         _pollTimer = null;
         return;
@@ -748,10 +799,11 @@ class CallManager extends ChangeNotifier {
     if (id == null || id.isEmpty) return;
     try {
       final res = await api.getMap('/v1/calls/$id');
+      if (_callId != id) return;
       final next = _parsePhase(res['call_status']?.toString());
-      if (next != null) {
-        _phase = next;
-      }
+      final version = int.tryParse('${res['session_version'] ?? ''}');
+      if (next != null && !_applyServerPhase(next,version)) return;
+      _snapshotReconciled = true;
       if (_pc != null) {
         await _consumeSignals(res['signals'] as List?).catchError((_) {});
       }
@@ -761,6 +813,19 @@ class CallManager extends ChangeNotifier {
       }
       notifyListeners();
     } catch (_) {}
+  }
+
+  bool _applyServerPhase(CallPhase next, int? version) {
+    if (version == null || version < _sessionVersion) return false;
+    const terminal = {CallPhase.ended,CallPhase.rejected,CallPhase.cancelled,CallPhase.missed,CallPhase.failed};
+    if (isTerminal && !terminal.contains(next)) return false;
+    _sessionVersion = version;
+    if (terminal.contains(next) && _callId != null) {
+      _terminalCallIds.add(_callId!);
+      if (_terminalCallIds.length > 128) _terminalCallIds.remove(_terminalCallIds.first);
+    }
+    _phase = next == CallPhase.connected && !_localMediaConnected ? CallPhase.connecting : next;
+    return true;
   }
 
   static CallPhase? _parsePhase(String? raw) {
@@ -801,6 +866,8 @@ class CallManager extends ChangeNotifier {
     _handledSignals.clear();
     _pendingCandidates.clear();
     _callId = null;
+    _terminalCallIds.clear();
+    _sessionVersion = -1;
     _requestId = null;
     _phase = CallPhase.idle;
     _error = null;

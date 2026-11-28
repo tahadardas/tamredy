@@ -10,6 +10,7 @@ void main() {
         expectedApp: 'PATIENT_APP',
       );
       addTearDown(coord.dispose);
+      coord.setAuthenticatedUserId('u1');
 
       final nurseEvent = AppNotificationEvent.fromMap({
         'eventId': 'ev-nurse-1',
@@ -37,6 +38,7 @@ void main() {
 
       final target = coord.routeFromTap({
         'eventId': 'ev-pat-tap',
+        'recipientUserId':'u1',
         'eventType': 'marketplace.proposal.created',
         'recipientRole': 'PATIENT',
         'targetApp': 'PATIENT_APP',
@@ -53,6 +55,7 @@ void main() {
         expectedApp: 'NURSE_APP',
       );
       addTearDown(coord.dispose);
+      coord.setAuthenticatedUserId('u1');
 
       final expiredOffer = AppNotificationEvent.fromMap({
         'eventId': 'ev-exp-1',
@@ -74,6 +77,7 @@ void main() {
 
       final callTarget = coord.routeFromTap({
         'eventId': 'ev-call-1',
+        'recipientUserId':'u1',
         'eventType': 'call.incoming',
         'recipientRole': 'NURSE',
         'targetApp': 'NURSE_APP',

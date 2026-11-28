@@ -72,7 +72,9 @@ class TamreedyApi {
   /// Identifies whether this client instance is running in PATIENT_APP or NURSE_APP.
   final String appType;
 
-  TamreedyApi({this.appType = 'PATIENT_APP'});
+  final Dio? _refreshTransport;
+
+  TamreedyApi({this.appType = 'PATIENT_APP', Dio? refreshTransport}) : _refreshTransport = refreshTransport;
 
   static String get baseUrl {
     String url = _customBaseUrl.isNotEmpty ? _customBaseUrl : defaultBaseUrlForEnv(kAppEnvironment);
@@ -119,6 +121,26 @@ class TamreedyApi {
 
   /// Single Flight completer to prevent multiple concurrent refresh operations
   Completer<bool>? _refreshCompleter;
+  int? _refreshEpoch;
+  Future<void> _credentialMutations = Future<void>.value();
+
+  Future<T> _mutateCredentials<T>(Future<T> Function() operation) {
+    final result = _credentialMutations.then((_) => operation());
+    _credentialMutations = result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
+  }
+
+  bool _epochIsCurrent(int epoch) => epoch == sessionScopeEpoch.value;
+
+  Future<void> _deleteCredentials() async {
+    await _storage.delete(key: 'access_token');
+    await _storage.delete(key: 'refresh_token');
+    await _storage.delete(key: 'cached_user_role');
+  }
+
+  bool _allowedDuringSessionChange(String path) =>
+      path.startsWith('/v1/auth/') || path == '/v1/devices' ||
+      path == '/health' || path == '/ready' || path == '/health/ready' || path == '/v1/capabilities';
 
   /// Coalesces identical concurrent GET requests to prevent duplicate API bursts.
   final Map<String, Future<dynamic>> _inFlightGets = {};
@@ -126,6 +148,21 @@ class TamreedyApi {
   late final Dio dio = _createDio();
 
   String newIdempotencyKey() => _uuid.v4();
+
+  bool sessionChanging = false;
+
+  /// Invalidate reads before asynchronous teardown; credentials remain only for revocation.
+  void beginSessionChange() {
+    sessionChanging = true;
+    _inFlightGets.clear();
+    sessionScopeEpoch.value++;
+  }
+
+  DioException _staleSession(RequestOptions options) => DioException(
+    requestOptions: options,
+    type: DioExceptionType.cancel,
+    message: 'session_changed',
+  );
 
   void markReconnecting() {
     if (connectionHealth.value != ConnectionHealth.reconnecting) {
@@ -169,6 +206,11 @@ class TamreedyApi {
     client.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          final epoch = options.extra.putIfAbsent('sessionEpoch', () => sessionScopeEpoch.value);
+          if (sessionChanging && !_allowedDuringSessionChange(options.path)) {
+            handler.reject(_staleSession(options));
+            return;
+          }
           final traceId =
               'tam-${DateTime.now().millisecondsSinceEpoch}-${_random.nextInt(999999).toString().padLeft(6, '0')}';
           options.headers['X-Correlation-Id'] = traceId;
@@ -183,9 +225,17 @@ class TamreedyApi {
           if (kDebugMode) {
             debugPrint('[HTTP] -> ${options.method} ${options.uri} [trace:$traceId]');
           }
+          if (epoch != sessionScopeEpoch.value) {
+            handler.reject(_staleSession(options));
+            return;
+          }
           handler.next(options);
         },
         onResponse: (response, handler) {
+          if (response.requestOptions.extra['sessionEpoch'] != sessionScopeEpoch.value) {
+            handler.reject(_staleSession(response.requestOptions));
+            return;
+          }
           markOnline();
           if (kDebugMode) {
             final traceId = response.requestOptions.headers['X-Correlation-Id'];
@@ -194,6 +244,10 @@ class TamreedyApi {
           handler.next(response);
         },
         onError: (e, handler) async {
+          if (e.requestOptions.extra['sessionEpoch'] != sessionScopeEpoch.value) {
+            handler.next(_staleSession(e.requestOptions));
+            return;
+          }
           final traceId = e.requestOptions.headers['X-Correlation-Id'];
           if (kDebugMode) {
             debugPrint('[HTTP ERROR] ${e.response?.statusCode ?? 'NET'} ${e.requestOptions.path} [trace:$traceId]: ${e.message}');
@@ -219,6 +273,10 @@ class TamreedyApi {
               !isUnrecoverableAuthRoute) {
             final refreshed = await _refreshSingleFlight();
             if (refreshed) {
+              if (e.requestOptions.extra['sessionEpoch'] != sessionScopeEpoch.value || sessionChanging) {
+                handler.next(_staleSession(e.requestOptions));
+                return;
+              }
               final opts = e.requestOptions..extra['retried'] = true;
               final newJwt = await _storage.read(key: 'access_token');
               if (newJwt != null) {
@@ -229,7 +287,7 @@ class TamreedyApi {
               } catch (_) {}
             }
           }
-          handler.next(e);
+          handler.next(e.requestOptions.extra['sessionEpoch'] == sessionScopeEpoch.value ? e : _staleSession(e.requestOptions));
         },
       ),
     );
@@ -315,62 +373,104 @@ class TamreedyApi {
       ? _storage.delete(key: 'pref_$key')
       : _storage.write(key: 'pref_$key', value: value);
 
-  Future<void> _saveTokens(Map<String, dynamic> t) async {
-    await _storage.write(key: 'access_token', value: t['accessToken'] as String);
-    await _storage.write(key: 'refresh_token', value: t['refreshToken'] as String);
-    _inFlightGets.clear();
-    authSessionSignal.value = null;
-    sessionScopeEpoch.value = sessionScopeEpoch.value + 1;
-  }
+  Future<void> _saveTokens(Map<String, dynamic> tokens, {required int expectedEpoch, bool newSession = true}) =>
+      _mutateCredentials(() async {
+        if (!_epochIsCurrent(expectedEpoch) || (!newSession && sessionChanging)) {
+          throw _staleSession(RequestOptions(path: '/v1/auth/refresh'));
+        }
+        final access = tokens['accessToken'];
+        final refresh = tokens['refreshToken'];
+        if (access is! String || access.isEmpty || refresh is! String || refresh.isEmpty) {
+          throw StateError('Authentication response did not contain valid credentials');
+        }
+        try {
+          await _storage.write(key: 'access_token', value: access);
+          await _storage.write(key: 'refresh_token', value: refresh);
+          if (tokens['role'] is String) await _storage.write(key:'cached_user_role',value:tokens['role'] as String);
+        } catch (error) {
+          // A partially persisted credential pair cannot be treated as a session.
+          authSessionSignal.value=AuthSessionSignal.sessionRevoked;
+          beginSessionChange();
+          try {
+            await _deleteCredentials();
+          } catch (cleanupError) {
+            if (kDebugMode) debugPrint('Credential cleanup failed: ${cleanupError.runtimeType}');
+          }
+          rethrow;
+        }
+        if (!_epochIsCurrent(expectedEpoch) || (!newSession && sessionChanging)) {
+          // A synchronous invalidation can occur during secure-storage I/O. No
+          // newer writer can run until this queued mutation has cleaned up.
+          await _deleteCredentials();
+          throw _staleSession(RequestOptions(path: '/v1/auth/refresh'));
+        }
+        _inFlightGets.clear();
+        if (newSession) {
+          sessionChanging = false;
+          authSessionSignal.value = null;
+          sessionScopeEpoch.value++;
+        }
+      });
 
   Future<bool> _refreshSingleFlight() async {
-    if (_refreshCompleter != null) {
-      return _refreshCompleter!.future;
-    }
-    _refreshCompleter = Completer<bool>();
-
+    if (sessionChanging) return false;
+    final epoch = sessionScopeEpoch.value;
+    if (_refreshCompleter != null && _refreshEpoch == epoch) return _refreshCompleter!.future;
+    final tracked = Completer<bool>();
+    _refreshCompleter = tracked;
+    _refreshEpoch = epoch;
     try {
       final rt = await _storage.read(key: 'refresh_token');
-      if (rt == null) {
-        _refreshCompleter!.complete(false);
+      if (rt == null || !_epochIsCurrent(epoch) || sessionChanging) {
+        tracked.complete(false);
         return false;
       }
       final devId = await getDeviceId();
-      final r = await Dio(
-        BaseOptions(baseUrl: baseUrl, connectTimeout: const Duration(seconds: 10)),
-      ).post('/v1/auth/refresh', data: {'refreshToken': rt, 'deviceId': devId});
-
-      await _saveTokens(Map<String, dynamic>.from(r.data as Map));
+      if (!_epochIsCurrent(epoch) || sessionChanging) {
+        tracked.complete(false);
+        return false;
+      }
+      final refreshClient = _refreshTransport ?? Dio(BaseOptions(baseUrl:baseUrl,
+        connectTimeout:const Duration(seconds:10),receiveTimeout:const Duration(seconds:15),
+        sendTimeout:const Duration(seconds:15)));
+      final r = await refreshClient.post('/v1/auth/refresh',data:{'refreshToken':rt,'deviceId':devId});
+      await _saveTokens(Map<String,dynamic>.from(r.data as Map),expectedEpoch:epoch,newSession:false);
+      if (!_epochIsCurrent(epoch) || sessionChanging) {
+        tracked.complete(false);
+        return false;
+      }
       markOnline();
-      _refreshCompleter!.complete(true);
+      tracked.complete(true);
       return true;
-    } catch (e) {
-      if (e is DioException && e.response != null) {
-        final code = e.response!.statusCode;
-        final data = e.response!.data;
-        final err = data is Map ? (data['code'] ?? data['message']) : null;
-        if (code == 401 &&
-            (err == 'REFRESH_INVALID' ||
-                err == 'REFRESH_EXPIRED' ||
-                err == 'REFRESH_REUSED' ||
-                err == 'SESSION_REVOKED' ||
-                err == 'ACCOUNT_INACTIVE')) {
-          await _storage.delete(key: 'access_token');
-          await _storage.delete(key: 'refresh_token');
-          await _storage.delete(key: 'cached_user_role');
-          _inFlightGets.clear();
-          sessionScopeEpoch.value = sessionScopeEpoch.value + 1;
-          authSessionSignal.value = AuthSessionSignal.sessionRevoked;
+    } catch(error) {
+      if (_epochIsCurrent(epoch) && !sessionChanging && error is DioException && error.response != null) {
+        final data=error.response!.data;
+        final code=data is Map ? data['code'] ?? data['message'] : null;
+        if (error.response!.statusCode==401 &&
+            ['REFRESH_INVALID','REFRESH_EXPIRED','REFRESH_REUSED','SESSION_REVOKED','ACCOUNT_INACTIVE'].contains(code)) {
+          await _mutateCredentials(() async {
+            if (!_epochIsCurrent(epoch) || sessionChanging) return;
+            sessionChanging=true;
+            authSessionSignal.value=AuthSessionSignal.sessionRevoked;
+            _inFlightGets.clear();
+            sessionScopeEpoch.value++;
+            await _deleteCredentials();
+          });
         }
       }
-      _refreshCompleter!.complete(false);
+      tracked.complete(false);
       return false;
     } finally {
-      _refreshCompleter = null;
+      if (!tracked.isCompleted) tracked.complete(false);
+      if (identical(_refreshCompleter,tracked)) {
+        _refreshCompleter=null;
+        _refreshEpoch=null;
+      }
     }
   }
 
   Future<String> login(String phone, String password) async {
+    final epoch = sessionScopeEpoch.value;
     final devId = await getDeviceId();
     final t = await post('/v1/auth/login', {
       'phone': phone,
@@ -378,19 +478,19 @@ class TamreedyApi {
       'deviceId': devId,
       'platform': defaultTargetPlatform.name,
     });
-    await _saveTokens(t);
+    await _saveTokens(t, expectedEpoch:epoch);
     mustChangePassword = t['mustChangePassword'] == true;
     final role = t['role'] as String;
-    await _storage.write(key: 'cached_user_role', value: role);
     return role;
   }
 
   Future<void> changePassword(String current, String next) async {
+    final epoch = sessionScopeEpoch.value;
     final t = await post('/v1/auth/change-password', {
       'currentPassword': current,
       'newPassword': next,
     });
-    await _saveTokens(t);
+    await _saveTokens(t, expectedEpoch:epoch);
     mustChangePassword = false;
   }
 
@@ -398,6 +498,7 @@ class TamreedyApi {
       post('/v1/auth/otp/request', {'phone': phone});
 
   Future<String> verifyOtp(String phone, String code) async {
+    final epoch = sessionScopeEpoch.value;
     final devId = await getDeviceId();
     final t = await post('/v1/auth/otp/verify', {
       'phone': phone,
@@ -405,13 +506,13 @@ class TamreedyApi {
       'deviceId': devId,
       'platform': defaultTargetPlatform.name,
     });
-    await _saveTokens(t);
+    await _saveTokens(t, expectedEpoch:epoch);
     final role = t['role'] as String;
-    await _storage.write(key: 'cached_user_role', value: role);
     return role;
   }
 
   Future<String> register(String phone, String name, String password) async {
+    final epoch = sessionScopeEpoch.value;
     final devId = await getDeviceId();
     final t = await post('/v1/auth/register', {
       'phone': phone,
@@ -420,9 +521,8 @@ class TamreedyApi {
       'deviceId': devId,
       'platform': defaultTargetPlatform.name,
     });
-    await _saveTokens(t);
+    await _saveTokens(t, expectedEpoch:epoch);
     final role = (t['role'] as String?) ?? 'PATIENT';
-    await _storage.write(key: 'cached_user_role', value: role);
     return role;
   }
 
@@ -483,27 +583,42 @@ class TamreedyApi {
   }
 
   Future<void> logout() async {
-    final rt = await _storage.read(key: 'refresh_token');
-    final devId = await getDeviceId();
+    if (!sessionChanging) beginSessionChange();
+    final epoch=sessionScopeEpoch.value;
+    final rt=await _storage.read(key:'refresh_token');
+    final devId=await getDeviceId();
+    if (!_epochIsCurrent(epoch)) return;
     try {
-      await dio.delete('/v1/devices', data: {'deviceId': devId, 'appType': appType});
-    } catch (_) {}
-    if (rt != null) {
-      try {
-        await post('/v1/auth/logout', {'refreshToken': rt, 'deviceId': devId});
-      } catch (_) {}
+      await dio.delete('/v1/devices',data:{'deviceId':devId,'appType':appType});
+    } catch(error) {
+      if (kDebugMode) debugPrint('Device revocation deferred: ${error.runtimeType}');
     }
-    await _storage.delete(key: 'access_token');
-    await _storage.delete(key: 'refresh_token');
-    await _storage.delete(key: 'cached_user_role');
-    _inFlightGets.clear();
-    mustChangePassword = false;
-    sessionScopeEpoch.value = sessionScopeEpoch.value + 1;
-    authSessionSignal.value = AuthSessionSignal.signedOut;
+    if (rt != null && _epochIsCurrent(epoch)) {
+      try {
+        await post('/v1/auth/logout',{'refreshToken':rt,'deviceId':devId});
+      } catch(error) {
+        if (kDebugMode) debugPrint('Session revocation deferred: ${error.runtimeType}');
+      }
+    }
+    await _mutateCredentials(() async {
+      if (!_epochIsCurrent(epoch)) return;
+      await _deleteCredentials();
+      if (!_epochIsCurrent(epoch)) return;
+      _inFlightGets.clear();
+      mustChangePassword=false;
+      authSessionSignal.value=AuthSessionSignal.signedOut;
+      sessionScopeEpoch.value++;
+    });
   }
 
-  Future<void> saveAccessToken(String value) =>
-      _storage.write(key: 'access_token', value: value);
+  Future<void> saveAccessToken(String value) {
+    final epoch=sessionScopeEpoch.value;
+    return _mutateCredentials(() async {
+      if (!_epochIsCurrent(epoch) || sessionChanging) return;
+      await _storage.write(key:'access_token',value:value);
+      if (!_epochIsCurrent(epoch) || sessionChanging) await _storage.delete(key:'access_token');
+    });
+  }
 
   Future<void> signOut() => logout();
 
@@ -519,15 +634,17 @@ class TamreedyApi {
     final existing = _inFlightGets[path];
     if (existing != null) return existing;
 
-    final future = _executeGetWithRetry(path).whenComplete(() {
-      _inFlightGets.remove(path);
+    late final Future<dynamic> tracked;
+    tracked = _executeGetWithRetry(path).whenComplete(() {
+      if (identical(_inFlightGets[path], tracked)) _inFlightGets.remove(path);
     });
-    _inFlightGets[path] = future;
-    return future;
+    _inFlightGets[path] = tracked;
+    return tracked;
   }
 
   Future<dynamic> _executeGetWithRetry(String path, {CancelToken? cancelToken}) async {
     final policy = RequestTimeoutPolicy.forClass(ApiRequestClass.read);
+    final epoch = sessionScopeEpoch.value;
     try {
       final res = await dio.get(path, cancelToken: cancelToken, options: policy.toOptions());
       return res.data;
@@ -539,8 +656,9 @@ class TamreedyApi {
           status == 502 ||
           status == 503 ||
           status == 504;
-      if (retryable && !(cancelToken?.isCancelled ?? false)) {
+      if (retryable && epoch == sessionScopeEpoch.value && !sessionChanging && !(cancelToken?.isCancelled ?? false)) {
         await Future<void>.delayed(Duration(milliseconds: 250 + _random.nextInt(300)));
+        if (epoch != sessionScopeEpoch.value || sessionChanging) throw _staleSession(e.requestOptions);
         final res = await dio.get(path, cancelToken: cancelToken, options: policy.toOptions());
         return res.data;
       }

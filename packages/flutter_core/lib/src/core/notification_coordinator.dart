@@ -206,8 +206,13 @@ class NotificationCoordinator {
     'call.failed',
   };
 
-  final _seenIds = <String>{};
+  final presentedNotificationEvents = <String>{};
   final _seenOrder = <String>[];
+  final processedDomainEvents = <String>{};
+  final _domainOrder = <String>[];
+  final handledNavigationTargets = <String>{};
+  final _navigationOrder = <String>[];
+  AppNotificationEvent? _pendingColdStartEvent;
   static const int _maxSeen = 1024;
 
   final _tapController = StreamController<NotificationRouteTarget>.broadcast();
@@ -225,14 +230,27 @@ class NotificationCoordinator {
   });
 
   void setAuthenticatedUserId(String? userId) {
+    if (authenticatedUserId != userId) {
+      processedDomainEvents.clear();
+      _domainOrder.clear();
+      presentedNotificationEvents.clear();
+      _seenOrder.clear();
+      handledNavigationTargets.clear();
+      _navigationOrder.clear();
+    }
     authenticatedUserId = (userId == null || userId.trim().isEmpty) ? null : userId.trim();
   }
 
   void clearHistory() {
     authenticatedUserId = null;
-    _seenIds.clear();
+    presentedNotificationEvents.clear();
     _seenOrder.clear();
     pendingColdStartTarget = null;
+    _pendingColdStartEvent = null;
+    processedDomainEvents.clear();
+    _domainOrder.clear();
+    handledNavigationTargets.clear();
+    _navigationOrder.clear();
   }
 
   /// BUG-028: Enforce strict Allow List + non-empty recipientRole, targetApp, and recipientUserId.
@@ -240,28 +258,36 @@ class NotificationCoordinator {
     if (event.eventType == 'catalog.changed') return true;
     if (event.recipientRole != expectedRole) return false;
     if (event.targetApp != expectedApp) return false;
-    if (authenticatedUserId != null && authenticatedUserId!.isNotEmpty) {
-      if (event.recipientUserId.isEmpty || event.recipientUserId != authenticatedUserId) {
-        return false;
-      }
-    }
+    final currentUserId = authenticatedUserId;
+    if (currentUserId == null || currentUserId.isEmpty || event.recipientUserId != currentUserId) return false;
     final allowed = expectedRole == 'NURSE' ? _nurseAllowedEvents : _patientAllowedEvents;
     return allowed.contains(event.eventType);
+  }
+
+  bool acceptDomainEvent(AppNotificationEvent event) {
+    if (!isAuthorizedForThisApp(event) || event.isExpired) return false;
+    return _remember(processedDomainEvents, _domainOrder, event.eventId);
+  }
+
+  bool _remember(Set<String> ids, List<String> order, String id) {
+    if (!ids.add(id)) return false;
+    order.add(id);
+    if (order.length > _maxSeen) ids.remove(order.removeAt(0));
+    return true;
   }
 
   /// Processes an incoming event (from WebSocket or Foreground FCM). Returns true if accepted.
   bool acceptEvent(AppNotificationEvent event, {bool dedupe = true}) {
     if (!isAuthorizedForThisApp(event)) return false;
-    if ((event.eventType == 'offer.created' || event.eventType == 'call.incoming') &&
-        event.isExpired) {
+    if (event.isExpired) {
       return false;
     }
     if (dedupe && event.eventId.isNotEmpty) {
-      if (_seenIds.contains(event.eventId)) return false;
-      _seenIds.add(event.eventId);
+      if (presentedNotificationEvents.contains(event.eventId)) return false;
+      presentedNotificationEvents.add(event.eventId);
       _seenOrder.add(event.eventId);
       if (_seenOrder.length > _maxSeen) {
-        _seenIds.remove(_seenOrder.removeAt(0));
+        presentedNotificationEvents.remove(_seenOrder.removeAt(0));
       }
     }
     if (!_eventController.isClosed) {
@@ -273,12 +299,16 @@ class NotificationCoordinator {
   /// Handles user tapping a notification (never blocked by delivery deduplication).
   NotificationRouteTarget? routeFromTap(Map<String, dynamic> rawData, {bool coldStart = false}) {
     final event = AppNotificationEvent.fromMap(rawData);
+    if (coldStart) {
+      _pendingColdStartEvent = event;
+      return null;
+    }
     if (!isAuthorizedForThisApp(event)) return null;
-    if ((event.eventType == 'offer.created' || event.eventType == 'call.incoming') &&
-        event.isExpired) {
+    if (event.isExpired) {
       return null;
     }
     final target = resolveTarget(event);
+    if (!_remember(handledNavigationTargets, _navigationOrder, event.eventId)) return null;
     if (coldStart) {
       pendingColdStartTarget = target;
     } else if (!_tapController.isClosed) {
@@ -288,9 +318,16 @@ class NotificationCoordinator {
   }
 
   NotificationRouteTarget? takePendingColdStartTarget() {
-    final t = pendingColdStartTarget;
+    final event = _pendingColdStartEvent;
+    _pendingColdStartEvent = null;
+    if (event != null) {
+      if (!isAuthorizedForThisApp(event) || event.isExpired ||
+          !_remember(handledNavigationTargets,_navigationOrder,event.eventId)) return null;
+      return resolveTarget(event);
+    }
+    final target = pendingColdStartTarget;
     pendingColdStartTarget = null;
-    return t;
+    return authenticatedUserId == null ? null : target;
   }
 
   NotificationRouteTarget resolveTarget(AppNotificationEvent e) {

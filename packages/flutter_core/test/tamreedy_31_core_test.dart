@@ -121,7 +121,7 @@ void main() {
     bus.emit(
       eventId: 'evt-in-1',
       type: 'call.incoming',
-      payload: {'callId': 'call-1', 'requestId': 'req-1', 'callerRole': 'NURSE'},
+      payload: {'callId': 'call-1', 'requestId': 'req-1', 'callerRole': 'NURSE', 'sessionVersion':1},
     );
     await Future<void>.delayed(Duration.zero);
     expect(cm.callId, 'call-1');
@@ -131,7 +131,7 @@ void main() {
     bus.emit(
       eventId: 'evt-conn-1',
       type: 'call.connected',
-      payload: {'callId': 'call-1'},
+      payload: {'callId': 'call-1', 'sessionVersion':2},
     );
     await Future<void>.delayed(Duration.zero);
     expect(cm.phase, CallPhase.connecting);
