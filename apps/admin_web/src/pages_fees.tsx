@@ -105,36 +105,37 @@ export function Dues({live}: {live: Live}) {
   const inFlight = useRef(new Set<string>());
   if (!live) return <NeedLogin title="مستحقات الشركة"/>;
   const items: any[] = data?.items ?? [];
-  async function settle(nurseId: string, direction: 'FROM_NURSE' | 'TO_NURSE') {
-    const value=Number(amount[nurseId]);
-    if (!Number.isSafeInteger(value) || value<1 || inFlight.current.has(nurseId)) return;
-    const attempt=JSON.stringify([nurseId,direction,value]);
+  async function settle(nurseId: string, currencyCode: string, direction: 'FROM_NURSE' | 'TO_NURSE') {
+    const accountKey = `${nurseId}:${currencyCode}`;
+    const value=Number(amount[accountKey]);
+    if (!Number.isSafeInteger(value) || value<1 || inFlight.current.has(accountKey)) return;
+    const attempt=JSON.stringify([nurseId,currencyCode,direction,value]);
     const key=attempts.current.get(attempt) ?? crypto.randomUUID();
     attempts.current.set(attempt,key);
-    inFlight.current.add(nurseId);
+    inFlight.current.add(accountKey);
     setMsg('');
     try {
       await sendJson('POST', `/v1/admin/dues/${nurseId}/settle`,
-        {direction,amount:value,note:direction === 'FROM_NURSE' ? 'استلام من الممرض' : 'دفع للممرض'},
+        {direction,currencyCode,amount:value,note:direction === 'FROM_NURSE' ? 'استلام من الممرض' : 'دفع للممرض'},
         {'Idempotency-Key':key});
       attempts.current.delete(attempt);
-      setAmount(current=>({...current,[nurseId]:''}));
+      setAmount(current=>({...current,[accountKey]:''}));
       await load();
     }
     catch (e) { setMsg(`تعذر التسجيل: ${msgOf(e)}`); }
-    finally { inFlight.current.delete(nurseId); }
+    finally { inFlight.current.delete(accountKey); }
   }
   return <>
     <div className="stats three">
-      <div className="stat"><span>إجمالي مستحق للشركة على الممرضين</span><strong>{n(data?.totalOwedToCompany ?? 0)}</strong></div>
+      <div className="stat"><span>إجمالي مستحق للشركة على الممرضين</span><strong>{Object.entries(data?.totalsByCurrency ?? {}).map(([currency, total]) => `${n(Number(total))} ${currency}`).join(' / ') || '—'}</strong></div>
       <div className="stat"><span>ممرضون عليهم مستحقات</span><strong>{items.filter(i => Number(i.balance) > 0).length}</strong></div>
       <div className="stat"><span>موقوف استقبالهم لتجاوز الحد</span><strong>{items.filter(i => i.blocked).length}</strong></div>
     </div>
     <Panel title="مستحقات الشركة من الممرضين">
-      <Table head={['الممرض', 'زيارات مدفوعة', 'الرصيد (+ عليه للشركة / − للشركة عليها)', 'الحالة', 'تسوية']} rows={items.map(i => [i.name, i.visits, <b style={{color: Number(i.balance) > 0 ? '#b12f3e' : '#05866b'}}>{n(i.balance)} ل.س</b>,
+      <Table head={['الممرض', 'زيارات مدفوعة', 'الرصيد (+ عليه للشركة / − للشركة عليها)', 'الحالة', 'تسوية']} rows={items.map(i => [i.name, i.visits, <b style={{color: Number(i.balance) > 0 ? '#b12f3e' : '#05866b'}}>{n(i.balance)} {i.currency_code}</b>,
         i.blocked ? 'موقوف عن الطلبات' : 'سليم',
-        <span className="acts"><input className="amt" type="number" placeholder="المبلغ" value={amount[i.nurse_id] ?? ''} onChange={e => setAmount({...amount, [i.nurse_id]: e.target.value})}/>
-          <button className="pill on" onClick={() => void settle(i.nurse_id, 'FROM_NURSE')}>استلمتُ منه</button><button className="pill" onClick={() => void settle(i.nurse_id, 'TO_NURSE')}>دفعتُ له</button></span>])}/>
+        <span className="acts"><input className="amt" type="number" placeholder="المبلغ" value={amount[`${i.nurse_id}:${i.currency_code}`] ?? ''} onChange={e => setAmount({...amount, [`${i.nurse_id}:${i.currency_code}`]: e.target.value})}/>
+          <button className="pill on" onClick={() => void settle(i.nurse_id, i.currency_code, 'FROM_NURSE')}>استلمتُ منه</button><button className="pill" onClick={() => void settle(i.nurse_id, i.currency_code, 'TO_NURSE')}>دفعتُ له</button></span>])}/>
       {msg && <p className="hint err">{msg}</p>}{err && <p className="hint err">{err}</p>}
     </Panel>
     <Notice>الممرض يقبض نقدًا من المريض ثم يسلّم الشركة حصتها (المبلغ المدفوع − نصيبه). الحساب يعتمد الزيارات المدفوعة بالكامل فقط. إن كان الرصيد سالبًا فالشركة مدينة للممرض (مثلًا عند خصومات كبيرة تتحمّلها الشركة). كل تسوية تُسجَّل في سجل التدقيق.</Notice>

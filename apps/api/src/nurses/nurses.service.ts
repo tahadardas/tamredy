@@ -24,7 +24,7 @@ export class NursesService {
       if(!n) missing();
       if(dto.availability==='AVAILABLE') {
         if(!n.verified) conflict('NURSE_NOT_VERIFIED');
-        if((await this.dues.balance(c,n.id)).blocked) conflict('SETTLEMENT_REQUIRED'); // settle cash dues with the company first
+        if((await this.dues.balancesByCurrency(c,n.id)).some(balance=>balance.blocked)) conflict('SETTLEMENT_REQUIRED'); // settle cash dues with the company first
         const valid=await c.query(`SELECT 1 FROM nurse_credentials WHERE nurse_id=$1 AND approved=true AND expires_at>now()`,[n.id]);
         if(!valid.rowCount) conflict('LICENSE_NOT_VERIFIED');
       }
@@ -80,6 +80,7 @@ export class NursesService {
       ST_Y(cr.location::geometry) AS latitude,ST_X(cr.location::geometry) AS longitude,
       coalesce(ar.name_ar,'ضمن نطاق الخدمة') AS area_name,
       cr.price_amount,cr.currency_code,cr.commission_bps,s.title_ar AS service_title,
+      v.outcome AS visit_outcome, a.reason AS visit_outcome_reason,
       b.display_name AS beneficiary_name,
       CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.display_name END AS patient_name,
       sv.appointment_at AS scheduled_at,
@@ -93,6 +94,7 @@ export class NursesService {
       JOIN users u ON u.id=cr.requester_user_id
       LEFT JOIN areas ar ON ar.id=cr.area_id
       LEFT JOIN scheduled_visits sv ON sv.request_id=cr.id
+      LEFT JOIN visits v ON v.assignment_id=a.id
       WHERE a.id=$1 AND n.user_id=$2 AND a.status IN ('ACTIVE','RESERVED','RELEASED')`,[assignmentId,userId]);
     if(!result.rowCount) missing();
     const items = await this.db.query(`SELECT cri.id,cri.service_id,cri.quantity,cri.expected_minutes,

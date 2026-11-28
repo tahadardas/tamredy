@@ -1,9 +1,10 @@
-import { Controller, Get, Optional, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Optional, Query, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
 import { missing } from '../common/errors.js';
 import { DuesService } from '../pricing/fees.service.js';
 import { RequestRecoveryService } from '../requests/request-recovery.service.js';
+import { NurseEligibilityEngine } from '../dispatch/nurse-eligibility.engine.js';
 import { LiveLocationReadService } from '../live-location/live-location-read.service.js';
 
 /** Read-only nurse views used by N01, N06, N07 and N09. Amounts are computed
@@ -16,6 +17,7 @@ export class NurseMeController {
     private readonly recovery: RequestRecoveryService,
     private readonly dues: DuesService,
     @Optional() private readonly liveLocationRead?: LiveLocationReadService,
+    @Optional() private readonly eligibility?: NurseEligibilityEngine,
   ) {}
 
   @Get('summary') async summary(@Request() r: AuthRequest) {
@@ -56,7 +58,7 @@ export class NurseMeController {
       LEFT JOIN cash_collections cc ON cc.visit_id=v.id
       WHERE a.nurse_id=$1 AND v.completed_at IS NOT NULL
       ORDER BY v.completed_at DESC LIMIT 10`, [nurseId]);
-    return {month: totals.rows[0] ?? {visits: 0, gross: '0', commission: '0', net_due: '0'}, recent: recent.rows, settlementMode: 'ESTIMATE_ONLY'};
+    return {monthsByCurrency:totals.rows,month: totals.rows.find(row=>row.currency_code===process.env.ACCOUNTING_CURRENCY_CODE) ?? {visits: 0, gross: '0', commission: '0', net_due: '0'}, recent: recent.rows, settlementMode: 'ESTIMATE_ONLY'};
   }
 
   /** What the nurse owes the company (or is owed) from cash collected, and the settlement history. */
@@ -64,8 +66,8 @@ export class NurseMeController {
     requireRole(r.user!, 'NURSE');
     const n = await this.db.query('SELECT id FROM nurses WHERE user_id=$1', [r.user!.id]);
     if (!n.rowCount) missing();
-    const history = await this.db.query(`SELECT direction,amount,note,created_at FROM nurse_settlements WHERE nurse_id=$1 ORDER BY created_at DESC LIMIT 20`, [n.rows[0].id]);
-    return { ...(await this.dues.balance(this.db, n.rows[0].id)), history: history.rows };
+    const history = await this.db.query(`SELECT s.direction,s.amount,s.note,s.created_at,t.currency_code FROM nurse_settlements s LEFT JOIN financial_transactions t ON t.id=s.transaction_id WHERE s.nurse_id=$1 ORDER BY s.created_at DESC LIMIT 20`, [n.rows[0].id]);
+    return { ...(process.env.ACCOUNTING_CURRENCY_CODE ? await this.dues.balance(this.db,n.rows[0].id,process.env.ACCOUNTING_CURRENCY_CODE) : {}), balancesByCurrency:await this.dues.balancesByCurrency(this.db,n.rows[0].id), history:history.rows };
   }
 
   @Get('profile') async profile(@Request() r: AuthRequest) {
@@ -80,7 +82,7 @@ export class NurseMeController {
     return {verified: n.rows[0].verified, credentials: creds.rows, skills: skills.rows};
   }
 
-  @Get('readiness') async readiness(@Request() r: AuthRequest) {
+  @Get('readiness') async readiness(@Request() r: AuthRequest,@Query('requestId') requestId?:string) {
     requireRole(r.user!, 'NURSE');
     const n = await this.db.query(`SELECT n.id, n.verified, n.availability_intent, n.work_status, n.last_heartbeat_at,
         EXTRACT(EPOCH FROM (now() - n.last_heartbeat_at))::int AS heartbeat_age_s,
@@ -107,8 +109,9 @@ export class NurseMeController {
     const skillsCount = skills.rowCount ?? 0;
 
     // Check settlement dues
-    const dues = await this.dues.balance(this.db, nurseId);
-    const settlementBlocked = dues.blocked === true;
+    const dues = await this.dues.balancesByCurrency(this.db,nurseId);
+    const financialAccounts=await this.db.query('SELECT settlement_required FROM nurse_financial_currency_accounts WHERE nurse_id=$1',[nurseId]);
+    const settlementBlocked = dues.some(row=>row.blocked) || financialAccounts.rows.some(row=>row.settlement_required);
 
     // Check active assignment
     const active = await this.db.query(`SELECT 1 FROM request_assignments a JOIN care_requests cr ON cr.id=a.request_id WHERE a.nurse_id=$1 AND a.status='ACTIVE' AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')`, [nurseId]);
@@ -120,7 +123,7 @@ export class NurseMeController {
       : null;
     const effectiveLocationAgeS = liveLoc
       ? Math.max(0, Math.floor((Date.now() - liveLoc.recordedAt.getTime()) / 1000))
-      : row.location_age_s;
+      : (this.liveLocationRead ? null : row.location_age_s);
     const effectiveAccuracyM = liveLoc ? liveLoc.accuracyMeters : (row.accuracy_m !== null && row.accuracy_m !== undefined ? Number(row.accuracy_m) : null);
 
     const isHeartbeatFresh = row.heartbeat_age_s !== null && row.heartbeat_age_s <= maxHeartbeatAgeSeconds;
@@ -163,10 +166,21 @@ export class NurseMeController {
       unmet.push('الاتصال بالخادم غير مستقر أو انقطع نبض الاتصال');
     }
 
-    const canReceiveOffers = calculatedStatus === 'READY';
+    const requestEligibility=requestId && this.eligibility ? await this.eligibility.evaluate(nurseId,requestId,{context:'OFFER'}) : null;
+    const eligibilityReasonCodes=requestEligibility?.reasons.map(reason=>reason.code) ?? [
+      ...(!row.verified?['NURSE_NOT_VERIFIED']:[]),...(!credentialsApproved?['LICENSE_MISSING_OR_EXPIRED']:[]),
+      ...(skillsCount===0?['MISSING_REQUIRED_SKILLS']:[]),...(settlementBlocked?['SETTLEMENT_REQUIRED']:[]),
+      ...(financialAccounts.rowCount===0?['NURSE_FINANCIAL_ACCOUNT_REQUIRED']:[]),
+      ...(!hasLocation?['LOCATION_REQUIRED']:!isLocationFresh?['LOCATION_STALE']:[]),
+      ...(!isLocationAccurate?['LOCATION_INACCURATE']:[]),...(!isHeartbeatFresh?['HEARTBEAT_STALE']:[]),
+      ...(hasActiveAssignment?['NURSE_HAS_ACTIVE_EXECUTION']:[]),
+    ];
+    const canReceiveOffers = eligibilityReasonCodes.length===0 && calculatedStatus === 'READY';
 
     return {
       status: calculatedStatus,
+      eligibilityReasonCodes,
+      requestEligibility,
       canReceiveOffers,
       availabilityIntent: row.availability_intent,
       workStatus: row.work_status,

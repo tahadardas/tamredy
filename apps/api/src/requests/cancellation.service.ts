@@ -40,7 +40,7 @@ function response(row: Record<string, unknown>, replayed: boolean) {
 export async function cancelRequest(
   client: PoolClient, userId: string, requestId: string, dto: CancelRequestDto,
 ) {
-  const request = (await client.query(`SELECT id,status,version,search_max_heartbeat_seconds
+  const request = (await client.query(`SELECT id,status,version,search_max_heartbeat_seconds,currency_code
     FROM care_requests WHERE id=$1 AND requester_user_id=$2 FOR UPDATE`, [requestId, userId])).rows[0];
   if (!request) missing();
 
@@ -142,7 +142,7 @@ export async function cancelRequest(
         [assignment.nurse_id, derivedWorkStatus, snapshot.cancelled_at],
       );
     } else {
-      const dues = await new DuesService().balance(client, assignment.nurse_id);
+      const dues = await new DuesService().balance(client, assignment.nurse_id,request.currency_code);
       const pause = request.status === 'EN_ROUTE' && (await client.query(
         "SELECT value->>'pauseAfterTravelCancellation' = 'true' AS enabled FROM app_settings WHERE key='dispatch'",
       )).rows[0]?.enabled === true;

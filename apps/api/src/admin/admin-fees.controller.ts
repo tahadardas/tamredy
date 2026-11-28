@@ -47,7 +47,7 @@ class TierDto {
   @IsOptional() @IsInt() @Min(0) @Max(10000) commissionBps?: number;
   @IsOptional() @IsBoolean() active?: boolean;
 }
-class SettleDto { @IsIn(['FROM_NURSE', 'TO_NURSE']) direction!: 'FROM_NURSE' | 'TO_NURSE'; @IsInt() @Min(1) @Max(1_000_000_000) amount!: number; @IsOptional() @IsString() @MaxLength(300) note?: string; }
+class SettleDto { @IsString() @Matches(/^[A-Z][A-Z0-9_]{2,15}$/) currencyCode!: string; @IsIn(['FROM_NURSE', 'TO_NURSE']) direction!: 'FROM_NURSE' | 'TO_NURSE'; @IsInt() @Min(1) @Max(1_000_000_000) amount!: number; @IsOptional() @IsString() @MaxLength(300) note?: string; }
 
 /** Administrator controls for fees, tax, holidays, commission tiers, nurse dues and promo-abuse review. */
 @Controller('v1/admin') @UseGuards(AuthGuard)
@@ -110,26 +110,29 @@ export class AdminFeesController {
   // ---------- company dues from nurses ----------
   @Get('dues') async allDues(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
-    const limit = Number((await this.db.query('SELECT nurse_debt_limit FROM pricing_settings WHERE id=1')).rows[0].nurse_debt_limit);
     const rows = (await this.db.query(`WITH positions AS (
-        SELECT split_part(e.account_id,':',2)::uuid AS nurse_id,
+        SELECT split_part(e.account_id,':',2)::uuid AS nurse_id,e.currency AS currency_code,
           sum(CASE WHEN e.account_id LIKE 'CASH_HELD_BY_NURSE:%' THEN e.debit_amount-e.credit_amount ELSE 0 END) AS cash_held,
           sum(CASE WHEN e.account_id LIKE 'NURSE_PAYABLE:%' THEN e.credit_amount-e.debit_amount ELSE 0 END) AS nurse_payable,
           sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_FROM_NURSE' AND e.account_id LIKE 'CASH_HELD_BY_NURSE:%' THEN e.credit_amount ELSE 0 END) AS settled_from_nurse,
           sum(CASE WHEN t.transaction_type='NURSE_SETTLEMENT_TO_NURSE' AND e.account_id LIKE 'NURSE_PAYABLE:%' THEN e.debit_amount ELSE 0 END) AS paid_to_nurse
         FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
         WHERE e.account_id LIKE 'CASH_HELD_BY_NURSE:%' OR e.account_id LIKE 'NURSE_PAYABLE:%'
-        GROUP BY split_part(e.account_id,':',2)::uuid
-      ) SELECT n.id AS nurse_id,coalesce(u.display_name,u.phone_e164) AS name,
+        GROUP BY split_part(e.account_id,':',2)::uuid,e.currency
+      ) SELECT n.id AS nurse_id,p.currency_code,coalesce(u.display_name,u.phone_e164) AS name,
         greatest(coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0),0) AS owed,coalesce(o.cnt,0) AS visits,
         coalesce(p.settled_from_nurse,0) AS settled_from_nurse,coalesce(p.paid_to_nurse,0) AS paid_to_nurse,
-        coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0) AS balance
+        coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0) AS balance,
+        a.credit_limit,a.settlement_required
       FROM nurses n JOIN users u ON u.id=n.user_id
       LEFT JOIN positions p ON p.nurse_id=n.id
+      LEFT JOIN nurse_financial_currency_accounts a ON a.nurse_id=n.id AND a.currency_code=p.currency_code
       LEFT JOIN (SELECT a.nurse_id,count(*)::int AS cnt FROM request_assignments a
         JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL GROUP BY a.nurse_id) o ON o.nurse_id=n.id
       WHERE p.nurse_id IS NOT NULL ORDER BY balance DESC`)).rows;
-    return { limit, totalOwedToCompany: rows.reduce((a, x) => a + Math.max(0, Number(x.balance)), 0), items: rows.map(x => ({ ...x, blocked: limit > 0 && Number(x.balance) > limit })) };
+    return { limit:null, totalsByCurrency: Object.fromEntries([...new Set(rows.map(row=>String(row.currency_code)))].map(currency=>[currency,rows.filter(row=>row.currency_code===currency).reduce((total,row)=>total+Math.max(0,Number(row.balance)),0)])),
+      items: rows.map(x => ({ ...x, blocked: x.settlement_required===true ||
+        (Number(x.credit_limit)>0 && Number(x.balance)>Number(x.credit_limit)) })) };
   }
 
   @Post('dues/:nurseId/settle') async settle(@Request() r: AuthRequest, @Param('nurseId') nurseId: string,
@@ -140,7 +143,7 @@ export class AdminFeesController {
       if (!(await c.query('SELECT 1 FROM nurses WHERE id=$1', [nurseId])).rowCount) missing();
       const transaction = await this.ledger.postTransaction(c, {
         transactionType:d.direction==='FROM_NURSE'?'NURSE_SETTLEMENT_FROM_NURSE':'NURSE_SETTLEMENT_TO_NURSE',
-        referenceType:'NURSE',referenceId:nurseId,currencyCode:'SYP_NEW',
+        referenceType:'NURSE',referenceId:nurseId,currencyCode:d.currencyCode,
         idempotencyKey:`nurse-settlement:${r.user!.id}:${idempotencyKey}`,actorUserId:r.user!.id,
         legs:d.direction==='FROM_NURSE'
           ? [{accountId:'CASH_CLEARING',debitAmount:d.amount,creditAmount:0},{accountId:`CASH_HELD_BY_NURSE:${nurseId}`,debitAmount:0,creditAmount:d.amount}]
@@ -152,7 +155,7 @@ export class AdminFeesController {
       if (!transaction.replayed) {
         await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,'dues.settled','nurse',$2,$3::jsonb)`, [r.user!.id, nurseId, JSON.stringify({ direction: d.direction, amount: d.amount, transactionId: transaction.transactionId })]);
       }
-      return this.dues.balance(c, nurseId);
+      return this.dues.balance(c,nurseId,d.currencyCode);
     });
   }
 

@@ -16,6 +16,10 @@ class NurseFinanceStore extends ChangeNotifier {
   int? monthVisits;
   int? commission;
   int? balance;
+  List<Map<String, dynamic>> financialAccountsByCurrency = const [];
+  bool legacyReconciliationRequired = false;
+  String? currencyCode;
+  int _refreshGeneration = 0;
   bool isBlocked = false;
   bool? settlementPending;
   int companyOwedAmount = 0;
@@ -26,6 +30,10 @@ class NurseFinanceStore extends ChangeNotifier {
 
   void resetForSessionChange() {
     _sessionGen++;
+    _refreshGeneration++;
+    financialAccountsByCurrency = const [];
+    legacyReconciliationRequired = false;
+    currencyCode = null;
     todayEarnings = null;
     netDue = null;
     monthVisits = null;
@@ -58,6 +66,7 @@ class NurseFinanceStore extends ChangeNotifier {
     }
 
     final gen = _sessionGen;
+    final refresh = ++_refreshGeneration;
     loading = true;
     error = null;
     notifyListeners();
@@ -67,13 +76,18 @@ class NurseFinanceStore extends ChangeNotifier {
         api.getMap('/v1/nurse/me/dues'),
         api.getMap('/v1/nurse/financial/ledger').catchError((_) => <String, dynamic>{}),
       ]);
-      if (gen != _sessionGen) return;
+      if (gen != _sessionGen || refresh != _refreshGeneration) return;
 
       final sum = results[0];
       final dues = results[1];
       final ledger = results[2];
+      final accounts = sum['financialAccountsByCurrency'];
+      financialAccountsByCurrency = accounts is List
+          ? accounts.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList() : const [];
+      currencyCode = sum['currencyCode']?.toString();
+      legacyReconciliationRequired = sum['legacyReconciliationRequired'] == true;
 
-      todayEarnings = (num.tryParse('${sum['today_earnings'] ?? sum['todayEarnings'] ?? dues['todayEarnings'] ?? 0}') ?? 0).round();
+      todayEarnings = (num.tryParse('${sum['today_earnings'] ?? sum['earnings']?['today'] ?? sum['todayEarnings'] ?? dues['todayEarnings'] ?? 0}') ?? 0).round();
       netDue = (num.tryParse('${dues['netDue'] ?? dues['net'] ?? sum['net_balance'] ?? 0}') ?? 0).round();
       monthVisits = (num.tryParse('${dues['monthVisits'] ?? sum['completed_visits'] ?? 0}') ?? 0).toInt();
       commission = (num.tryParse('${dues['commission'] ?? sum['total_commission'] ?? 0}') ?? 0).round();
@@ -92,12 +106,21 @@ class NurseFinanceStore extends ChangeNotifier {
           ? rawLedger.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
           : const [];
 
+      if (currencyCode == null) {
+        todayEarnings = null;
+        netDue = null;
+        commission = null;
+        balance = null;
+      }
       error = null;
     } catch (e) {
+      if (gen != _sessionGen || refresh != _refreshGeneration) return;
       error = explainError(e, fallback: 'تعذر تحميل البيانات المالية من الخادم');
     } finally {
-      loading = false;
-      notifyListeners();
+      if (gen == _sessionGen && refresh == _refreshGeneration) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 }

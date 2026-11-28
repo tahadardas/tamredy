@@ -33,7 +33,7 @@ export class NurseFinancialService {
       GROUP BY cr.currency_code
     `, [nurseId]);
 
-    const primaryCurrency = statsRes.rows[0]?.currency_code ?? 'SYP_NEW';
+    const primaryCurrency = process.env.ACCOUNTING_CURRENCY_CODE ?? null;
     const stats = statsRes.rows.find(r => r.currency_code === primaryCurrency) ?? {
       currency_code: primaryCurrency,
       today_net_earnings: 0,
@@ -61,13 +61,16 @@ export class NurseFinancialService {
 
     // 3. Nurse financial account & credit limit
     const accRes = await this.db.query(`
-      SELECT financial_model, credit_limit, prepaid_balance, reserved_balance
-      FROM nurse_financial_accounts
-      WHERE nurse_id = $1
+      SELECT currency_code, financial_model, credit_limit, prepaid_balance, reserved_balance, settlement_required
+      FROM nurse_financial_currency_accounts
+      WHERE nurse_id = $1 ORDER BY currency_code
     `, [nurseId]);
+    const legacy = await this.db.query(
+      'SELECT reconciliation_required FROM nurse_financial_accounts WHERE nurse_id=$1', [nurseId],
+    );
 
     const hasFinancialAccount = (accRes.rowCount ?? 0) > 0;
-    const account = accRes.rows[0] ?? {
+    const account = accRes.rows.find(row => row.currency_code===primaryCurrency) ?? {
       financial_model: 'RECEIVABLES',
       credit_limit: 0,
       prepaid_balance: 0,
@@ -76,6 +79,8 @@ export class NurseFinancialService {
     const creditLimit = Number(account.credit_limit);
 
     const balancesByCurrency = duesRes.rows.map(r => {
+      const currencyAccount = accRes.rows.find(account => account.currency_code===r.currency_code);
+      const creditLimit = Number(currencyAccount?.credit_limit ?? 0);
       const cashHeld = Number(r.cash_held);
       const nursePayable = Number(r.nurse_payable);
       const settled = Number(r.total_settled_amount);
@@ -121,6 +126,14 @@ export class NurseFinancialService {
 
     return {
       hasFinancialAccount,
+      legacyReconciliationRequired: legacy.rows.some(row => row.reconciliation_required),
+      financialAccountsByCurrency: accRes.rows.map(row => ({
+        currencyCode:row.currency_code, financialModel:row.financial_model,
+        creditLimit:Number(row.credit_limit),prepaidBalance:Number(row.prepaid_balance),
+        reservedBalance:Number(row.reserved_balance),
+        availableBalance:Math.max(0,Number(row.prepaid_balance)-Number(row.reserved_balance)),
+        settlementRequired:row.settlement_required,
+      })),
       currencyCode: primaryCurrency,
       financialModel: account.financial_model,
       balancesByCurrency,

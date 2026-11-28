@@ -41,6 +41,17 @@ class FinancialCenterScreen extends StatelessWidget {
                             onRetry: store.refresh,
                           )
                         else ...[
+                          if (store.legacyReconciliationRequired)
+                            const NoticeBox('الرصيد التاريخي يحتاج تسوية إدارية لإثبات العملة قبل استخدامه'),
+                          for (final account in store.financialAccountsByCurrency)
+                            TamCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text('حساب ${account['currencyCode']}', style: aeroText(size: 15, weight: FontWeight.w800)),
+                              KeyValueRow('الرصيد المسبق', '${account['prepaidBalance']} ${account['currencyCode']}'),
+                              KeyValueRow('المحجوز', '${account['reservedBalance']} ${account['currencyCode']}'),
+                              KeyValueRow('المتاح', '${account['availableBalance']} ${account['currencyCode']}'),
+                              KeyValueRow('الحد الائتماني', '${account['creditLimit']} ${account['currencyCode']}'),
+                              if (account['settlementRequired'] == true) const NoticeBox('يحتاج الحساب إلى تسوية'),
+                            ])),
                           TamFinancialSummary(
                             title: 'صافي المستحقات الحالية',
                             primaryValue: store.netDue != null ? formatMoney(store.netDue!) : '—',
@@ -59,11 +70,11 @@ class FinancialCenterScreen extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 12),
-                          TamCard(
+                          if (store.currencyCode != null) TamCard(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('تفصيل الرصيد والتوريد',
+                                Text('تفصيل الرصيد والتوريد (${store.currencyCode})',
                                     style: aeroText(size: 14.5, weight: FontWeight.w800)),
                                 const SizedBox(height: 8),
                                 KeyValueRow('رصيد متاح لك', formatMoney(store.nurseOwedAmount)),

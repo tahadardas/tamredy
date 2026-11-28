@@ -118,18 +118,19 @@ export class LedgerService {
     accountId: string,
     amount: MoneyInput,
     referenceId: string,
+    currencyCode: string,
   ) {
     const normalized = fromMinor(toMinor(amount));
     if (toMinor(normalized) <= 0n) throw new BadRequestException({ code: 'INVALID_RESERVATION_AMOUNT' });
-    const inserted = await client.query(`INSERT INTO financial_reservations(account_id,amount,reference_id,status)
-      VALUES($1,$2,$3,'HELD') ON CONFLICT(account_id,reference_id) DO NOTHING RETURNING *`,
-    [accountId,normalized,referenceId]);
+    const inserted = await client.query(`INSERT INTO financial_reservations(account_id,amount,reference_id,status,currency_code,credit_amount)
+      VALUES($1,$2,$3,'HELD',$4,$2) ON CONFLICT(account_id,reference_id) DO NOTHING RETURNING *`,
+    [accountId,normalized,referenceId,currencyCode]);
     if (inserted.rowCount) return inserted.rows[0];
     const existing = (await client.query(
       'SELECT * FROM financial_reservations WHERE account_id=$1 AND reference_id=$2',
       [accountId,referenceId],
     )).rows[0];
-    if (!existing || fromMinor(toMinor(existing.amount)) !== normalized) {
+    if (!existing || existing.currency_code!==currencyCode || fromMinor(toMinor(existing.amount)) !== normalized) {
       throw new ConflictException({ code: 'RESERVATION_IDEMPOTENCY_CONFLICT' });
     }
     return existing;

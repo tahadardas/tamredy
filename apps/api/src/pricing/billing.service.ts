@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { LedgerService, fromMinor, toMinor, type LedgerLegInput } from '../wallet/ledger.service.js';
 import { FinancialReservationsService } from '../wallet/financial-reservations.service.js';
@@ -25,6 +25,7 @@ const positiveLeg = (accountId: string, debit: number, credit: number): LedgerLe
 
 @Injectable()
 export class BillingService {
+  private readonly logger = new Logger(BillingService.name);
   constructor(
     private readonly ledger: LedgerService,
     private readonly dues: DuesService,
@@ -92,9 +93,23 @@ export class BillingService {
     add(positiveLeg('COMMISSION_REVENUE',0,bill.commission));
     add(positiveLeg('TAX_PAYABLE',0,bill.tax));
     add(positiveLeg(`NURSE_PAYABLE:${nurseId}`,0,bill.nurseEarning));
-    const debit = bill.due + bill.discount;
-    const credit = bill.commission + bill.tax + bill.nurseEarning;
-    add(positiveLeg('ROUNDING_ADJUSTMENTS',Math.max(0,credit-debit),Math.max(0,debit-credit)));
+    const debit = toMinor(bill.due) + toMinor(bill.discount);
+    const credit = toMinor(bill.commission) + toMinor(bill.tax) + toMinor(bill.nurseEarning);
+    // The request's immutable pricing snapshot is the approved cash rounding
+    // policy for this currency. Permit only that exact calculated increment;
+    // a difference in commission, tax or nurse earnings can never consume it.
+    const unrounded=toMinor(bill.gross)-toMinor(bill.discount)+toMinor(bill.distanceFee)+toMinor(bill.tax);
+    const roundingPolicy=pricingSnapshot.roundingStep??pricingSnapshot.rounding_step;
+    const roundingStep=roundingPolicy===undefined ? 0n : toMinor(String(roundingPolicy));
+    const expectedDue=roundingStep>0n ? ((unrounded+roundingStep-1n)/roundingStep)*roundingStep : unrounded;
+    const allowedRounding=expectedDue-unrounded;
+    if (unrounded<0n || toMinor(bill.due)!==expectedDue || debit-credit!==allowedRounding) {
+      this.logger.error({ code:'BILLING_INVARIANT_VIOLATION',visitId,requestId,currencyCode,
+        debit:fromMinor(debit),credit:fromMinor(credit) });
+      throw new ConflictException({ code:'BILLING_INVARIANT_VIOLATION',visitId,requestId });
+    }
+    if (allowedRounding>0n) add({accountId:'ROUNDING_ADJUSTMENTS',
+      debitAmount:0,creditAmount:fromMinor(allowedRounding)});
     if (legs.length) await this.ledger.postTransaction(client, {
       transactionType: 'INVOICE_ISSUED',referenceType: 'INVOICE',referenceId: invoice.id,
       idempotencyKey: `invoice:${requestId}`,currencyCode,legs,
