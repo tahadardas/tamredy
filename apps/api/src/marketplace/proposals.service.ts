@@ -3,18 +3,21 @@ import { DbService } from '../db/db.service.js';
 import { SubmitProposalDto, UpdateProposalDto, WithdrawProposalDto } from './marketplace.dto.js';
 import { MarketplaceEligibilityService } from './marketplace-eligibility.service.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
+import { FeatureCapabilitiesService } from '../capabilities/feature-capabilities.service.js';
 
 @Injectable()
 export class ProposalsService {
   constructor(
     private readonly db: DbService,
     private readonly eligibility: MarketplaceEligibilityService,
+    private readonly capabilities: FeatureCapabilitiesService = new FeatureCapabilitiesService(db),
   ) {}
 
   /**
    * Nurse submits a structured readiness proposal.
    */
   async submitProposal(nurseUserId: string, requestId: string, dto: SubmitProposalDto) {
+    this.capabilities.assertBookingMode('OPEN');
     const nurse = (await this.db.query(`SELECT id FROM nurses WHERE user_id = $1`, [nurseUserId])).rows[0];
     if (!nurse) throw new NotFoundException({ code: 'NURSE_NOT_FOUND' });
     const nurseId = nurse.id;

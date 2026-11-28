@@ -4,6 +4,7 @@ import { AcceptProposalDto } from './marketplace.dto.js';
 import { MarketplaceEligibilityService } from './marketplace-eligibility.service.js';
 import { AssignmentOrchestrator } from '../dispatch/assignment.orchestrator.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
+import { FeatureCapabilitiesService } from '../capabilities/feature-capabilities.service.js';
 
 @Injectable()
 export class AssignmentService {
@@ -11,6 +12,7 @@ export class AssignmentService {
     private readonly db: DbService,
     private readonly eligibility: MarketplaceEligibilityService,
     private readonly assignments: AssignmentOrchestrator,
+    private readonly capabilities: FeatureCapabilitiesService = new FeatureCapabilitiesService(db),
   ) {}
 
   /**
@@ -30,6 +32,7 @@ export class AssignmentService {
     dto?: AcceptProposalDto,
     idempotencyKey?: string,
   ) {
+    this.capabilities.assertBookingMode('OPEN');
     const cleanKey = idempotencyKey?.trim() || dto?.idempotencyKey?.trim() || null;
     const outcome = await this.db.transaction(async client => {
       // 1. Lock Care Request

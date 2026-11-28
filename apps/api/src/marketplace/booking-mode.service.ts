@@ -1,3 +1,4 @@
+import { FeatureCapabilitiesService } from '../capabilities/feature-capabilities.service.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { ExtendOpenRequestDto, SwitchBookingModeDto } from './marketplace.dto.js';
@@ -8,14 +9,16 @@ import { buildNotificationPayload } from '../notifications/notification-routing.
 
 @Injectable()
 export class BookingModeService {
-  constructor(private readonly db: DbService) {}
+  constructor(private readonly db: DbService, private readonly capabilities: FeatureCapabilitiesService = new FeatureCapabilitiesService(db)) {}
 
   /**
    * Switches booking mode for an unassigned request (e.g. Instant -> Open Marketplace or Instant -> Scheduled).
    * Atomically cancels previous search channel, updates mode, logs transition audit, and activates new channel.
    */
   async switchBookingMode(patientUserId: string, requestId: string, dto: SwitchBookingModeDto) {
+    this.capabilities.assertBookingMode(dto.bookingMode);
     return this.db.transaction(async client => {
+      await this.capabilities.assertAccepting(client);
       // 1. Lock request
       const reqRes = await client.query(
         `SELECT id, requester_user_id, status, booking_mode, version, booking_mode_version,
@@ -298,8 +301,9 @@ export class BookingModeService {
    */
   async retryInstantDispatch(patientUserId: string, requestId: string) {
     return this.db.transaction(async client => {
+      await this.capabilities.assertAccepting(client);
       const reqRes = await client.query(
-        `SELECT id, requester_user_id, status, booking_mode, version, booking_mode_version
+        `SELECT id, requester_user_id, status, booking_mode, version, booking_mode_version, clinical_approval_status
          FROM care_requests
          WHERE id = $1
          FOR UPDATE`,
@@ -412,7 +416,9 @@ export class BookingModeService {
    * Patient extends the waiting duration of an open request.
    */
   async extendOpenRequest(patientUserId: string, requestId: string, dto: ExtendOpenRequestDto) {
+    this.capabilities.assertBookingMode('OPEN');
     return this.db.transaction(async client => {
+      await this.capabilities.assertAccepting(client);
       const reqRes = await client.query(
         `SELECT id, requester_user_id, status, open_expires_at, latest_acceptable_arrival_at
          FROM care_requests

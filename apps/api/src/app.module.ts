@@ -1,3 +1,5 @@
+import { ReadinessService } from './capabilities/readiness.service.js';
+import { FeatureCapabilitiesService } from './capabilities/feature-capabilities.service.js';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';

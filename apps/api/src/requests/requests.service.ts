@@ -1,3 +1,4 @@
+import { FeatureCapabilitiesService } from '../capabilities/feature-capabilities.service.js';
 import { cancelRequest, cancellationClassification } from './cancellation.service.js';
 import type { CancelRequestDto } from './cancel-request.dto.js';
 import { createHash } from 'node:crypto';
@@ -24,6 +25,7 @@ export class RequestsService {
     private readonly autos: AutoDiscountService = new AutoDiscountService(),
     private readonly pricingComposition: PricingCompositionService = new PricingCompositionService(promos, fees, autos),
     @Optional() private readonly liveLocationRead?: LiveLocationReadService,
+    @Optional() private readonly capabilities: FeatureCapabilitiesService = new FeatureCapabilitiesService(db),
   ) {}
   async create(userId: string, dto: CreateRequestDto, key: string) {
     if (!key || key.length > 128) invalid('Idempotency-Key required, maximum 128 chars');
@@ -54,8 +56,8 @@ export class RequestsService {
       if (dto.bookingMode !== 'OPEN' && (dto.openDurationMinutes !== undefined || dto.latestAcceptableArrivalAt)) {
         invalid('OPEN_MARKETPLACE_FIELDS_REQUIRE_OPEN_MODE');
       }
-      const orders = (await client.query(`SELECT value FROM app_settings WHERE key='orders'`)).rows[0]?.value;
-      if (orders && orders.accepting === false) throw new ServiceUnavailableException({ code: 'ORDERS_PAUSED', message: orders.pausedMessage ?? '' });
+      this.capabilities.assertBookingMode(dto.bookingMode ?? (dto.scheduledAt ? 'SCHEDULED' : 'INSTANT'));
+      await this.capabilities.assertAccepting(client);
       const beneficiary = await client.query(`SELECT id FROM beneficiaries WHERE id=$1 AND owner_user_id=$2 AND consent_status='GRANTED'`,[dto.beneficiaryId,userId]);
       if (!beneficiary.rowCount) forbidden();
 
@@ -101,8 +103,8 @@ export class RequestsService {
       const openExpiresAt = isOpenMode && !needsClinicalApproval
         ? new Date(now.getTime() + openDurationMins * 60000)
         : null;
-      const latestArrivalAt = isOpenMode && !needsClinicalApproval
-        ? (dto.latestAcceptableArrivalAt ? new Date(dto.latestAcceptableArrivalAt) : new Date(openExpiresAt!.getTime() + 60 * 60000))
+      const latestArrivalAt = isOpenMode
+        ? (dto.latestAcceptableArrivalAt ? new Date(dto.latestAcceptableArrivalAt) : new Date(now.getTime() + (openDurationMins + 60) * 60000))
         : null;
 
       const areaId = (await client.query(`SELECT a.id FROM areas a
@@ -115,9 +117,9 @@ export class RequestsService {
         requester_user_id, beneficiary_id, service_id, location, location_source, address_text,
         status, price_amount, currency_code, commission_bps, pricing, promo_id, promo_snapshot,
         booking_mode, original_booking_mode, marketplace_status, published_at, open_expires_at,
-        latest_acceptable_arrival_at, area_id, clinical_approval_status, open_duration_minutes
+        latest_acceptable_arrival_at, area_id, clinical_approval_status, open_duration_minutes, original_latest_acceptable_arrival_at
       )
-      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21,$22)
+      VALUES($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326)::geography,$6,$7,$14,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$15,$15,$16,$17,$18,$19,$20,$21,$22,$19)
       RETURNING id,status,version,price_amount,currency_code,booking_mode,open_expires_at,latest_acceptable_arrival_at`,[
         userId,dto.beneficiaryId,primaryServiceId,dto.longitude,dto.latitude,dto.locationSource,dto.addressText,totalBasePrice,currencyCode,combinedCommissionBps,
         JSON.stringify({...combinedRule,fees:feeSnapshot}),promo?.id??null,promo?JSON.stringify(toRule(promo)):auto?JSON.stringify(auto):null, initialStatus,
@@ -241,6 +243,7 @@ export class RequestsService {
     const found = await q.query(`SELECT cr.id,cr.requester_user_id,cr.beneficiary_id,cr.service_id,cr.status,cr.version,cr.price_amount,cr.currency_code,cr.created_at,
        cr.booking_mode, cr.marketplace_status, cr.published_at, cr.open_expires_at, cr.latest_acceptable_arrival_at,cr.clinical_approval_status,
        cr.address_text, cr.payment_status, cr.amount_due, cr.tip_amount, cr.search_expires_at,
+       v.outcome AS visit_outcome, a.reason AS visit_outcome_reason,
        s.title_ar AS service_title, b.display_name AS beneficiary_name,
        sv.appointment_at AS scheduled_at,
        a.id AS assignment_id, a.nurse_id AS assigned_nurse_id,
@@ -251,6 +254,7 @@ export class RequestsService {
        JOIN beneficiaries b ON b.id = cr.beneficiary_id
        LEFT JOIN scheduled_visits sv ON sv.request_id = cr.id
        LEFT JOIN request_assignments a ON a.request_id = cr.id AND a.status IN ('RESERVED','ACTIVE','RELEASED')
+       LEFT JOIN visits v ON v.assignment_id=a.id
        LEFT JOIN nurses n ON n.id = a.nurse_id
        LEFT JOIN users u ON u.id = n.user_id
        WHERE cr.id=$1 AND cr.requester_user_id=$2
@@ -271,6 +275,7 @@ export class RequestsService {
     // A correlated lookup per row would be a N+1 anti-pattern.
     const result = await this.db.query(`SELECT cr.id,cr.status,cr.price_amount,cr.currency_code,cr.clinical_approval_status,
       cr.created_at,cr.version,cr.payment_status,cr.amount_due,cr.tip_amount,
+      (SELECT v.outcome FROM visits v JOIN request_assignments va ON va.id=v.assignment_id WHERE va.request_id=cr.id ORDER BY v.completed_at DESC NULLS LAST LIMIT 1) AS visit_outcome,
       cr.booking_mode, cr.marketplace_status, cr.open_expires_at, cr.latest_acceptable_arrival_at,
       sv.appointment_at AS scheduled_at,
       (SELECT count(*)::int FROM marketplace_proposals mp WHERE mp.request_id = cr.id AND mp.status = 'PENDING') AS active_proposals_count,
@@ -317,28 +322,44 @@ export class RequestsService {
   }
   async track(userId:string, requestId:string) {
     const r=await this.db.query(`SELECT a.nurse_id,cr.id,cr.status,cr.version,cr.booking_mode,cr.clinical_approval_status,
-      cr.search_max_location_seconds,
+      cr.search_max_location_seconds,cr.search_max_accuracy_meters,
       ST_Y(cr.location::geometry) AS patient_lat,ST_X(cr.location::geometry) AS patient_lng,
-      CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_Y(nl.location::geometry) END AS nurse_lat,
-      CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at > now() - interval '120 seconds' THEN ST_X(nl.location::geometry) END AS nurse_lng,
-      CASE WHEN cr.status='EN_ROUTE' THEN nl.recorded_at END AS location_at
+      CASE WHEN cr.status='EN_ROUTE' AND least(nl.captured_at,nl.received_at) > now() - coalesce(cr.search_max_location_seconds,120)*interval '1 second' AND nl.accuracy_m<=coalesce(cr.search_max_accuracy_meters,100) THEN ST_Y(nl.location::geometry) END AS nurse_lat,
+      CASE WHEN cr.status='EN_ROUTE' AND least(nl.captured_at,nl.received_at) > now() - coalesce(cr.search_max_location_seconds,120)*interval '1 second' AND nl.accuracy_m<=coalesce(cr.search_max_accuracy_meters,100) THEN ST_X(nl.location::geometry) END AS nurse_lng,
+      CASE WHEN cr.status='EN_ROUTE' THEN nl.recorded_at END AS location_at,
+      nl.captured_at AS location_captured_at,nl.received_at AS location_received_at,
+      nl.accuracy_m AS location_accuracy_m,nl.session_id AS location_session_id
       FROM care_requests cr LEFT JOIN request_assignments a ON a.request_id=cr.id AND a.status='ACTIVE'
       LEFT JOIN nurse_locations nl ON nl.nurse_id=a.nurse_id
       WHERE cr.id=$1 AND cr.requester_user_id=$2`,[requestId,userId]);
     if(!r.rowCount) missing();
-    const { nurse_id: nurseId, search_max_location_seconds: maxLocAgeSec, ...row } = r.rows[0];
-    // BUG-037: Read live coordinates Redis-first when EN_ROUTE so patient tracking is not stuck on 30s PG checkpoints.
-    if (nurseId && row.status === 'EN_ROUTE' && this.liveLocationRead) {
-      const liveLoc = await this.liveLocationRead.getNurseLocation(nurseId).catch(() => null);
-      const maxAgeMs = Number(maxLocAgeSec ?? 120) * 1000;
-      if (liveLoc && Date.now() - liveLoc.recordedAt.getTime() <= maxAgeMs) {
-        row.nurse_lat = liveLoc.latitude;
-        row.nurse_lng = liveLoc.longitude;
-        row.location_at = liveLoc.recordedAt;
-        row.location_accuracy_m = liveLoc.accuracyMeters;
-        row.location_source = liveLoc.source;
+    const { nurse_id: nurseId, search_max_location_seconds: maxLocAgeSec, search_max_accuracy_meters:maxAccuracy, ...row } = r.rows[0];
+    row.location_freshness='unavailable';
+    row.location_source=null;
+    if (nurseId && row.status==='EN_ROUTE' && this.liveLocationRead) {
+      // Clearing first prevents a Redis read failure from silently revealing a stale checkpoint.
+      row.nurse_lat=null;row.nurse_lng=null;row.location_at=null;
+      const liveLoc=await this.liveLocationRead.getNurseLocation(nurseId).catch(()=>null);
+      if (liveLoc) {
+        row.location_captured_at=liveLoc.capturedAt;
+        row.location_received_at=liveLoc.recordedAt;
+        row.location_accuracy_m=liveLoc.accuracyMeters;
+        row.location_session_id=liveLoc.sessionId;
+        row.location_source=liveLoc.source;
+        const fresh=Date.now()-Math.min(liveLoc.capturedAt.getTime(),liveLoc.recordedAt.getTime())
+          <=Number(maxLocAgeSec??120)*1000 && liveLoc.accuracyMeters<=Number(maxAccuracy??100);
+        row.location_freshness=fresh?'fresh':'stale';
+        if (fresh) {row.nurse_lat=liveLoc.latitude;row.nurse_lng=liveLoc.longitude;row.location_at=liveLoc.recordedAt;}
       }
+    } else if (row.status==='EN_ROUTE') {
+      row.location_source='postgres';
+      row.location_freshness=row.nurse_lat!=null?'fresh':'stale';
+    } else {
+      row.location_captured_at=null;row.location_received_at=null;row.location_accuracy_m=null;row.location_session_id=null;
     }
+    Object.assign(row,{locationCapturedAt:row.location_captured_at,locationReceivedAt:row.location_received_at,
+      locationAccuracy:row.location_accuracy_m,locationFreshness:row.location_freshness,
+      locationSource:row.location_source,locationSessionId:row.location_session_id});
     // "Top nurse" badge shown to the patient (marketing feature, switched on/off from the dashboard).
     let badge: { badge: boolean; rating: number; reviews: number } | null = null;
     if (nurseId) {

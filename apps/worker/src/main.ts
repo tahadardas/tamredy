@@ -1,3 +1,7 @@
+import { closeLocationReader } from './live-location.js';
+import { randomUUID } from 'node:crypto';
+import { missingMigrations } from '../../../packages/backend-policy/schema.mjs';
+import { featureCapabilities } from '../../../packages/backend-policy/capabilities.mjs';
 import { closeNightIneligibleOffers, nightPolicyEnabled } from './night-safety.js';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
@@ -74,15 +78,20 @@ async function flushPushOutbox(): Promise<boolean> {
 
 async function runWorker(): Promise<void> {
   await pool.query('SELECT 1');
-  // BUG-027: fail fast at startup if migration 063 device token isolation columns are missing
-  const schemaCheck = await pool.query(`
-    SELECT count(*)::int AS cols FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='device_tokens'
-      AND column_name = ANY(ARRAY['device_id','app_type','role','session_id','active_status'])
-  `);
-  if ((schemaCheck.rows[0]?.cols ?? 0) < 5) {
-    throw new Error('MIGRATION_063_REQUIRED: device_tokens isolation columns missing');
+  const missing = missingMigrations((await pool.query('SELECT name FROM schema_migrations')).rows.map(row => String(row.name)));
+  if (missing.length) throw new Error('MIGRATION_COMPATIBILITY_ERROR: ' + missing.join(','));
+  const features = featureCapabilities();
+  if (features.openDispatchEnabled && !features.openMarketplaceEnabled) throw new Error('FEATURE_FLAGS_CONFLICT');
+  if (features.liveLocationRedisEnabled && !redis) throw new Error('REDIS_CONFIGURATION_REQUIRED');
+  const workerId = randomUUID();
+  let lastHeartbeat = 0;
+  async function heartbeat(): Promise<void> {
+    if (Date.now()-lastHeartbeat < 5000) return;
+    await pool.query(`INSERT INTO worker_heartbeats(worker_id) VALUES($1)
+      ON CONFLICT(worker_id) DO UPDATE SET received_at=statement_timestamp()`, [workerId]);
+    lastHeartbeat = Date.now();
   }
+  await heartbeat();
   console.info(JSON.stringify({
     service:'tamreedy-worker',event:'worker.started',realtimeConfigured:!!redis,pushConfigured:!!fcm,
   }));
@@ -99,7 +108,9 @@ async function runWorker(): Promise<void> {
     while (!stopping) {
       let delay = 500;
       try {
-        if (await run()) continue;
+        const worked = await run();
+        await heartbeat();
+        if (worked) continue;
       } catch (error) {
         logFailure(name,error);
         delay = 1500;
@@ -139,7 +150,7 @@ async function runWorker(): Promise<void> {
   }
 
   await Promise.all([
-    ...(process.env.SCHEDULED_VISITS_ENABLED === 'true' ? [poll('Scheduled Visits', () => releaseScheduledVisit(pool))] : []),
+    ...(features.scheduledVisitsEnabled ? [poll('Scheduled Visits', () => releaseScheduledVisit(pool))] : []),
     ...(process.env.GUARDIAN_CHECKINS_ENABLED === 'true' ? [poll('Safety Check-ins', () => runSafetyCheckin(pool))] : []),
     ...(process.env.GUARDIAN_ROUTING_ENABLED === 'true' ? [poll('Safety Case Routing', () => routeSafetyCase(pool))] : []),
     ...(nightPolicyEnabled() ? [poll('Night Safety Offers', () => closeNightIneligibleOffers(pool))] : []),
@@ -148,7 +159,9 @@ async function runWorker(): Promise<void> {
     poll('Push', flushPushOutbox),
     poll('Background Jobs', runBackgroundJobs),
   ]);
+  await pool.query('DELETE FROM worker_heartbeats WHERE worker_id=$1', [workerId]);
   await redis?.quit();
+  await closeLocationReader();
   await pool.end();
   console.log('[Worker Stopped] Graceful shutdown complete.');
 }
@@ -156,6 +169,7 @@ async function runWorker(): Promise<void> {
 void runWorker().catch(async error=>{
   logFailure('worker',error);
   redis?.disconnect();
+  await closeLocationReader();
   await pool.end();
   process.exitCode=1;
 });
