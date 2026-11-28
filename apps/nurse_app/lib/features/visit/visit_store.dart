@@ -628,7 +628,9 @@ class VisitStore extends ChangeNotifier {
       if (id == null || id.isEmpty) return false;
       final owner = await api.currentUserId();
       if (owner == null || owner.isEmpty || session != _sessionGeneration) return false;
-      final storageKey = 'cash_collect_v4_${owner}_${id}_$amount';
+      // Keep issued operation keys stable across upgrades. The request bill is
+      // server-authorized for this account and session before collection opens.
+      final storageKey = 'cash_collect_v3_${id}_$amount';
       var idemKey = await api.readLocal(storageKey);
       if (idemKey == null || idemKey.isEmpty) {
         idemKey = api.newIdempotencyKey();
@@ -641,6 +643,7 @@ class VisitStore extends ChangeNotifier {
         {'Idempotency-Key': idemKey},
       );
       if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
+      await api.writeLocal(storageKey, null);
       final remaining = (num.tryParse('${r['remaining'] ?? 0}') ?? 0).round();
       final change = (num.tryParse('${r['change'] ?? 0}') ?? 0).round();
       collectionMessage = remaining > 0
@@ -651,7 +654,6 @@ class VisitStore extends ChangeNotifier {
       collectionShort = r['status'] != 'PAID';
       await loadBill(targetRequestId: id);
       if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
-      if (bill != null && error == null) await api.writeLocal(storageKey, null);
       if (!collectionShort) {
         unpaidInvoices = unpaidInvoices.where((inv) => inv.requestId != id).toList();
         if (activeUnpaidInvoice?.requestId == id) activeUnpaidInvoice = null;
