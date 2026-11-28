@@ -60,14 +60,18 @@ class GuardianController extends ChangeNotifier {
 
   Future<void> restoreSos() {
     if (_restore case final Future<void> pending) return pending;
-    final work = _restoreFromStorage();
-    _restore = work;
-    return work.whenComplete(() => _restore = null);
+    late final Future<void> tracked;
+    tracked = _restoreFromStorage().whenComplete(() {
+      if (identical(_restore, tracked)) _restore = null;
+    });
+    _restore = tracked;
+    return tracked;
   }
 
   Future<void> _restoreFromStorage() async {
+    final generation = _sessionGeneration;
     final owner = await _accountId();
-    if (_disposed || owner == _owner) return;
+    if (!_current(generation) || owner == _owner) return;
     _owner = owner;
     _statusRead++;
     event = null;
@@ -78,10 +82,12 @@ class GuardianController extends ChangeNotifier {
     if (owner != null) {
       try {
         final saved = await _store.read(owner);
+        if (!_current(generation) || _owner != owner) return;
         _pendingSos = saved.pending;
         event = saved.receipt;
         sosUnconfirmed = _pendingSos != null;
       } catch (_) {
+        if (!_current(generation)) return;
         sosStorageUnavailable = true;
       }
     }
@@ -89,10 +95,13 @@ class GuardianController extends ChangeNotifier {
   }
 
   Future<void> _persistSos(String owner) async {
+    final generation = _sessionGeneration;
     try {
       await _store.write(owner, (pending: _pendingSos, receipt: event));
+      if (!_current(generation)) return;
       sosStorageUnavailable = false;
     } catch (_) {
+      if (!_current(generation)) return;
       sosStorageUnavailable = true;
     }
   }
@@ -109,6 +118,10 @@ class GuardianController extends ChangeNotifier {
   String? error;
   bool _disposed = false;
   int _statusRead = 0;
+  int _sessionGeneration = 0;
+
+  bool _current(int generation) =>
+      !_disposed && generation == _sessionGeneration;
 
   String? get sessionId => session?['id'] as String?;
 
@@ -118,13 +131,14 @@ class GuardianController extends ChangeNotifier {
 
   Future<void> sendSos() async {
     if (sendingSos) return;
+    final generation = _sessionGeneration;
     sendingSos = true;
     final tappedAt = DateTime.now().toUtc().toIso8601String();
     _changed();
     try {
       await restoreSos();
       final owner = _owner;
-      if (_disposed) return;
+      if (!_current(generation)) return;
       if (owner == null) {
         sosUnconfirmed = true;
         return;
@@ -139,22 +153,33 @@ class GuardianController extends ChangeNotifier {
       };
       sosUnconfirmed = false;
       await _persistSos(owner);
-      if (_disposed || await _accountId() != owner) return;
+      if (!_current(generation) ||
+          await _accountId() != owner ||
+          !_current(generation)) {
+        return;
+      }
       final response = await api.post('/v1/safety/sos', _pendingSos!);
       if (response['id'] is! String || response['state'] is! String) {
         throw StateError('Missing server receipt');
       }
-      if (_disposed || await _accountId() != owner) return;
+      if (!_current(generation) ||
+          await _accountId() != owner ||
+          !_current(generation)) {
+        return;
+      }
       _statusRead++;
       statusUnavailable = false;
       event = response;
       _pendingSos = null;
       await _persistSos(owner);
     } catch (_) {
+      if (!_current(generation)) return;
       sosUnconfirmed = true;
     } finally {
-      sendingSos = false;
-      _changed();
+      if (_current(generation)) {
+        sendingSos = false;
+        _changed();
+      }
     }
   }
 
@@ -162,7 +187,9 @@ class GuardianController extends ChangeNotifier {
       ['RESOLVED', 'FALSE_ALARM', 'CLOSED'].contains(event?['state']);
 
   Future<void> refreshSos() async {
+    final generation = _sessionGeneration;
     await restoreSos();
+    if (!_current(generation)) return;
     final owner = _owner;
     final id = event?['id'];
     if (owner == null || id is! String) return;
@@ -184,42 +211,52 @@ class GuardianController extends ChangeNotifier {
 
   Future<void> _run(Future<void> Function() action) async {
     if (busy) return;
+    final generation = _sessionGeneration;
     busy = true;
     error = null;
     _changed();
     try {
       await action();
     } catch (_) {
-      error = 'تعذر تحديث جلسة السلامة. حاول مجددًا.';
+      if (_current(generation)) error = 'تعذر تحديث جلسة السلامة. حاول مجددًا.';
     } finally {
-      busy = false;
-      _changed();
+      if (_current(generation)) {
+        busy = false;
+        _changed();
+      }
     }
   }
 
   Future<void> _loadCheckin() async {
+    final generation = _sessionGeneration;
     final id = sessionId;
     if (id == null) {
       checkin = null;
       return;
     }
     final data = await api.getMap('/v1/nurse/safety/sessions/$id/checkin');
+    if (!_current(generation) || sessionId != id) return;
     checkin = data['checkin'] as Map<String, dynamic>?;
     if (_pendingCheckin?['checkinId'] != checkin?['id']) _pendingCheckin = null;
   }
 
   Future<void> refreshSession() => _run(() async {
+    final generation = _sessionGeneration;
     final previous = sessionId;
     final data = await api.getMap('/v1/safety/me/status');
+    if (!_current(generation)) return;
     session = data['session'] as Map<String, dynamic>?;
     if (sessionId != previous) location.stop();
     await _loadCheckin();
   });
 
   Future<void> start(String assignment) => _run(() async {
-    session = await api.post('/v1/nurse/safety/sessions/start', {
+    final generation = _sessionGeneration;
+    final response = await api.post('/v1/nurse/safety/sessions/start', {
       'assignmentId': assignment,
     });
+    if (!_current(generation)) return;
+    session = response;
     await _loadCheckin();
   });
 
@@ -237,8 +274,14 @@ class GuardianController extends ChangeNotifier {
   Future<bool> abortAssignment(String assignment) async {
     var finished = false;
     await _run(() async {
+      final generation = _sessionGeneration;
       await restoreSos();
-      final response = await api.post('/v1/nurse/safety/assignments/$assignment/abort', {});
+      if (!_current(generation)) return;
+      final response = await api.post(
+        '/v1/nurse/safety/assignments/$assignment/abort',
+        {},
+      );
+      if (!_current(generation)) return;
       final id = response['eventId'];
       if (response['status'] != 'ESCALATED' || id is! String) {
         throw StateError('Invalid safe exit response');
@@ -251,12 +294,14 @@ class GuardianController extends ChangeNotifier {
       }
       try {
         final receipt = await api.getMap('/v1/safety/events/$id');
+        if (!_current(generation)) return;
         if (receipt['id'] == id && receipt['state'] is String) {
           _statusRead++;
           event = receipt;
           if (_owner case final String owner) await _persistSos(owner);
         }
       } catch (_) {
+        if (!_current(generation)) return;
         statusUnavailable = true;
       }
     });
@@ -264,10 +309,12 @@ class GuardianController extends ChangeNotifier {
   }
 
   Future<void> checkout() => _run(() async {
+    final generation = _sessionGeneration;
     final id = sessionId;
     if (id == null) return;
     location.stop();
     await api.post('/v1/nurse/safety/sessions/$id/checkout');
+    if (!_current(generation)) return;
     location.sync();
     session = null;
     checkin = null;
@@ -275,6 +322,7 @@ class GuardianController extends ChangeNotifier {
   });
 
   Future<void> respond(String response) => _run(() async {
+    final generation = _sessionGeneration;
     final id = sessionId;
     final checkinId = checkin?['id'];
     if (id == null || checkinId == null) return;
@@ -284,11 +332,33 @@ class GuardianController extends ChangeNotifier {
       'response': response,
     };
     await api.post('/v1/nurse/safety/sessions/$id/checkin', _pendingCheckin!);
+    if (!_current(generation)) return;
     _pendingCheckin = null;
     await _loadCheckin();
   });
 
   String? get pendingResponse => _pendingCheckin?['response'] as String?;
+
+  /// Drop account data in memory; durable SOS receipts remain namespaced to their owner.
+  void resetForSessionChange() {
+    _sessionGeneration++;
+    _statusRead++;
+    _location?.resetForSessionChange();
+    _owner = null;
+    _restore = null;
+    session = null;
+    checkin = null;
+    event = null;
+    _pendingSos = null;
+    _pendingCheckin = null;
+    sosUnconfirmed = false;
+    sosStorageUnavailable = false;
+    statusUnavailable = false;
+    sendingSos = false;
+    busy = false;
+    error = null;
+    _changed();
+  }
 
   @override
   void dispose() {

@@ -17,6 +17,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
   bool _onlySaved = false;
 
   Future<void> _openSubmitProposalSheet(Map<String, dynamic> req) async {
+    if (!widget.session.canUseOpenMarketplace) return;
     final reqId = '${req['id'] ?? ''}';
     final noteCtrl = TextEditingController();
     int selectedMins = 20;
@@ -25,73 +26,96 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.viewInsetsOf(ctx).bottom + 20),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'تقديم عرض جاهزية',
-                  style: aeroText(size: 17, weight: FontWeight.w800),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${req['service_title'] ?? 'زيارة تمريضية'} • ${req['approximate_area'] ?? ''}',
-                  style: aeroText(size: 13, color: context.tamColors.textSecondary),
-                ),
-                const SizedBox(height: 12),
-                Text('الوقت المتوقع للوصول', style: aeroText(size: 13.5, weight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    for (final mins in const [15, 20, 30, 45, 60])
-                      ChoiceChip(
-                        label: Text('$mins دقيقة'),
-                        selected: selectedMins == mins,
-                        onSelected: (_) => setSheet(() => selectedMins = mins),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: noteCtrl,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظة للمريض (اختياري)',
-                    border: OutlineInputBorder(),
+      builder: (ctx) => ListenableBuilder(
+        listenable: widget.session,
+        builder: (ctx, _) => StatefulBuilder(
+          builder: (ctx, setSheet) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              MediaQuery.viewInsetsOf(ctx).bottom + 20,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'تقديم عرض جاهزية',
+                    style: aeroText(size: 17, weight: FontWeight.w800),
                   ),
-                ),
-                const SizedBox(height: 14),
-                AeroButton(
-                  sending ? 'جارٍ إرسال العرض...' : 'إرسال العرض الآن',
-                  isLoading: sending,
-                  onPressed: sending
-                      ? null
-                      : () async {
-                          setSheet(() => sending = true);
-                          try {
-                            await widget.session.marketplace.submitProposal(
-                              reqId,
-                              estimatedMinutes: selectedMins,
-                              note: noteCtrl.text.trim(),
-                            );
-                            if (ctx.mounted) Navigator.of(ctx).pop();
-                            if (mounted) {
-                              TamToast.show(context, 'تم إرسال عرض الجاهزية بنجاح', tone: TamToastTone.success);
+                  const SizedBox(height: 4),
+                  Text(
+                    '${req['service_title'] ?? 'زيارة تمريضية'} • ${req['approximate_area'] ?? ''}',
+                    style: aeroText(
+                      size: 13,
+                      color: context.tamColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'الوقت المتوقع للوصول',
+                    style: aeroText(size: 13.5, weight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final mins in const [15, 20, 30, 45, 60])
+                        ChoiceChip(
+                          label: Text('$mins دقيقة'),
+                          selected: selectedMins == mins,
+                          onSelected: (_) =>
+                              setSheet(() => selectedMins = mins),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'ملاحظة للمريض (اختياري)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AeroButton(
+                    sending ? 'جارٍ إرسال العرض...' : 'إرسال العرض الآن',
+                    isLoading: sending,
+                    onPressed: sending || !widget.session.canUseOpenMarketplace
+                        ? null
+                        : () async {
+                            setSheet(() => sending = true);
+                            try {
+                              await widget.session.marketplace.submitProposal(
+                                reqId,
+                                estimatedMinutes: selectedMins,
+                                note: noteCtrl.text.trim(),
+                              );
+                              if (ctx.mounted) Navigator.of(ctx).pop();
+                              if (mounted) {
+                                TamToast.show(
+                                  context,
+                                  'تم إرسال عرض الجاهزية بنجاح',
+                                  tone: TamToastTone.success,
+                                );
+                              }
+                            } catch (e) {
+                              setSheet(() => sending = false);
+                              if (ctx.mounted) {
+                                TamToast.show(
+                                  ctx,
+                                  explainError(e, fallback: 'تعذر إرسال العرض'),
+                                  tone: TamToastTone.error,
+                                );
+                              }
                             }
-                          } catch (e) {
-                            setSheet(() => sending = false);
-                            if (ctx.mounted) {
-                              TamToast.show(ctx, explainError(e, fallback: 'تعذر إرسال العرض'), tone: TamToastTone.error);
-                            }
-                          }
-                        },
-                ),
-              ],
+                          },
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -115,8 +139,14 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('سوق الطلبات والعروض',
-                    style: aeroText(size: 18, weight: FontWeight.w800, color: tc.textPrimary)),
+                Text(
+                  'سوق الطلبات والعروض',
+                  style: aeroText(
+                    size: 18,
+                    weight: FontWeight.w800,
+                    color: tc.textPrimary,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 SegmentedButton<int>(
                   segments: const [
@@ -132,12 +162,16 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
           ),
           Expanded(
             child: ListenableBuilder(
-              listenable: store,
+              listenable: Listenable.merge([store, widget.session]),
               builder: (context, _) {
-                if (store.loading && store.requests.isEmpty) {
+                if (_subTab == 0 && store.loading && store.requests.isEmpty) {
                   return ListView(
                     padding: const EdgeInsets.all(16),
-                    children: const [TamSkeleton.card(height: 120), SizedBox(height: 10), TamSkeleton.card(height: 120)],
+                    children: const [
+                      TamSkeleton.card(height: 120),
+                      SizedBox(height: 10),
+                      TamSkeleton.card(height: 120),
+                    ],
                   );
                 }
 
@@ -151,7 +185,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                               TamEmptyState(
                                 icon: Icons.outbox_outlined,
                                 title: 'لم تقدم عروضاً بعد',
-                                message: 'اختر أي طلب مفتوح لتقديم وقت الوصول المقترح.',
+                                message:
+                                    'اختر أي طلب مفتوح لتقديم وقت الوصول المقترح.',
                               ),
                             ],
                           )
@@ -169,16 +204,25 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                                     Row(
                                       children: [
                                         Expanded(
-                                          child: Text('${p['service_title'] ?? 'عرض مقدم'}',
-                                              style: aeroText(size: 15, weight: FontWeight.w800)),
+                                          child: Text(
+                                            '${p['service_title'] ?? 'عرض مقدم'}',
+                                            style: aeroText(
+                                              size: 15,
+                                              weight: FontWeight.w800,
+                                            ),
+                                          ),
                                         ),
-                                        TamStatusBadge(status: status, compact: true),
+                                        TamStatusBadge(
+                                          status: status,
+                                          compact: true,
+                                        ),
                                       ],
                                     ),
                                     if (status == 'PENDING') ...[
                                       const SizedBox(height: 8),
                                       OutlinedButton(
-                                        onPressed: () => store.withdrawProposal(id),
+                                        onPressed: () =>
+                                            store.withdrawProposal(id),
                                         child: const Text('سحب العرض'),
                                       ),
                                     ],
@@ -200,7 +244,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                               TamEmptyState(
                                 icon: Icons.history_rounded,
                                 title: 'لا يوجد سجل زيارات مكتملة',
-                                message: 'ستظهر الزيارات التي أتممتها وحصتك منها هنا.',
+                                message:
+                                    'ستظهر الزيارات التي أتممتها وحصتك منها هنا.',
                               ),
                             ],
                           )
@@ -212,11 +257,39 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                               return TamCard(
                                 child: KeyValueRow(
                                   '${h['service_title'] ?? 'زيارة'}',
-                                  formatMoney((num.tryParse('${h['nurse_earning'] ?? h['price_amount'] ?? 0}') ?? 0).round()),
+                                  formatMoney(
+                                    (num.tryParse(
+                                              '${h['nurse_earning'] ?? h['price_amount'] ?? 0}',
+                                            ) ??
+                                            0)
+                                        .round(),
+                                  ),
                                 ),
                               );
                             },
                           ),
+                  );
+                }
+
+                if (!widget.session.canUseOpenMarketplace) {
+                  return RefreshIndicator(
+                    onRefresh: widget.session.loadCapabilities,
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        NoticeBox(
+                          widget.session.capabilitiesLoading
+                              ? 'جارٍ التحقق من إتاحة السوق المفتوح'
+                              : widget.session.capabilitiesError ??
+                                    'السوق المفتوح معطل حاليًا؛ يظل سجل الزيارات والعروض السابقة متاحًا',
+                        ),
+                        if (!widget.session.capabilitiesLoading)
+                          SoftButton(
+                            'إعادة التحقق',
+                            onPressed: widget.session.loadCapabilities,
+                          ),
+                      ],
+                    ),
                   );
                 }
 
@@ -225,8 +298,17 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                   shown = shown.where((r) => r['is_saved'] == true).toList();
                 }
                 if (_sortBy == 'pay') {
-                  shown.sort((a, b) => (num.tryParse('${b['estimated_nurse_earning'] ?? 0}') ?? 0)
-                      .compareTo(num.tryParse('${a['estimated_nurse_earning'] ?? 0}') ?? 0));
+                  shown.sort(
+                    (a, b) =>
+                        (num.tryParse('${b['estimated_nurse_earning'] ?? 0}') ??
+                                0)
+                            .compareTo(
+                              num.tryParse(
+                                    '${a['estimated_nurse_earning'] ?? 0}',
+                                  ) ??
+                                  0,
+                            ),
+                  );
                 }
 
                 return RefreshIndicator(
@@ -259,13 +341,15 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                             ChoiceChip(
                               label: const Text('الأقرب'),
                               selected: _sortBy == 'nearest',
-                              onSelected: (_) => setState(() => _sortBy = 'nearest'),
+                              onSelected: (_) =>
+                                  setState(() => _sortBy = 'nearest'),
                             ),
                             const SizedBox(width: 6),
                             ChoiceChip(
                               label: const Text('الأعلى أجراً'),
                               selected: _sortBy == 'pay',
-                              onSelected: (_) => setState(() => _sortBy = 'pay'),
+                              onSelected: (_) =>
+                                  setState(() => _sortBy = 'pay'),
                             ),
                             const SizedBox(width: 6),
                             FilterChip(
@@ -287,60 +371,88 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                         const TamEmptyState(
                           icon: Icons.storefront_outlined,
                           title: 'لا توجد طلبات مطابقة الآن',
-                          message: 'اسحب للتحديث لعرض أحدث الطلبات المفتوحة في منطقتك.',
+                          message:
+                              'اسحب للتحديث لعرض أحدث الطلبات المفتوحة في منطقتك.',
                         )
                       else
                         for (final req in shown)
-                          Builder(builder: (context) {
-                            final id = '${req['id'] ?? ''}';
-                            final saved = req['is_saved'] == true;
-                            final dist = (num.tryParse('${req['distance_km'] ?? 0}') ?? 0).toDouble();
-                            final share = (num.tryParse('${req['estimated_nurse_earning'] ?? req['net_earnings'] ?? 0}') ?? 0).round();
-                            return TamCard(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '${req['service_title'] ?? 'زيارة تمريضية'}',
-                                          style: aeroText(size: 15, weight: FontWeight.w800),
+                          Builder(
+                            builder: (context) {
+                              final id = '${req['id'] ?? ''}';
+                              final saved = req['is_saved'] == true;
+                              final dist =
+                                  (num.tryParse('${req['distance_km'] ?? 0}') ??
+                                          0)
+                                      .toDouble();
+                              final share =
+                                  (num.tryParse(
+                                            '${req['estimated_nurse_earning'] ?? req['net_earnings'] ?? 0}',
+                                          ) ??
+                                          0)
+                                      .round();
+                              return TamCard(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${req['service_title'] ?? 'زيارة تمريضية'}',
+                                            style: aeroText(
+                                              size: 15,
+                                              weight: FontWeight.w800,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                      IconButton(
-                                        tooltip: saved ? 'إزالة من المحفوظة' : 'حفظ',
-                                        onPressed: () => store.toggleSave(id, saved),
-                                        icon: Icon(
-                                          saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-                                          color: tc.primary,
+                                        IconButton(
+                                          tooltip: saved
+                                              ? 'إزالة من المحفوظة'
+                                              : 'حفظ',
+                                          onPressed: () =>
+                                              store.toggleSave(id, saved),
+                                          icon: Icon(
+                                            saved
+                                                ? Icons.bookmark_rounded
+                                                : Icons.bookmark_border_rounded,
+                                            color: tc.primary,
+                                          ),
                                         ),
+                                      ],
+                                    ),
+                                    Text(
+                                      '${req['approximate_area'] ?? 'دمشق'} • ${dist.toStringAsFixed(1)} كم',
+                                      style: aeroText(
+                                        size: 12.5,
+                                        color: tc.textSecondary,
                                       ),
-                                    ],
-                                  ),
-                                  Text(
-                                    '${req['approximate_area'] ?? 'دمشق'} • ${dist.toStringAsFixed(1)} كم',
-                                    style: aeroText(size: 12.5, color: tc.textSecondary),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          'حصتك: ${formatMoney(share)}',
-                                          style: aeroText(size: 14, weight: FontWeight.w800, color: tc.primary),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'حصتك: ${formatMoney(share)}',
+                                            style: aeroText(
+                                              size: 14,
+                                              weight: FontWeight.w800,
+                                              color: tc.primary,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () => _openSubmitProposalSheet(req),
-                                        child: const Text('تقديم عرض'),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
+                                        ElevatedButton(
+                                          onPressed: () =>
+                                              _openSubmitProposalSheet(req),
+                                          child: const Text('تقديم عرض'),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
                     ],
                   ),
                 );

@@ -48,7 +48,7 @@ class NurseProfileScreen extends StatelessWidget {
                                     style: aeroText(size: 16, weight: FontWeight.w800, color: tc.textPrimary),
                                   ),
                                   Text(
-                                    'الترخيص: ${session.profileVerified ? "معتمد" : "قيد المراجعة"} • ⭐ ${session.ratingAvg.toStringAsFixed(1)}',
+                                    'الترخيص: ${session.profileVerified ? "معتمد" : "قيد المراجعة"} • ⭐ ${session.ratingAvg?.toStringAsFixed(1) ?? 'غير متوفر'}',
                                     style: aeroText(size: 12.5, color: tc.textSecondary),
                                   ),
                                 ],

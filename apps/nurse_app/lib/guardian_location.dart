@@ -61,6 +61,7 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
   bool _disposed = false;
   bool _foreground = true;
   int _generation = 0;
+  int _accountGeneration = 0;
   int queued = 0;
   String? error;
 
@@ -137,6 +138,7 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
     _notify();
     try {
       final owner = await _accountId();
+      if (_disposed || generation != _generation) return;
       if (owner == null) throw StateError('Account required');
       final positions = await _positions();
       if (_disposed || generation != _generation || !_foreground) return;
@@ -156,10 +158,13 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
       _stopAtExpiry = Timer(expiry.difference(DateTime.now()), stop);
       unawaited(sync());
     } catch (_) {
+      if (_disposed || generation != _generation) return;
       error = 'تعذر تشغيل سجل الموقع. تحقق من GPS وأذونات الموقع.';
     } finally {
-      _starting = false;
-      _notify();
+      if (!_disposed && generation == _generation) {
+        _starting = false;
+        _notify();
+      }
     }
   }
 
@@ -211,11 +216,13 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
         });
         batches[session] = sequence + 1;
         await _store.write(owner, jsonEncode(data));
-        queued = _count(data);
+        if (generation == _generation) queued = _count(data);
       });
+      if (_disposed || generation != _generation) return;
       _notify();
       unawaited(sync());
     } catch (_) {
+      if (_disposed || generation != _generation) return;
       error =
           'تعذر حفظ نقطة الموقع على الجهاز. تحقّق من التخزين أو زامن النقاط المعلّقة.';
       _notify();
@@ -228,14 +235,18 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
       _syncRequested = true;
       return;
     }
+    final accountGeneration = _accountGeneration;
+    bool current() => !_disposed && accountGeneration == _accountGeneration;
     _sending = true;
     _retry?.cancel();
     var failed = false;
     try {
       final owner = await _accountId();
-      if (owner == null) return;
-      while (!_disposed && _foreground && await _accountId() == owner) {
+      if (!current() || owner == null) return;
+      while (current() && _foreground && await _accountId() == owner) {
+        if (!current()) return;
         final snapshot = await _serial(() => _load(owner));
+        if (!current()) return;
         queued = _count(snapshot);
         final pending = snapshot['pending'] as Map<String, dynamic>;
         if (pending.isEmpty) break;
@@ -245,6 +256,7 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
           '/v1/nurse/safety/sessions/$session/locations/batch',
           {'points': batch},
         );
+        if (!current()) return;
         final accepted = (result['acceptedSequences'] as List).toSet();
         if (!batch.every((point) => accepted.contains(point['sequence']))) {
           throw StateError('Incomplete acknowledgement');
@@ -259,11 +271,13 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
             pending.remove(session);
           }
           await _store.write(owner, jsonEncode(data));
-          queued = _count(data);
+          if (current()) queued = _count(data);
         });
       }
+      if (!current()) return;
       error = null;
     } catch (_) {
+      if (!current()) return;
       failed = true;
       error =
           'تعذرت مزامنة نقاط الموقع. تبقى النقاط المحفوظة بانتظار إعادة المحاولة.';
@@ -272,16 +286,31 @@ class GuardianLocation extends ChangeNotifier with WidgetsBindingObserver {
         _retry = Timer(const Duration(seconds: 30), () => unawaited(sync()));
       }
     } finally {
-      _sending = false;
-      final repeat = _syncRequested && !failed;
-      _syncRequested = false;
-      if (repeat) unawaited(sync());
-      _notify();
+      if (current()) {
+        _sending = false;
+        final repeat = _syncRequested && !failed;
+        _syncRequested = false;
+        if (repeat) unawaited(sync());
+        _notify();
+      }
     }
+  }
+
+  void resetForSessionChange() {
+    _accountGeneration++;
+    _retry?.cancel();
+    _retry = null;
+    _syncRequested = false;
+    _sending = false;
+    _starting = false;
+    queued = 0;
+    error = null;
+    stop();
   }
 
   void stop() {
     _generation++;
+    _starting = false;
     _stopAtExpiry?.cancel();
     unawaited(_stream?.cancel());
     _stream = null;

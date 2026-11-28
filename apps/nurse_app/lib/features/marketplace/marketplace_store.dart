@@ -5,15 +5,22 @@ import 'package:tamreedy_core/tamreedy_core.dart';
 class MarketplaceStore extends ChangeNotifier {
   final TamreedyApi api;
   final RealtimeEventBus eventBus;
+  final bool Function() _canUseOpenMarketplace;
 
-  MarketplaceStore({required this.api, required this.eventBus}) {
-    _sub = eventBus.whereType(const {
-      'marketplace.request.published',
-      'marketplace.request.updated',
-      'marketplace.proposal.accepted',
-    }).listen((_) {
-      refreshAll(silent: true);
-    });
+  MarketplaceStore({
+    required this.api,
+    required this.eventBus,
+    bool Function()? canUseOpenMarketplace,
+  }) : _canUseOpenMarketplace = canUseOpenMarketplace ?? (() => false) {
+    _sub = eventBus
+        .whereType(const {
+          'marketplace.request.published',
+          'marketplace.request.updated',
+          'marketplace.proposal.accepted',
+        })
+        .listen((_) {
+          refreshAll(silent: true);
+        });
   }
 
   late final StreamSubscription<RealtimeEvent> _sub;
@@ -48,14 +55,25 @@ class MarketplaceStore extends ChangeNotifier {
     }
     try {
       final results = await Future.wait([
-        api.getMarketplaceRequests(maxDistanceKm: maxDistanceKm),
+        _canUseOpenMarketplace()
+            ? api.getMarketplaceRequests(maxDistanceKm: maxDistanceKm)
+            : Future<List<dynamic>>.value(const []),
         api.getMyProposals().catchError((_) => const []),
         api.getList('/v1/nurse/me/history').catchError((_) => const []),
       ]);
       if (gen != _sessionGen) return;
-      requests = results[0].whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      myProposals = results[1].whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      completedHistory = results[2].whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      requests = results[0]
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      myProposals = results[1]
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      completedHistory = results[2]
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       error = null;
     } catch (e) {
       if (gen != _sessionGen) return;
@@ -76,6 +94,7 @@ class MarketplaceStore extends ChangeNotifier {
   }
 
   Future<void> toggleSave(String requestId, bool currentlySaved) async {
+    _requireOpenMarketplace();
     if (currentlySaved) {
       await api.delete('/v1/marketplace/requests/$requestId/save');
     } else {
@@ -90,6 +109,7 @@ class MarketplaceStore extends ChangeNotifier {
     String? specificTime,
     String? note,
   }) async {
+    _requireOpenMarketplace();
     await api.submitProposal(
       requestId,
       estimatedMinutes: estimatedMinutes,
@@ -102,6 +122,16 @@ class MarketplaceStore extends ChangeNotifier {
   Future<void> withdrawProposal(String proposalId, {String? reason}) async {
     await api.withdrawProposal(proposalId, reason: reason);
     await refreshAll(silent: true);
+  }
+
+  void _requireOpenMarketplace() {
+    if (!_canUseOpenMarketplace()) {
+      throw const ApiFailure(
+        kind: ApiErrorKind.featureUnavailable,
+        code: 'OPEN_MARKETPLACE_UNAVAILABLE',
+        messageAr: 'السوق المفتوح غير متاح حاليًا لتقديم عروض جديدة',
+      );
+    }
   }
 
   @override

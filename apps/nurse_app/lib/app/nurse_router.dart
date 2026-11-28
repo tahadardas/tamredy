@@ -12,6 +12,13 @@ class NurseRouter {
 
   static NavigatorState? get nav => navigatorKey.currentState;
 
+  static void resetForSessionChange() {
+    _lastRouteKey = null;
+    _lastRouteAt = DateTime.fromMillisecondsSinceEpoch(0);
+    currentTab.value = 0;
+    nav?.popUntil((route) => route.isFirst);
+  }
+
   static void switchTab(int index) {
     currentTab.value = index;
     nav?.popUntil((r) => r.isFirst);

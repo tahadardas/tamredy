@@ -164,7 +164,7 @@ class _HomeTopBar extends StatelessWidget {
                 style: aeroText(size: 15.5, weight: FontWeight.w800, color: tc.textPrimary),
               ),
               Text(
-                '⭐ ${session.ratingAvg.toStringAsFixed(1)} ${session.nurseNumber.isNotEmpty ? "• ${session.nurseNumber}" : ""}',
+                '⭐ ${session.ratingAvg?.toStringAsFixed(1) ?? 'غير متوفر'} ${session.nurseNumber.isNotEmpty ? "• ${session.nurseNumber}" : ""}',
                 style: aeroText(size: 12, color: tc.textSecondary),
               ),
             ],
