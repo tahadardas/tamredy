@@ -46,6 +46,13 @@ class RequestsStore extends ChangeNotifier {
 
   int _sessionGeneration = 0;
   int _refreshGeneration = 0;
+  int _activeGeneration = 0;
+  int _historyGeneration = 0;
+  final Set<String> reconciliationPending = {};
+  final Map<String, String> detailErrors = {};
+  bool activeLoading = false;
+  String? activeError;
+  CancelToken? _activeCancelToken;
   Future<void>? _refreshInFlight;
   CancelToken? _refreshCancelToken;
 
@@ -132,27 +139,62 @@ class RequestsStore extends ChangeNotifier {
   /// Refreshes active requests/unpaid bills/pending reviews without refetching full history.
   Future<void> refreshActiveOnly() async {
     if (kDemoMode) return;
-    final gen = ++_refreshGeneration;
+    final gen = ++_activeGeneration;
     final sessGen = _sessionGeneration;
+    _activeCancelToken?.cancel('superseded');
+    final token = CancelToken();
+    _activeCancelToken = token;
+    activeLoading = true;
+    activeError = null;
+    notifyListeners();
     try {
-      final activeEnvelope = await api.getMap('/v1/me/active-request');
-      if (gen != _refreshGeneration || sessGen != _sessionGeneration) return;
-      _ingestActiveEnvelope(activeEnvelope);
+      final activeEnvelope = await api.getMap('/v1/me/active-request', cancelToken: token);
+      if (gen != _activeGeneration || sessGen != _sessionGeneration) return;
+      final missing = _ingestActiveEnvelope(activeEnvelope);
       _rebuildSortedList();
       notifyListeners();
-    } catch (_) {}
+      await _reconcileMissing(missing, sessGen, gen);
+    } catch (e) {
+      if (gen != _activeGeneration || sessGen != _sessionGeneration || token.isCancelled) return;
+      activeError = explainError(e, fallback: 'تعذر تحديث الطلبات النشطة؛ البيانات المعروضة قديمة');
+      api.markStale();
+    } finally {
+      if (gen == _activeGeneration && sessGen == _sessionGeneration) {
+        activeLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
-  void _ingestActiveEnvelope(Map<String, dynamic> activeEnvelope) {
+  Future<void> _reconcileMissing(Set<String> missing, int session, int activeGeneration) async {
+    final ids = missing.toList();
+    for (var offset = 0; offset < ids.length; offset += 4) {
+      if (session != _sessionGeneration || activeGeneration != _activeGeneration) return;
+      await Future.wait(ids.skip(offset).take(4).map((id) async {
+        final result = await loadRequestDetail(id, force: true);
+        if (session != _sessionGeneration || activeGeneration != _activeGeneration) return;
+        if (result != null && !detailErrors.containsKey(id)) reconciliationPending.remove(id);
+      }));
+    }
+    if (session == _sessionGeneration && activeGeneration == _activeGeneration) notifyListeners();
+  }
+
+  Set<String> _ingestActiveEnvelope(Map<String, dynamic> activeEnvelope) {
+    final previouslyActive = _requestsById.values.where((r) => r.isActive).map((r) => r.id).toSet();
+    final confirmed = <String>{};
     final activeList = activeEnvelope['requests'] as List? ?? const [];
     for (final raw in activeList) {
       if (raw is Map) {
-        _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(raw), fullDetail: true));
+        final parsed = TypedCareRequest.fromJson(Map<String, dynamic>.from(raw), fullDetail: true);
+        confirmed.add(parsed.id);
+        _upsertRequest(parsed);
       }
     }
     final activeReq = activeEnvelope['request'];
     if (activeEnvelope['hasActive'] == true && activeReq is Map) {
-      _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(activeReq), fullDetail: true));
+      final parsed = TypedCareRequest.fromJson(Map<String, dynamic>.from(activeReq), fullDetail: true);
+      confirmed.add(parsed.id);
+      _upsertRequest(parsed);
     }
     for (final raw in (activeEnvelope['unpaidInvoices'] as List? ?? const [])) {
       if (raw is Map) {
@@ -164,6 +206,10 @@ class RequestsStore extends ChangeNotifier {
       for (final r in rawReviews)
         if (r is Map) Map<String, dynamic>.from(r),
     ];
+    reconciliationPending.removeAll(confirmed);
+    final missing = previouslyActive.difference(confirmed);
+    reconciliationPending.addAll(missing);
+    return missing;
   }
 
   Future<void> refreshAll({bool silent = false, bool force = false}) {
@@ -172,16 +218,21 @@ class RequestsStore extends ChangeNotifier {
     _refreshCancelToken?.cancel('superseded');
     final cancelToken = CancelToken();
     _refreshCancelToken = cancelToken;
-    final future = _doRefreshAll(silent: silent, cancelToken: cancelToken);
-    _refreshInFlight = future.whenComplete(() {
-      if (identical(_refreshInFlight, future)) _refreshInFlight = null;
+    late final Future<void> tracked;
+    tracked = _doRefreshAll(silent: silent, cancelToken: cancelToken).whenComplete(() {
+      if (identical(_refreshInFlight, tracked)) _refreshInFlight = null;
     });
-    return _refreshInFlight!;
+    _refreshInFlight = tracked;
+    return tracked;
   }
 
   Future<void> _doRefreshAll({required bool silent, required CancelToken cancelToken}) async {
     final gen = ++_refreshGeneration;
+    final activeGen = ++_activeGeneration;
+    ++_historyGeneration;
+    loadingMore = false;
     final sessGen = _sessionGeneration;
+    _activeCancelToken?.cancel('superseded');
     if (!silent) {
       loading = true;
       error = null;
@@ -199,7 +250,8 @@ class RequestsStore extends ChangeNotifier {
       final activeEnvelope = results[0];
       final historyEnvelope = results[1];
 
-      _ingestActiveEnvelope(activeEnvelope);
+      final missing = activeGen == _activeGeneration
+          ? _ingestActiveEnvelope(activeEnvelope) : <String>{};
 
       for (final raw in (historyEnvelope['items'] as List? ?? const [])) {
         if (raw is Map) {
@@ -209,8 +261,14 @@ class RequestsStore extends ChangeNotifier {
       _nextCursor = historyEnvelope['nextCursor']?.toString();
       _rebuildSortedList();
       error = null;
+      if (activeGen == _activeGeneration) {
+        activeLoading = false;
+        activeError = null;
+        await _reconcileMissing(missing, sessGen, activeGen);
+      }
     } catch (e) {
-      if (cancelToken.isCancelled || sessGen != _sessionGeneration) return;
+      if (cancelToken.isCancelled || sessGen != _sessionGeneration || gen != _refreshGeneration) return;
+      api.markStale();
       if (!silent) {
         error = explainError(e, fallback: 'تعذر تحديث قائمة الطلبات');
       }
@@ -228,11 +286,12 @@ class RequestsStore extends ChangeNotifier {
     loadingMore = true;
     notifyListeners();
     final sessGen = _sessionGeneration;
+    final historyGen = _historyGeneration;
     try {
       final historyEnvelope = await api.getMap(
         '/v1/requests/mine?limit=40&cursor=${Uri.encodeQueryComponent(cursor)}',
       );
-      if (sessGen != _sessionGeneration) return;
+      if (sessGen != _sessionGeneration || historyGen != _historyGeneration) return;
       for (final raw in (historyEnvelope['items'] as List? ?? const [])) {
         if (raw is Map) {
           _upsertRequest(TypedCareRequest.fromJson(Map<String, dynamic>.from(raw)));
@@ -240,9 +299,13 @@ class RequestsStore extends ChangeNotifier {
       }
       _nextCursor = historyEnvelope['nextCursor']?.toString();
       _rebuildSortedList();
-    } catch (_) {
+    } catch (e) {
+      if (sessGen == _sessionGeneration && historyGen == _historyGeneration) {
+        error = explainError(e, fallback: 'تعذر تحميل المزيد من السجل');
+        api.markStale();
+      }
     } finally {
-      if (sessGen == _sessionGeneration) {
+      if (sessGen == _sessionGeneration && historyGen == _historyGeneration) {
         loadingMore = false;
         notifyListeners();
       }
@@ -266,13 +329,17 @@ class RequestsStore extends ChangeNotifier {
     _detailCancelTokens[requestId]?.cancel('superseded');
     final cancelToken = CancelToken();
     _detailCancelTokens[requestId] = cancelToken;
-    final future = _doLoadRequestDetail(requestId, cancelToken);
-    _detailInFlight[requestId] = future.whenComplete(() {
-      if (identical(_detailInFlight[requestId], future)) {
+    late final Future<TypedCareRequest?> tracked;
+    tracked = _doLoadRequestDetail(requestId, cancelToken).whenComplete(() {
+      if (identical(_detailInFlight[requestId], tracked)) {
         _detailInFlight.remove(requestId);
+        if (identical(_detailCancelTokens[requestId], cancelToken)) {
+          _detailCancelTokens.remove(requestId);
+        }
       }
     });
-    return _detailInFlight[requestId]!;
+    _detailInFlight[requestId] = tracked;
+    return tracked;
   }
 
   Future<TypedCareRequest?> _doLoadRequestDetail(String requestId, CancelToken cancelToken) async {
@@ -282,8 +349,9 @@ class RequestsStore extends ChangeNotifier {
     try {
       final res = await api.getMap('/v1/requests/$requestId', cancelToken: cancelToken);
       if (gen != _detailGeneration[requestId] || sessGen != _sessionGeneration || cancelToken.isCancelled) {
-        return requestById(requestId);
+        return null;
       }
+      detailErrors.remove(requestId);
       final parsed = TypedCareRequest.fromJson(res, fullDetail: true);
       final current = requestById(requestId);
       if (current != null && parsed.version < current.version) {
@@ -293,7 +361,13 @@ class RequestsStore extends ChangeNotifier {
       _rebuildSortedList();
       notifyListeners();
       return requestById(requestId);
-    } catch (_) {
+    } catch (e) {
+      if (gen == _detailGeneration[requestId] && sessGen == _sessionGeneration && !cancelToken.isCancelled) {
+        detailErrors[requestId] = explainError(e, fallback: 'تعذر تحديث تفاصيل الطلب');
+        api.markStale();
+        notifyListeners();
+      }
+      if (sessGen != _sessionGeneration || gen != _detailGeneration[requestId] || cancelToken.isCancelled) return null;
       return requestById(requestId);
     }
   }
@@ -301,6 +375,14 @@ class RequestsStore extends ChangeNotifier {
   void resetForSessionChange() {
     _sessionGeneration++;
     _refreshGeneration++;
+    _activeGeneration++;
+    _historyGeneration++;
+    _activeCancelToken?.cancel('session_changed');
+    _activeCancelToken = null;
+    reconciliationPending.clear();
+    detailErrors.clear();
+    activeLoading = false;
+    activeError = null;
     _refreshCancelToken?.cancel('session_changed');
     _refreshCancelToken = null;
     _refreshInFlight = null;
@@ -326,7 +408,9 @@ class RequestsStore extends ChangeNotifier {
 
   Future<List<TypedProposal>> loadProposals(String requestId) async {
     if (kDemoMode) return proposalsFor(requestId);
+    final session = _sessionGeneration;
     final raw = await api.getRequestProposals(requestId);
+    if (session != _sessionGeneration) return const [];
     final list = [
       for (final item in raw)
         if (item is Map) TypedProposal.fromJson(Map<String, dynamic>.from(item)),
@@ -431,6 +515,15 @@ class RequestsStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _sessionGeneration++;
+    _refreshGeneration++;
+    _activeGeneration++;
+    _historyGeneration++;
+    _refreshCancelToken?.cancel('disposed');
+    _activeCancelToken?.cancel('disposed');
+    for (final token in _detailCancelTokens.values) {
+      token.cancel('disposed');
+    }
     _sub.cancel();
     super.dispose();
   }
