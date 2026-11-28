@@ -24,9 +24,9 @@ export class RequestRecoveryService {
         a.id AS assignment_id, a.nurse_id,
         CASE WHEN cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE') THEN u.display_name END AS nurse_name,
         NULL::text AS nurse_phone,
-        CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at>statement_timestamp()-interval '120 seconds'
+        CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at>statement_timestamp()-coalesce(cr.search_max_location_seconds,120)*interval '1 second'
           THEN ST_Y(nl.location::geometry) END AS nurse_lat,
-        CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at>statement_timestamp()-interval '120 seconds'
+        CASE WHEN cr.status='EN_ROUTE' AND nl.recorded_at>statement_timestamp()-coalesce(cr.search_max_location_seconds,120)*interval '1 second'
           THEN ST_X(nl.location::geometry) END AS nurse_lng,
         (SELECT count(*)::int FROM marketplace_proposals mp
           WHERE mp.request_id=cr.id AND mp.status='PENDING' AND mp.expires_at>statement_timestamp())
@@ -94,7 +94,7 @@ export class RequestRecoveryService {
         cr.id AS request_id,cr.status AS request_status,cr.version,cr.booking_mode,
         cr.marketplace_status,cr.price_amount,cr.currency_code,cr.commission_bps,
         cr.scheduled_start_at,cr.scheduled_end_at,sv.appointment_at AS scheduled_at,
-        facts.departure_window_open,
+        facts.departure_window_open, facts.departure_window_open AS exact_location_authorized,
         CASE WHEN facts.departure_window_open THEN cr.address_text END AS address_text,
         CASE WHEN facts.departure_window_open
           THEN ST_Y(cr.location::geometry) END AS patient_lat,

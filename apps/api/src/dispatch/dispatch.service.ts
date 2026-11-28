@@ -190,7 +190,12 @@ export class DispatchService {
         planned_start_at IS NULL OR planned_start_at
           - travel_buffer_before_minutes*interval '1 minute'<=statement_timestamp() AS may_depart
         FROM request_assignments WHERE id=$1 FOR UPDATE`,[assignmentId]);
-      if(request?.status===target.to && assignment.rowCount) return {requestId,assignmentId,status:target.to,replayed:true};
+      if(request?.status===target.to && assignment.rowCount) {
+        const visit=action==='complete' ? (await c.query(`SELECT v.outcome,a.reason
+          FROM visits v JOIN request_assignments a ON a.id=v.assignment_id WHERE a.id=$1`,[assignmentId])).rows[0] : null;
+        return {requestId,assignmentId,status:target.to,visitOutcome:visit?.outcome??null,
+          visitOutcomeReason:visit?.reason??null,replayed:true};
+      }
       const assignmentStatus = assignment.rows[0]?.status;
       if(!assignment.rowCount || (assignmentStatus!=='ACTIVE' && !(action==='depart' && assignmentStatus==='RESERVED'))) {
         conflict('ASSIGNMENT_INACTIVE');
@@ -198,6 +203,9 @@ export class DispatchService {
       if(request?.status!==target.from) conflict('INVALID_STATE_TRANSITION');
       if (action === 'depart' && assignmentStatus === 'RESERVED') {
         if (!assignment.rows[0]?.may_depart) conflict('SCHEDULED_DEPARTURE_TOO_EARLY');
+        const executing=await c.query(`SELECT id FROM request_assignments WHERE nurse_id=$1
+          AND status='ACTIVE' AND id<>$2`,[nurseId,assignmentId]);
+        if (executing.rowCount) conflict('NURSE_HAS_ACTIVE_EXECUTION');
         try {
           await c.query(`UPDATE request_assignments SET status='ACTIVE' WHERE id=$1 AND status='RESERVED'`, [assignmentId]);
         } catch (error) {
@@ -293,13 +301,13 @@ export class DispatchService {
             [assignmentId],
           );
           if (visitRow.rowCount !== 1) conflict('VISIT_NOT_STARTED');
+          const noServiceReason = outcomeItems.rows.find(i => i.status_reason)?.status_reason ?? 'NO_SERVICE_DELIVERED';
           await c.query(
             `UPDATE request_assignments
-             SET status='RELEASED', released_at=now(), reason='NO_SERVICE_DELIVERED'
+             SET status='RELEASED', released_at=now(), reason=$2
              WHERE id=$1`,
-            [assignmentId],
+            [assignmentId,noServiceReason],
           );
-          const noServiceReason = outcomeItems.rows.find(i => i.status_reason)?.status_reason ?? 'NO_SERVICE_DELIVERED';
           await this.billing.settleNoServiceVisit(c, {
             requestId,
             visitId: visitRow.rows[0].id,
@@ -378,7 +386,11 @@ export class DispatchService {
         })),
       ]);
       // (payload carries ids only; the bill is read over REST)
-      return {requestId,assignmentId,status:target.to,replayed:false};
+      const visitOutcome=action==='complete'
+        ? (await c.query(`SELECT v.outcome,a.reason FROM visits v JOIN request_assignments a ON a.id=v.assignment_id
+          WHERE a.id=$1`,[assignmentId])).rows[0] : null;
+      return {requestId,assignmentId,status:target.to,visitOutcome:visitOutcome?.outcome??null,
+        visitOutcomeReason:visitOutcome?.reason??null,replayed:false};
     });
   }
 }

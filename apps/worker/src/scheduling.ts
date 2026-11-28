@@ -1,6 +1,8 @@
 import type pg from 'pg';
+import { featureCapabilities, ordersState } from '../../../packages/backend-policy/capabilities.mjs';
 
 export async function releaseScheduledVisit(pool: pg.Pool): Promise<boolean> {
+  if (!featureCapabilities().scheduledVisitsEnabled) return false;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -23,12 +25,12 @@ export async function releaseScheduledVisit(pool: pg.Pool): Promise<boolean> {
       return false;
     }
     const orders = (await client.query("SELECT value FROM app_settings WHERE key='orders'")).rows[0]?.value;
-    if (!visit.expired && orders?.accepting === false) {
+    if (!visit.expired && !ordersState(orders).accepting) {
       await client.query('COMMIT');
       return false;
     }
     const policy = (await client.query("SELECT value FROM app_settings WHERE key='dispatch'")).rows[0]?.value;
-    const open = !visit.expired && process.env.OPEN_DISPATCH_ENABLED === 'true' && policy?.openEnabled === true;
+    const open = !visit.expired && featureCapabilities().openDispatchEnabled && policy?.openEnabled === true;
     await client.query(`UPDATE care_requests SET status=$8,version=version+1,
       search_started_at=CASE WHEN $2 THEN statement_timestamp() END,
       search_expires_at=CASE WHEN $2 THEN statement_timestamp()+$3::integer*interval '1 second' END,

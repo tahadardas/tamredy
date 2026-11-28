@@ -10,6 +10,7 @@ class CalendarStore extends ChangeNotifier {
   String? error;
   List<Map<String, dynamic>> items = const [];
   int _sessionGen = 0;
+  int _loadGeneration = 0;
 
   void resetForSessionChange() {
     _sessionGen++;
@@ -26,6 +27,7 @@ class CalendarStore extends ChangeNotifier {
       return;
     }
     final gen = _sessionGen;
+    final load = ++_loadGeneration;
     loading = true;
     error = null;
     notifyListeners();
@@ -34,16 +36,17 @@ class CalendarStore extends ChangeNotifier {
       final from = DateTime(now.year, now.month, now.day).toIso8601String();
       final to = DateTime(now.year, now.month, now.day + 7).toIso8601String();
       final res = await api.getMap('/v1/nurse-calendar?from=$from&to=$to');
-      if (gen != _sessionGen) return;
+      if (gen != _sessionGen || load != _loadGeneration) return;
       final combined = <Map<String, dynamic>>[];
 
       for (final raw in (res['visits'] as List? ?? const [])) {
         if (raw is! Map) continue;
         final v = Map<String, dynamic>.from(raw);
-        final startStr = (v['appointment_at'] ?? v['accepted_at'])?.toString();
-        final mins = (num.tryParse('${v['expected_minutes'] ?? 45}') ?? 45).toInt();
+        final startStr = (v['plannedStartAt'] ?? v['planned_start_at'] ?? v['appointment_at'])?.toString();
+        final mins = num.tryParse('${v['expected_minutes'] ?? ''}')?.toInt();
         final startDt = startStr != null ? DateTime.tryParse(startStr) : null;
-        final endStr = startDt?.add(Duration(minutes: mins)).toIso8601String();
+        final endStr = (v['plannedEndAt'] ?? v['planned_end_at'])?.toString() ??
+            (startDt != null && mins != null ? startDt.add(Duration(minutes: mins)).toIso8601String() : null);
         combined.add({
           'id': v['request_id'],
           'block_type': 'SCHEDULED_VISIT',
@@ -69,10 +72,13 @@ class CalendarStore extends ChangeNotifier {
       items = combined;
       error = null;
     } catch (e) {
+      if (gen != _sessionGen || load != _loadGeneration) return;
       error = explainError(e, fallback: 'تعذر تحميل التقويم من الخادم');
     } finally {
-      loading = false;
-      notifyListeners();
+      if (gen == _sessionGen && load == _loadGeneration) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 

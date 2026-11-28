@@ -1,6 +1,9 @@
 import { Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 
+const VISIT_START = 'COALESCE(ra.planned_start_at, sv.appointment_at, cr.scheduled_start_at, ra.accepted_at)';
+const VISIT_END = `COALESCE(ra.planned_end_at, (${VISIT_START}) + coalesce(ra.service_duration_minutes,(SELECT sum(i.expected_minutes) FROM care_request_items i WHERE i.request_id=cr.id)) * interval '1 minute')`;
+
 export interface CalendarBlockInput {
   startTime: string;
   endTime: string;
@@ -30,7 +33,10 @@ export class NurseCalendarService {
              ) THEN cr.address_text END AS address_text,
              coalesce(ar.name_ar,'ضمن نطاق الخدمة') AS area_name,
              s.title_ar AS service_title, s.code AS service_code,
-             coalesce((cr.pricing->>'expectedMinutes')::int, 30) AS expected_minutes,
+             (EXTRACT(EPOCH FROM (${VISIT_END} - ${VISIT_START}))/60)::integer AS expected_minutes,
+             ${VISIT_START} AS planned_start_at, ${VISIT_END} AS planned_end_at,
+             ${VISIT_START} AS "plannedStartAt", ${VISIT_END} AS "plannedEndAt",
+             ra.accepted_at AS "acceptedAt",
              sv.appointment_at, ra.accepted_at,
              b.display_name AS beneficiary_name
       FROM request_assignments ra
@@ -42,9 +48,9 @@ export class NurseCalendarService {
       WHERE ra.nurse_id = $1
         AND ra.status IN ('RESERVED','ACTIVE')
         AND cr.status IN ('SCHEDULED', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE', 'COMPLETED')
-        AND coalesce(sv.appointment_at, ra.accepted_at) >= $2::timestamptz
-        AND coalesce(sv.appointment_at, ra.accepted_at) <= $3::timestamptz
-      ORDER BY coalesce(sv.appointment_at, ra.accepted_at) ASC
+        AND ${VISIT_END} > $2::timestamptz
+        AND ${VISIT_START} < $3::timestamptz
+      ORDER BY ${VISIT_START} ASC
     `, [nurseId, fromIso, toIso]);
 
     // 2. Off-duty blocks
@@ -75,7 +81,7 @@ export class NurseCalendarService {
     }
 
     return this.db.transaction(async client => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [nurseId]);
+      await client.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE', [nurseId]);
       // Check if nurse already has a confirmed visit during this block
       const conflict = await client.query(`
         SELECT nurse_has_schedule_conflict($1,$2::timestamptz,$3::timestamptz,NULL) AS conflict
@@ -99,10 +105,13 @@ export class NurseCalendarService {
   /** Removes an off-duty block */
   async removeBlock(nurseUserId: string, blockId: string) {
     const nurseId = await this.getNurseId(nurseUserId);
-    const res = await this.db.query(
-      `DELETE FROM nurse_calendar_blocks WHERE id = $1 AND nurse_id = $2 RETURNING id`,
-      [blockId, nurseId],
-    );
+    const res = await this.db.transaction(async client => {
+      await client.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE', [nurseId]);
+      return client.query(
+        'DELETE FROM nurse_calendar_blocks WHERE id=$1 AND nurse_id=$2 RETURNING id',
+        [blockId, nurseId],
+      );
+    });
     if (!res.rowCount) throw new NotFoundException({ code: 'BLOCK_NOT_FOUND' });
     return { ok: true };
   }

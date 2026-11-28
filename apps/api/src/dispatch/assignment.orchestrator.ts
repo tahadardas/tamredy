@@ -55,15 +55,17 @@ export class AssignmentOrchestrator {
     const rep = await this.fees.reputation(client, input.nurseId);
     const tiers = await this.fees.tiers(client);
     const appliedCommissionBps = commissionFor(baseCommissionBps, tiers, rep.reputation, rep.reviews);
-    const currencyCode = input.request.currency_code || 'SYP_NEW';
+    const currencyCode = input.request.currency_code;
+    if (!currencyCode) conflict('CURRENCY_CODE_REQUIRED');
     const estimatedCommission = Math.round(Number(input.request.price_amount) * appliedCommissionBps / 10_000);
 
-    const account = (await client.query(`SELECT * FROM nurse_financial_accounts
-      WHERE nurse_id=$1 FOR UPDATE`, [input.nurseId])).rows[0];
+    const account = (await client.query(`SELECT * FROM nurse_financial_currency_accounts
+      WHERE nurse_id=$1 AND currency_code=$2 FOR UPDATE`, [input.nurseId,currencyCode])).rows[0];
     if (estimatedCommission > 0 && !account) {
       conflict('NURSE_FINANCIAL_ACCOUNT_REQUIRED');
     }
 
+    if (account?.settlement_required) conflict('SETTLEMENT_REQUIRED');
     if (account && estimatedCommission > 0) {
       const held = (await client.query(`SELECT coalesce(sum(prepaid_amount),0) AS prepaid,
         coalesce(sum(credit_amount),0) AS credit FROM financial_reservations
@@ -82,15 +84,15 @@ export class AssignmentOrchestrator {
         conflict('FINANCIAL_LIMIT_REACHED');
       }
       const reservation = await client.query(`INSERT INTO financial_reservations(
-        account_id,amount,reference_id,status,nurse_id,prepaid_amount,credit_amount,currency_code
-      ) VALUES($1,$2,$3,'HELD',$4,$5,$6,$7)
+        account_id,amount,reference_id,status,nurse_id,prepaid_amount,credit_amount,currency_code,currency_account_id
+      ) VALUES($1,$2,$3,'HELD',$4,$5,$6,$7,$8)
       ON CONFLICT(account_id,reference_id) DO NOTHING RETURNING id`, [
-        `NURSE_FINANCIAL:${input.nurseId}`,estimatedCommission,input.request.id,input.nurseId,
-        prepaidAmount,creditAmount,currencyCode,
+        `NURSE_FINANCIAL:${input.nurseId}:${currencyCode}`,estimatedCommission,input.request.id,input.nurseId,
+        prepaidAmount,creditAmount,currencyCode,account.id,
       ]);
       if (reservation.rowCount) {
-        await client.query(`UPDATE nurse_financial_accounts
-          SET reserved_balance=reserved_balance+$2,updated_at=statement_timestamp() WHERE id=$1`,
+        await client.query(`UPDATE nurse_financial_currency_accounts
+          SET reserved_balance=reserved_balance+$2,version=version+1,updated_at=statement_timestamp() WHERE id=$1`,
         [account.id,estimatedCommission]);
       }
     }
@@ -117,7 +119,8 @@ export class AssignmentOrchestrator {
         SELECT $1,$2,CASE WHEN $3::boolean THEN 'ACTIVE' ELSE 'RESERVED' END,statement_timestamp(),
           CASE WHEN $3::boolean THEN statement_timestamp()+nullif(coalesce(
             (SELECT (value->>'departureReminderSeconds')::integer FROM app_settings WHERE key='dispatch'),0),0)
-            * interval '1 second' END,$4,$5,$6,$7::jsonb
+            * interval '1 second' END,$4,$5,coalesce($6::integer,
+          (SELECT sum(expected_minutes)::integer FROM care_request_items WHERE request_id=$1)),$7::jsonb
         RETURNING id
       `, [input.request.id,input.nurseId,input.reserveImmediately,
         input.plannedStart?.toISOString() ?? null,input.plannedEnd?.toISOString() ?? null,durationMinutes,

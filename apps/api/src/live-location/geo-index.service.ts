@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import type { LiveLocationUpdateDto } from './location-update.dto.js';
+import { decodeRedisLocation } from '../../../../packages/backend-policy/live-location.mjs';
 import type { PreviousLocation } from './location-validator.js';
 
 export interface RedisDetailedLocation {
@@ -11,12 +12,14 @@ export interface RedisDetailedLocation {
   capturedAt: Date;
   sequenceNumber: number;
   source: 'redis';
+  sessionId: string | null;
 }
 
 const UPDATE_SCRIPT = `
 local hash = KEYS[1]
 local geo = KEYS[2]
 local expiry = KEYS[3]
+local previousSession = redis.call('HGET', hash, 'sessionId')
 local previousSequence = tonumber(redis.call('HGET', hash, 'sequenceNumber') or '-1')
 local previousCaptured = tonumber(redis.call('HGET', hash, 'capturedAtEpochMs') or '-1')
 local incomingSequence = tonumber(ARGV[4])
@@ -26,7 +29,7 @@ for _, member in ipairs(expired) do
   redis.call('ZREM', expiry, member)
   redis.call('ZREM', geo, member)
 end
-if previousSequence >= incomingSequence or previousCaptured >= incomingCaptured then return 0 end
+if (previousSession == ARGV[5] and previousSequence >= incomingSequence) or previousCaptured >= incomingCaptured then return 0 end
 redis.call('HSET', hash,
   'latitude', ARGV[1], 'longitude', ARGV[2], 'capturedAtEpochMs', ARGV[3],
   'sequenceNumber', ARGV[4], 'sessionId', ARGV[5], 'accuracyMeters', ARGV[6],
@@ -53,7 +56,8 @@ export class GeoIndexService implements OnModuleDestroy {
       : null;
   }
 
-  get active(): boolean { return this.redis !== null; }
+  get active(): boolean { return this.enabled; }
+  get connection(): Redis | null { return this.redis; }
 
   async assertReady(): Promise<void> {
     if (!this.redis) return;
@@ -91,23 +95,14 @@ export class GeoIndexService implements OnModuleDestroy {
   async currentDetailed(nurseId: string): Promise<RedisDetailedLocation | null> {
     if (!this.redis) return null;
     const value = await this.redis.hgetall(`live:location:${nurseId}`);
-    if (!value.capturedAtEpochMs || !value.latitude || !value.longitude || !value.sequenceNumber) {
-      return null;
-    }
-    const capturedAt = new Date(Number(value.capturedAtEpochMs));
-    return {
-      latitude: Number(value.latitude),
-      longitude: Number(value.longitude),
-      accuracyMeters: Number(value.accuracyMeters ?? 9999),
-      recordedAt: capturedAt,
-      capturedAt,
-      sequenceNumber: Number(value.sequenceNumber),
-      source: 'redis',
-    };
+    return decodeRedisLocation(value) as RedisDetailedLocation | null;
   }
 
   async update(nurseId: string, dto: LiveLocationUpdateDto, capturedAt: Date, receivedAt: Date): Promise<boolean> {
-    if (!this.redis) return false;
+    if (!this.redis) {
+      if (this.enabled) throw new Error('LIVE_LOCATION_REDIS_NOT_CONFIGURED');
+      return false;
+    }
     const result = await this.redis.eval(
       UPDATE_SCRIPT,
       3,

@@ -1,10 +1,13 @@
+import { dispatchLocations } from './live-location.ts';
 import { nightPolicyEnabled } from './night-safety.ts';
 import type pg from 'pg';
+import { featureCapabilities } from '../../../packages/backend-policy/capabilities.mjs';
 
 const reconcileSeconds = 5;
 
 /** Caller holds the request row lock. Every offer shares the persisted server deadline. */
 export async function runOpenSearch(client: pg.PoolClient, requestId: string): Promise<void> {
+  if (!featureCapabilities().openDispatchEnabled) return;
   const closed = await client.query(`
     UPDATE care_requests SET status='UNFULFILLED', version=version+1,
       closed_at=statement_timestamp(), close_reason='EXPIRED', updated_at=statement_timestamp()
@@ -38,76 +41,19 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
     return;
   }
 
+  const request=(await client.query('SELECT search_radius_meters FROM care_requests WHERE id=$1',[requestId])).rows[0];
+  const locations=await dispatchLocations(client,requestId,Number(request?.search_radius_meters??10000));
   const offers = await client.query(`
     WITH candidates AS (
-      SELECT n.id, r.search_expires_at
-      FROM care_requests r
-      JOIN nurse_locations l ON ST_DWithin(l.location,r.location,r.search_radius_meters)
-      JOIN nurses n ON n.id=l.nurse_id AND n.verified AND n.work_status='AVAILABLE' AND n.availability_intent='AVAILABLE'
-      JOIN users u ON u.id=n.user_id AND u.status='ACTIVE'
-      JOIN nurse_skills k ON k.nurse_id=n.id AND k.service_id=r.service_id AND k.approved
-      JOIN nurse_financial_accounts nfa ON nfa.nurse_id=n.id
-      LEFT JOIN pricing_settings ps ON ps.id=1
-      LEFT JOIN LATERAL (
-        SELECT sum(prepaid_amount) AS prepaid, sum(credit_amount) AS credit
-        FROM financial_reservations WHERE nurse_id=n.id AND status='HELD'
-      ) held ON true
-      WHERE r.id=$1 AND r.status='OFFERING'
-        AND r.clinical_approval_status IN ('NOT_REQUIRED','APPROVED')
-        AND r.search_expires_at > statement_timestamp()
-        AND NOT EXISTS (
-          SELECT 1 FROM care_request_items cri
-          WHERE cri.request_id = r.id
-            AND NOT EXISTS (
-              SELECT 1 FROM nurse_skills ns
-              WHERE ns.nurse_id = n.id AND ns.service_id = cri.service_id AND ns.approved
-            )
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM user_blocks ub
-          WHERE ((ub.blocker_user_id = r.requester_user_id AND ub.blocked_user_id = n.user_id)
-             OR (ub.blocker_user_id = n.user_id AND ub.blocked_user_id = r.requester_user_id))
-            AND ub.revoked_at IS NULL
-        )
-        ${nightPolicyEnabled() ? 'AND guardian_dispatch_denial(n.id,r.id,statement_timestamp()) IS NULL' : ''}
-        AND n.last_heartbeat_at > statement_timestamp()-coalesce(r.search_max_heartbeat_seconds,120)*interval '1 second'
-        AND l.recorded_at > statement_timestamp()-coalesce(r.search_max_location_seconds,120)*interval '1 second'
-        AND l.accuracy_m <= coalesce(r.search_max_accuracy_meters,100)
-        AND EXISTS (SELECT 1 FROM nurse_credentials lic WHERE lic.nurse_id=n.id AND lic.approved AND lic.expires_at > statement_timestamp())
-        AND NOT EXISTS (SELECT 1 FROM request_assignments a WHERE a.nurse_id=n.id AND a.status='ACTIVE')
-        AND NOT nurse_has_schedule_conflict(
-          n.id,
-          statement_timestamp(),
-          statement_timestamp() + greatest(15, coalesce((SELECT sum(cri.expected_minutes) FROM care_request_items cri WHERE cri.request_id=r.id), 30)) * interval '1 minute',
-          r.id
-        )
-        AND NOT EXISTS (SELECT 1 FROM request_offers o WHERE o.request_id=r.id AND o.nurse_id=n.id)
-        AND (coalesce(ps.nurse_debt_limit,0) <= 0 OR greatest(coalesce((
-          SELECT sum(CASE
-            WHEN e.account_id='CASH_HELD_BY_NURSE:'||n.id::text THEN e.debit_amount-e.credit_amount
-            WHEN e.account_id='NURSE_PAYABLE:'||n.id::text THEN e.debit_amount-e.credit_amount
-            ELSE 0 END)
-          FROM financial_ledger_entries e
-          WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||n.id::text,'NURSE_PAYABLE:'||n.id::text)
-        ),0),0) <= ps.nurse_debt_limit)
-        AND (
-          CASE
-            WHEN nfa.financial_model='PREPAID' THEN
-              round(r.price_amount*r.commission_bps/10000) <= greatest(0, nfa.prepaid_balance - coalesce(held.prepaid,0))
-            ELSE
-              round(r.price_amount*r.commission_bps/10000) <= (
-                (CASE WHEN nfa.financial_model='RECEIVABLES' THEN 0 ELSE greatest(0, nfa.prepaid_balance - coalesce(held.prepaid,0)) END)
-                + greatest(0, nfa.credit_limit - greatest(coalesce((
-                    SELECT sum(CASE
-                      WHEN e.account_id='CASH_HELD_BY_NURSE:'||n.id::text THEN e.debit_amount-e.credit_amount
-                      WHEN e.account_id='NURSE_PAYABLE:'||n.id::text THEN e.debit_amount-e.credit_amount
-                      ELSE 0 END)
-                    FROM financial_ledger_entries e
-                    WHERE e.account_id IN ('CASH_HELD_BY_NURSE:'||n.id::text,'NURSE_PAYABLE:'||n.id::text)
-                  ),0),0) - coalesce(held.credit,0))
-              )
-          END
-        )
+      SELECT n.id,r.search_expires_at FROM nurses n CROSS JOIN care_requests r
+      LEFT JOIN LATERAL (SELECT x FROM jsonb_array_elements($2::jsonb) x WHERE x->>'nurseId'=n.id::text) live ON true
+      WHERE r.id=$1 AND r.status='OFFERING' AND r.search_expires_at>statement_timestamp()
+        AND ($2::jsonb IS NULL OR live.x IS NOT NULL)
+        AND cardinality(nurse_eligibility_reasons(n.id,r.id,'OFFER',statement_timestamp(),
+          statement_timestamp()+greatest(1,coalesce((SELECT sum(expected_minutes)
+            FROM care_request_items WHERE request_id=r.id),30))*interval '1 minute',
+          live.x,NULL,$3))=0
+        AND NOT EXISTS(SELECT 1 FROM request_offers o WHERE o.request_id=r.id AND o.nurse_id=n.id)
     ), inserted AS (
       INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at)
       SELECT $1,id,1,search_expires_at FROM candidates
@@ -120,7 +66,7 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
       'recipientRole','NURSE','targetApp','NURSE_APP','expiresAt',i.expires_at,
       'priority','CRITICAL','deepLink','tamreedy://nurse/offers/' || i.id::text,'createdAt',statement_timestamp())
     FROM inserted i JOIN nurses n ON n.id=i.nurse_id
-  `, [requestId]);
+  `, [requestId,locations===null?null:JSON.stringify(locations),nightPolicyEnabled()]);
 
   if ((offers.rowCount ?? 0) > 0) {
     console.info(`[Dispatch] Open search ${requestId} created ${offers.rowCount} offers`);

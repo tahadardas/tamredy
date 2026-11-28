@@ -51,7 +51,7 @@ export class LiveLocationService {
       if (!redisFailed && !redisAccepted) throw new ConflictException({ code: 'LOCATION_OUT_OF_ORDER' });
     }
 
-    if (redisFailed && process.env.LOCATION_POSTGRES_FALLBACK_ENABLED === 'false') {
+    if (redisFailed && process.env.LOCATION_POSTGRES_FALLBACK_ENABLED !== 'true') {
       throw new ServiceUnavailableException({ code: 'LIVE_LOCATION_UNAVAILABLE' });
     }
 

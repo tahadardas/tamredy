@@ -57,7 +57,7 @@ export class LocationPersistenceService {
         speed_mps=EXCLUDED.speed_mps,heading_degrees=EXCLUDED.heading_degrees,
         location_source=EXCLUDED.location_source
        WHERE nurse_locations.captured_at < EXCLUDED.captured_at
-         AND (nurse_locations.session_id <> EXCLUDED.session_id
+         AND (nurse_locations.session_id IS DISTINCT FROM EXCLUDED.session_id
            OR nurse_locations.sequence_number < EXCLUDED.sequence_number)
        RETURNING nurse_id`,
       [

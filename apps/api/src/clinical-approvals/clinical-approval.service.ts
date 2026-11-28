@@ -113,9 +113,15 @@ export class ClinicalApprovalService {
           const policy = (await client.query("SELECT value FROM app_settings WHERE key='booking_policies'")).rows[0]?.value;
           // BUG-024: honor patient's chosen open_duration_minutes, only falling back to default policy
           const durationMinutes = Number(review.open_duration_minutes) || Number(policy?.openRequestDurationMinutes) || 120;
+          if (review.original_latest_acceptable_arrival_at
+            && new Date(review.original_latest_acceptable_arrival_at).getTime() <= Date.now()) {
+            conflict('ARRIVAL_WINDOW_EXPIRED_REQUIRES_RESCHEDULING');
+          }
           await client.query(`UPDATE care_requests SET published_at=statement_timestamp(),
-            open_expires_at=statement_timestamp()+$2::integer*interval '1 minute',
-            latest_acceptable_arrival_at=statement_timestamp()+($2::integer+60)*interval '1 minute'
+            open_expires_at=least(statement_timestamp()+$2::integer*interval '1 minute',
+              coalesce(original_latest_acceptable_arrival_at,'infinity'::timestamptz)),
+            latest_acceptable_arrival_at=coalesce(original_latest_acceptable_arrival_at,
+              statement_timestamp()+($2::integer+60)*interval '1 minute')
             WHERE id=$1`, [requestId,durationMinutes]);
           await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload)
             VALUES('marketplace.request.published',$1,$2::jsonb)`,

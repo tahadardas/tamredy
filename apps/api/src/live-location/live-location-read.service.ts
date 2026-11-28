@@ -1,6 +1,7 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service.js';
+import { readLiveLocation } from '../../../../packages/backend-policy/live-location.mjs';
 import { GeoIndexService } from './geo-index.service.js';
 
 export interface LiveLocationSnapshot {
@@ -11,6 +12,7 @@ export interface LiveLocationSnapshot {
   capturedAt: Date;
   sequenceNumber: number | null;
   source: 'redis' | 'postgres';
+  sessionId: string | null;
 }
 
 export function haversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -36,40 +38,17 @@ export class LiveLocationReadService {
   ) {}
 
   async getNurseLocation(nurseId: string, client?: PoolClient): Promise<LiveLocationSnapshot | null> {
-    let redisFailed = false;
-    if (this.geo.active) {
-      try {
-        const live = await this.geo.currentDetailed(nurseId);
-        if (live) return live;
-      } catch {
-        redisFailed = true;
-      }
+    try {
+      const location = await readLiveLocation({nurseId,redis:this.geo.connection,db:client??this.db,
+        redisEnabled:this.geo.active,allowPostgresFallback:process.env.LOCATION_POSTGRES_FALLBACK_ENABLED==='true'});
+      if (!location?.sessionId) return null;
+      const sql=`SELECT 1 FROM device_sessions ds JOIN nurses n ON n.user_id=ds.user_id
+        WHERE n.id=$1 AND ds.id=$2 AND ds.revoked_at IS NULL`;
+      const params=[nurseId,location.sessionId];
+      const validSession=client ? await client.query(sql,params) : await this.db.query(sql,params);
+      return validSession.rowCount ? location : null;
+    } catch {
+      throw new ServiceUnavailableException({code:'LIVE_LOCATION_UNAVAILABLE'});
     }
-    if (redisFailed && process.env.LOCATION_POSTGRES_FALLBACK_ENABLED === 'false') {
-      throw new ServiceUnavailableException({ code: 'LIVE_LOCATION_UNAVAILABLE' });
-    }
-    const sql = `SELECT ST_Y(location::geometry) AS latitude,
-              ST_X(location::geometry) AS longitude,
-              accuracy_m,
-              recorded_at,
-              captured_at,
-              sequence_number
-       FROM nurse_locations
-       WHERE nurse_id = $1`;
-    const r = client ? await client.query(sql, [nurseId]) : await this.db.query(sql, [nurseId]);
-    if (!r.rowCount) return null;
-    const row = r.rows[0];
-    if (row.latitude === null || row.longitude === null || !row.recorded_at) return null;
-    return {
-      latitude: Number(row.latitude),
-      longitude: Number(row.longitude),
-      accuracyMeters: Number(row.accuracy_m ?? 9999),
-      recordedAt: new Date(row.recorded_at),
-      capturedAt: new Date(row.captured_at ?? row.recorded_at),
-      sequenceNumber: row.sequence_number !== null && row.sequence_number !== undefined
-        ? Number(row.sequence_number)
-        : null,
-      source: 'postgres',
-    };
   }
 }
