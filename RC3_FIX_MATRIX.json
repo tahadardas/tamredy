@@ -1,0 +1,439 @@
+[
+  {
+    "fixId": "FIX-01",
+    "originalFile": [
+      "apps/api/src/admin/admin-nurses.controller.ts",
+      "apps/api/src/auth/applications.controller.ts",
+      "infra/db/migrations/071_rc2_currency_accounts.sql"
+    ],
+    "originalLines": [
+      "apps/api/src/admin/admin-nurses.controller.ts:99-114",
+      "apps/api/src/auth/applications.controller.ts:134-161",
+      "infra/db/migrations/071_rc2_currency_accounts.sql:4-23"
+    ],
+    "fixedFunction": "create, approve, initializeAccount",
+    "changedFiles": [
+      "apps/api/src/admin/admin-nurses.controller.ts",
+      "apps/api/src/auth/applications.controller.ts",
+      "apps/api/src/nurses/nurse-financial-account.service.ts",
+      "infra/db/migrations/080_rc3_financial_accounts.sql"
+    ],
+    "correctedLines": [
+      "apps/api/src/admin/admin-nurses.controller.ts:102-118",
+      "apps/api/src/auth/applications.controller.ts:134-164",
+      "apps/api/src/nurses/nurse-financial-account.service.ts:39-59",
+      "infra/db/migrations/080_rc3_financial_accounts.sql:1-20"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "The owner must configure an approved default account policy or explicitly initialize each applicable account.",
+    "verificationEvidence": "PostgreSQL HTTP onboarding without fixture-created accounts, eligibility and assignment."
+  },
+  {
+    "fixId": "FIX-02",
+    "originalFile": [
+      "apps/api/src/admin/admin-nurses.controller.ts",
+      "apps/api/src/admin/admin-fees.controller.ts",
+      "apps/admin_web/src/pages_nurses.tsx"
+    ],
+    "originalLines": [
+      "apps/api/src/admin/admin-nurses.controller.ts: 2, 53, 111, 113",
+      "apps/api/src/admin/admin-fees.controller.ts: 5, 55, 122, 126, 128-129, 132-133, 142-143, 147, 152-154, 156, 159",
+      "apps/admin_web/src/pages_nurses.tsx: 104"
+    ],
+    "fixedFunction": "list, initialize, update and reconcile nurse financial accounts",
+    "changedFiles": [
+      "apps/api/src/admin/admin-nurses.controller.ts",
+      "apps/api/src/nurses/nurse-financial-account.service.ts",
+      "apps/admin_web/src/nurse_financial_accounts.tsx",
+      "apps/admin_web/src/pages_nurses.tsx"
+    ],
+    "correctedLines": [
+      "apps/api/src/admin/admin-nurses.controller.ts:120-148",
+      "apps/api/src/nurses/nurse-financial-account.service.ts:60-184",
+      "apps/admin_web/src/nurse_financial_accounts.tsx: 1-99",
+      "apps/admin_web/src/pages_nurses.tsx: 1, 105, 172"
+    ],
+    "verificationStatus": "IMPLEMENTED_NOT_VERIFIED",
+    "remainingBlocker": "Independent browser acceptance and historical production reconciliation are pending.",
+    "verificationEvidence": "HTTP account read and initialization exercised by the PostgreSQL financial lifecycle test."
+  },
+  {
+    "fixId": "FIX-03",
+    "originalFile": [
+      "apps/api/src/wallet/financial-reservations.service.ts",
+      "apps/api/src/admin/admin-fees.controller.ts",
+      "apps/api/src/pricing/fees.service.ts",
+      "apps/api/src/nurses/nurses.service.ts"
+    ],
+    "originalLines": [
+      "apps/api/src/wallet/financial-reservations.service.ts:131-150",
+      "apps/api/src/admin/admin-fees.controller.ts:138-159",
+      "apps/api/src/pricing/fees.service.ts:42-102",
+      "apps/api/src/nurses/nurses.service.ts:27"
+    ],
+    "fixedFunction": "commitForInvoice, settle, recomputeEligibility",
+    "changedFiles": [
+      "apps/api/src/wallet/financial-reservations.service.ts",
+      "apps/api/src/admin/admin-fees.controller.ts",
+      "apps/api/src/nurses/nurse-financial-account.service.ts",
+      "apps/api/src/pricing/fees.service.ts",
+      "apps/api/src/nurses/nurses.service.ts",
+      "infra/db/migrations/081_rc3_commission_policy.sql"
+    ],
+    "correctedLines": [
+      "apps/api/src/wallet/financial-reservations.service.ts:91-136",
+      "apps/api/src/admin/admin-fees.controller.ts:148-190",
+      "apps/api/src/nurses/nurse-financial-account.service.ts:142-164",
+      "apps/api/src/pricing/fees.service.ts: 52-53, 61, 66, 75-84, 98, 103, 105-106",
+      "apps/api/src/nurses/nurses.service.ts: 1, 20, 29-31",
+      "infra/db/migrations/081_rc3_commission_policy.sql: 1-117"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Historical balances need evidence-based reconciliation where migration flags them.",
+    "verificationEvidence": "Isolated PostgreSQL verified reservation, settlement, recovered eligibility and separate balances by currency."
+  },
+  {
+    "fixId": "FIX-04",
+    "originalFile": [
+      "infra/db/migrations/072_rc2_shared_eligibility.sql",
+      "apps/api/src/dispatch/assignment.orchestrator.ts",
+      "apps/api/src/pricing/fees.service.ts",
+      "apps/api/src/pricing/pricing.ts"
+    ],
+    "originalLines": [
+      "infra/db/migrations/072_rc2_shared_eligibility.sql:67",
+      "apps/api/src/dispatch/assignment.orchestrator.ts:54-85",
+      "apps/api/src/pricing/fees.service.ts:23-35",
+      "apps/api/src/pricing/pricing.ts:118-147"
+    ],
+    "fixedFunction": "resolve_nurse_commission, nurse_eligibility_reasons, assignLocked, computeBill",
+    "changedFiles": [
+      "infra/db/migrations/081_rc3_commission_policy.sql",
+      "apps/api/src/dispatch/assignment.orchestrator.ts",
+      "apps/api/src/pricing/pricing.ts",
+      "apps/api/src/pricing/pricing-composition.service.ts"
+    ],
+    "correctedLines": [
+      "infra/db/migrations/081_rc3_commission_policy.sql:1-31",
+      "infra/db/migrations/081_rc3_commission_policy.sql:32-94",
+      "apps/api/src/dispatch/assignment.orchestrator.ts:44-87",
+      "apps/api/src/pricing/pricing.ts: 1, 120, 141-143",
+      "apps/api/src/pricing/pricing-composition.service.ts: 2, 111, 187"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": null,
+    "verificationEvidence": "PostgreSQL eligibility and assignment use the same commission policy. Targeted lifecycle test covered tier, zero and rounding."
+  },
+  {
+    "fixId": "FIX-05",
+    "originalFile": [
+      "apps/api/src/admin/admin.controller.ts"
+    ],
+    "originalLines": [
+      "apps/api/src/admin/admin.controller.ts:26-47"
+    ],
+    "fixedFunction": "dashboard, loadFinancialDashboard",
+    "changedFiles": [
+      "apps/api/src/admin/admin.controller.ts",
+      "apps/api/src/admin/admin-financial-report.service.ts",
+      "apps/admin_web/src/pages.tsx"
+    ],
+    "correctedLines": [
+      "apps/api/src/admin/admin.controller.ts:25-39",
+      "apps/api/src/admin/admin-financial-report.service.ts:3-55",
+      "apps/admin_web/src/pages.tsx: 15-22, 24-26, 140-147"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": null,
+    "verificationEvidence": "Read-only PostgreSQL check on test journals returned eight separate metrics and exact decimal strings, including billed and collected SYP_NEW."
+  },
+  {
+    "fixId": "FIX-06",
+    "originalFile": [
+      "infra/docker/docker-compose.prod.yml",
+      "infra/docker/docker-compose.yml",
+      "infra/docker/.env.prod.example",
+      "packages/backend-policy/capabilities.mjs",
+      "apps/worker/src/live-location.ts"
+    ],
+    "originalLines": [
+      "infra/docker/docker-compose.prod.yml:7-35,120-133",
+      "infra/docker/docker-compose.yml: no specific line supplied",
+      "infra/docker/.env.prod.example: no specific line supplied",
+      "packages/backend-policy/capabilities.mjs:2-16",
+      "apps/worker/src/live-location.ts:7-35"
+    ],
+    "fixedFunction": "shared API/Worker runtime environment, capability resolution",
+    "changedFiles": [
+      "infra/docker/docker-compose.prod.yml",
+      "infra/docker/docker-compose.yml",
+      "infra/docker/.env.prod.example",
+      "packages/backend-policy/capabilities.mjs",
+      "apps/worker/src/live-location.ts",
+      "infra/docker/release/release-checks.py"
+    ],
+    "correctedLines": [
+      "infra/docker/docker-compose.prod.yml:7-38",
+      "infra/docker/docker-compose.yml: 1-2",
+      "infra/docker/.env.prod.example: 46-53",
+      "packages/backend-policy/capabilities.mjs: 1-2, 11-15, 29-34",
+      "apps/worker/src/live-location.ts: 3-6, 10, 16, 28-47, 51",
+      "infra/docker/release/release-checks.py:114-148"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Production environment values remain with the owner.",
+    "verificationEvidence": "GitHub Actions rendered production Compose with synthetic inputs, checked aligned flags and rejected invalid flag values."
+  },
+  {
+    "fixId": "FIX-07",
+    "originalFile": [
+      "apps/api/src/capabilities/readiness.service.ts",
+      "apps/api/src/capabilities/readiness-queries.ts",
+      "apps/worker/src/main.ts",
+      "infra/db/migrations/079_rc2_worker_heartbeat.sql",
+      "infra/docker/docker-compose.prod.yml"
+    ],
+    "originalLines": [
+      "apps/api/src/capabilities/readiness.service.ts:45-104",
+      "apps/api/src/capabilities/readiness-queries.ts: 1-11",
+      "apps/worker/src/main.ts:43-76,94-124",
+      "infra/db/migrations/079_rc2_worker_heartbeat.sql: no specific line supplied",
+      "infra/docker/docker-compose.prod.yml:132"
+    ],
+    "fixedFunction": "ReadinessService.report, worker push health and heartbeat",
+    "changedFiles": [
+      "apps/api/src/capabilities/readiness.service.ts",
+      "apps/api/src/capabilities/readiness-queries.ts",
+      "apps/worker/src/main.ts",
+      "apps/worker/src/push.ts",
+      "infra/db/migrations/085_rc3_worker_runtime_status.sql"
+    ],
+    "correctedLines": [
+      "apps/api/src/capabilities/readiness.service.ts:14-110",
+      "apps/api/src/capabilities/readiness-queries.ts: 1-19",
+      "apps/worker/src/main.ts: 4, 12, 32-33, 46, 48-49, 54-67, 69, 71-77, 79-82, 106, 109-122, 137, 139, 142, 145, 174, 186, 188-191",
+      "apps/worker/src/push.ts: 1-2, 186-191, 249-252, 258, 261-262, 264-265, 491-492, 598-599, 650-652, 657-658",
+      "infra/db/migrations/085_rc3_worker_runtime_status.sql: 1-12"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Real Firebase credentials and device delivery require Staging.",
+    "verificationEvidence": "Readiness tests covered worker-reported push status, mismatch, migration completeness and actual PostgreSQL outbox health."
+  },
+  {
+    "fixId": "FIX-08",
+    "originalFile": [
+      "apps/api/src/voice/voice.service.ts",
+      "apps/worker/src/outbox.ts"
+    ],
+    "originalLines": [
+      "apps/api/src/voice/voice.service.ts:39-49,68-159",
+      "apps/worker/src/outbox.ts: 3"
+    ],
+    "fixedFunction": "initiateCall, sendCallEvent, worker outbox delivery",
+    "changedFiles": [
+      "apps/api/src/voice/voice.service.ts",
+      "apps/api/src/realtime/live.gateway.ts",
+      "apps/worker/src/outbox.ts",
+      "apps/worker/src/call-delivery.ts"
+    ],
+    "correctedLines": [
+      "apps/api/src/voice/voice.service.ts:46-260",
+      "apps/api/src/realtime/live.gateway.ts: 30-33, 35-41, 212-216",
+      "apps/worker/src/outbox.ts: 3-4, 48-64",
+      "apps/worker/src/call-delivery.ts: 1-15"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Real device, Redis and WebRTC/ICE/TURN verification remains on Staging.",
+    "verificationEvidence": "PostgreSQL tested committed incoming event, failed transport, pending outbox retry and stable event IDs."
+  },
+  {
+    "fixId": "FIX-09",
+    "originalFile": [
+      "apps/worker/src/dispatch.ts",
+      "apps/worker/src/open-dispatch.ts"
+    ],
+    "originalLines": [
+      "apps/worker/src/dispatch.ts:25-37,142-157",
+      "apps/worker/src/open-dispatch.ts: 1-2, 45, 47-57, 59, 69"
+    ],
+    "fixedFunction": "collectDispatchCandidates, diagnoseExclusions, doDispatch, open dispatch",
+    "changedFiles": [
+      "apps/worker/src/dispatch-candidates.ts",
+      "apps/worker/src/dispatch.ts",
+      "apps/worker/src/open-dispatch.ts",
+      "apps/api/src/dispatch/dispatch.service.ts"
+    ],
+    "correctedLines": [
+      "apps/worker/src/dispatch-candidates.ts: 1-54",
+      "apps/worker/src/dispatch.ts:100-156",
+      "apps/worker/src/open-dispatch.ts:40-61",
+      "apps/api/src/dispatch/dispatch.service.ts: 4, 186, 328-331"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Large-scale performance measurements were deferred.",
+    "verificationEvidence": "Worker dispatch tests covered wave eligibility, open discovery, deduplication and deadlines. PostgreSQL two-acceptor test verified atomic assignment."
+  },
+  {
+    "fixId": "FIX-10",
+    "originalFile": [
+      "apps/nurse_app/lib/features/visit/visit_store.dart",
+      "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart",
+      "apps/api/src/pricing/billing.service.ts",
+      "apps/api/src/pricing/pricing.controller.ts"
+    ],
+    "originalLines": [
+      "apps/nurse_app/lib/features/visit/visit_store.dart:554-673",
+      "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart:266-279,367-370",
+      "apps/api/src/pricing/billing.service.ts:177-238",
+      "apps/api/src/pricing/pricing.controller.ts: 6, 23, 31, 35-39, 86"
+    ],
+    "fixedFunction": "loadBill, collectCash, resumeCashCollection, collectionStatus",
+    "changedFiles": [
+      "apps/nurse_app/lib/features/visit/visit_store.dart",
+      "apps/nurse_app/lib/features/visit/pending_cash_collection_store.dart",
+      "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart",
+      "apps/api/src/pricing/billing.service.ts",
+      "apps/api/src/pricing/pricing.controller.ts"
+    ],
+    "correctedLines": [
+      "apps/nurse_app/lib/features/visit/visit_store.dart:565-729",
+      "apps/nurse_app/lib/features/visit/pending_cash_collection_store.dart: 1-92",
+      "apps/nurse_app/lib/features/visit/visit_workspace_screen.dart: 13, 275-281, 328, 333-336, 351, 363, 373, 379-387",
+      "apps/api/src/pricing/billing.service.ts: 5, 7, 188-190, 194, 203-204, 213, 218-220, 268-284, 303",
+      "apps/api/src/pricing/pricing.controller.ts:107-126"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": null,
+    "verificationEvidence": "Flutter and PostgreSQL covered lost response, key migration, account scope and legitimate equal-value installments without replay duplication."
+  },
+  {
+    "fixId": "FIX-11",
+    "originalFile": [
+      "packages/flutter_core/lib/src/format.dart",
+      "packages/flutter_core/lib/src/pricing.dart",
+      "packages/flutter_core/lib/src/core/api_models.dart",
+      "apps/api/src/pricing/pricing.controller.ts"
+    ],
+    "originalLines": [
+      "packages/flutter_core/lib/src/format.dart:4-12",
+      "packages/flutter_core/lib/src/pricing.dart:111",
+      "packages/flutter_core/lib/src/core/api_models.dart:254,414-423,528-549,594-598",
+      "apps/api/src/pricing/pricing.controller.ts:15-39"
+    ],
+    "fixedFunction": "ExactMoney, formatMoney, BillInfo.fromJson, per-currency billing responses",
+    "changedFiles": [
+      "packages/flutter_core/lib/src/format.dart",
+      "packages/flutter_core/lib/src/pricing.dart",
+      "packages/flutter_core/lib/src/core/api_models.dart",
+      "apps/api/src/pricing/pricing.controller.ts",
+      "apps/api/src/pricing/cash-currency.ts",
+      "apps/nurse_app/lib/features/finance/financial_center_screen.dart",
+      "apps/patient_app/lib/features/finance/invoice_payment_screen.dart"
+    ],
+    "correctedLines": [
+      "packages/flutter_core/lib/src/format.dart:4-75",
+      "packages/flutter_core/lib/src/pricing.dart:111-205",
+      "packages/flutter_core/lib/src/core/api_models.dart: 2-12, 265, 280-282, 316, 381-383, 432-436, 443-444, 549-551, 562, 573-575, 590-593, 607-608, 626, 629-630, 640-641",
+      "apps/api/src/pricing/pricing.controller.ts: 6-7, 24, 32-42, 44, 46-48, 50-51, 98, 119-124",
+      "apps/api/src/pricing/cash-currency.ts: 1-10",
+      "apps/nurse_app/lib/features/finance/financial_center_screen.dart: 5-9, 49-50, 56-59, 64, 74, 87-88, 90, 106, 113",
+      "apps/patient_app/lib/features/finance/invoice_payment_screen.dart: 84, 123, 138-141, 144, 146-150, 175, 183"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": null,
+    "verificationEvidence": "Flutter tests covered precision, currency formats and partial bill state. PostgreSQL covered separate currency balances."
+  },
+  {
+    "fixId": "FIX-12",
+    "originalFile": [
+      "apps/patient_app/android/app/build.gradle.kts",
+      "apps/nurse_app/android/app/build.gradle.kts"
+    ],
+    "originalLines": [
+      "apps/patient_app/android/app/build.gradle.kts:39-43",
+      "apps/nurse_app/android/app/build.gradle.kts:39-43"
+    ],
+    "fixedFunction": "storeRelease signing configuration and explicit review signing",
+    "changedFiles": [
+      "apps/patient_app/android/app/build.gradle.kts",
+      "apps/nurse_app/android/app/build.gradle.kts",
+      "scripts/build-rc3-mobile.ps1"
+    ],
+    "correctedLines": [
+      "apps/patient_app/android/app/build.gradle.kts:15-69",
+      "apps/nurse_app/android/app/build.gradle.kts:15-69",
+      "scripts/build-rc3-mobile.ps1: 1-41"
+    ],
+    "verificationStatus": "IMPLEMENTED_NOT_VERIFIED",
+    "remainingBlocker": "Store keystores, credentials and approved next version codes were unavailable. Live API verification belongs to Staging.",
+    "verificationEvidence": "Review artifact build and signature evidence are enumerated in the release manifest."
+  },
+  {
+    "fixId": "FIX-13",
+    "originalFile": [
+      "scripts/make-deploy-bundle.ps1"
+    ],
+    "originalLines": [
+      "scripts/make-deploy-bundle.ps1: 1-18, 20-55"
+    ],
+    "fixedFunction": "package_rc3 source and source-build preflight, backup, deploy, verify, rollback",
+    "changedFiles": [
+      "scripts/make-deploy-bundle.ps1",
+      "scripts/package-rc3-source.py",
+      "infra/docker/release/preflight.sh",
+      "infra/docker/release/backup.sh",
+      "infra/docker/release/deploy.sh",
+      "infra/docker/release/verify.sh",
+      "infra/docker/release/rollback.sh",
+      "infra/docker/release/DEPLOY_AR.txt"
+    ],
+    "correctedLines": [
+      "scripts/make-deploy-bundle.ps1: 1-6, 8-14, 16-17",
+      "scripts/package-rc3-source.py: 1-169",
+      "infra/docker/release/preflight.sh: 1-25",
+      "infra/docker/release/backup.sh: 1-51",
+      "infra/docker/release/deploy.sh: 1-47",
+      "infra/docker/release/verify.sh: 1-33",
+      "infra/docker/release/rollback.sh: 1-29",
+      "infra/docker/release/DEPLOY_AR.txt: 1-34"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Docker engine unavailable locally. Source archives require a Linux Docker builder. Staging recovery drill remains pending.",
+    "verificationEvidence": "Source archives and extracted content checks, checksums, Bash syntax, four release tests and synthetic Compose validation."
+  },
+  {
+    "fixId": "FIX-14",
+    "originalFile": [
+      "apps/api/tests/core-stabilization.pg.test.mjs",
+      "apps/nurse_app/test/rc2_visit_isolation_test.dart"
+    ],
+    "originalLines": [
+      "apps/api/tests/core-stabilization.pg.test.mjs: 105, 109-111, 114",
+      "apps/nurse_app/test/rc2_visit_isolation_test.dart: 17, 42, 45-46, 49-50, 52, 54, 56-57, 59"
+    ],
+    "fixedFunction": "targeted PostgreSQL, Worker, Flutter and deployment validation",
+    "changedFiles": [
+      "apps/api/tests/core-stabilization.pg.test.mjs",
+      "apps/api/tests/rc2-readiness.test.mjs",
+      "apps/api/tests/rc3-financial-lifecycle.pg.test.mjs",
+      "apps/api/tests/rc3-voice-outbox.test.mjs",
+      "apps/nurse_app/test/rc2_visit_isolation_test.dart",
+      "packages/flutter_core/test/rc3_money_contract_test.dart",
+      "scripts/test-rc3-release.py",
+      ".github/workflows/rc3-release.yml"
+    ],
+    "correctedLines": [
+      "apps/api/tests/core-stabilization.pg.test.mjs: 105-106, 110-124, 127",
+      "apps/api/tests/rc2-readiness.test.mjs: 5, 22-26, 32, 45, 75-77, 81-83, 87, 93-105",
+      "apps/api/tests/rc3-financial-lifecycle.pg.test.mjs: 1-138",
+      "apps/api/tests/rc3-voice-outbox.test.mjs: 1-69",
+      "apps/nurse_app/test/rc2_visit_isolation_test.dart: 1, 17-18, 20-25, 50, 53-61, 64-66, 68, 71-73, 75-81, 83-86, 89-99",
+      "packages/flutter_core/test/rc3_money_contract_test.dart: 1-20",
+      "scripts/test-rc3-release.py: 1-100",
+      ".github/workflows/rc3-release.yml: 1-60"
+    ],
+    "verificationStatus": "VERIFIED",
+    "remainingBlocker": "Deferred Staging tests are listed in the release manifest.",
+    "verificationEvidence": "10/10 targeted Node tests, 8/8 Flutter tests, 4/4 release tests, 78 migrations, small atomic assignment race and real Compose render with synthetic configuration."
+  }
+]

@@ -1,0 +1,379 @@
+{
+  "releaseName": "Tamreedy 3.1 RC3",
+  "referenceCommit": "8ccec5ecaf38956c889001f5b570d90f384f902c",
+  "targetBranch": "feature/tamreedy-rc3-production-closure",
+  "createdAt": "2026-11-28T17:33:46Z",
+  "sourceCommit": "d142c573b3efe714a9c6cfbe13f9330036eba116",
+  "serverArchitecture": "source-build",
+  "requiredMigrations": [
+    "001_core.sql",
+    "002_query_indexes.sql",
+    "003_admin_reads_audit.sql",
+    "004_auth_otp_refresh.sql",
+    "005_password_accounts_push.sql",
+    "006_pricing_promos_rewards.sql",
+    "007_fees_tiers_dues_referrals.sql",
+    "008_marketing.sql",
+    "009_nurse_admin_documents_settings.sql",
+    "010_self_registration.sql",
+    "011_regions.sql",
+    "012_area_coordinates.sql",
+    "013_default_password.sql",
+    "014_applications_doc_kinds.sql",
+    "015_seed_services_baseline.sql",
+    "016_expand_dispatch_waves_limit.sql",
+    "017_active_lookups_and_catalog_indexes.sql",
+    "018_dispatch_diagnostics_and_deliveries.sql",
+    "019_device_sessions_and_persistent_auth.sql",
+    "020_database_audit_and_index_optimization.sql",
+    "021_open_dispatch_and_cancellation_foundation.sql",
+    "022_open_dispatch_eligibility.sql",
+    "023_outbox_delivery_leases.sql",
+    "024_departure_reminders.sql",
+    "025_manual_password_recovery.sql",
+    "026_user_saved_places.sql",
+    "027_scheduled_visits.sql",
+    "028_guardian_foundation.sql",
+    "029_guardian_checkins.sql",
+    "030_guardian_staff_cases.sql",
+    "031_guardian_sos_trigger_time.sql",
+    "032_trusted_contacts.sql",
+    "033_safety_abort.sql",
+    "034_emergency_directory.sql",
+    "035_safety_shifts.sql",
+    "036_guardian_case_routing.sql",
+    "037_guardian_handovers.sql",
+    "038_guardian_night_policy.sql",
+    "039_guardian_visit_risk.sql",
+    "040_guardian_schedule_preflight.sql",
+    "041_guardian_evidence_exports.sql",
+    "042_competitive_expansion_catalog_and_items.sql",
+    "042_guardian_retention.sql",
+    "043_tamreedy_connect_and_trust.sql",
+    "044_smart_scheduling_and_recurring.sql",
+    "045_health_records_and_clinical_observations.sql",
+    "046_retention_and_financial_expansion.sql",
+    "047_financial_ledger_and_multi_model.sql",
+    "048_tamreedy_voice_signaling.sql",
+    "049_notifications_center.sql",
+    "050_smart_booking_and_open_marketplace.sql",
+    "051_admin_full_safety_supervisor_grants.sql",
+    "052_admin_scheduled_visit_removal.sql",
+    "052_request_lifecycle_integrity.sql",
+    "053_request_geographic_attribution.sql",
+    "054_scheduling_reservations.sql",
+    "055_financial_source_of_truth.sql",
+    "056_clinical_approval_gate.sql",
+    "057_security_privacy_hardening.sql",
+    "058_delivery_retries_and_marketplace_paging.sql",
+    "059_backfill_pending_clinical_reviews.sql",
+    "060_live_location_engine.sql",
+    "061_voice_lifecycle_and_quality.sql",
+    "062_arabic_search_indexes.sql",
+    "063_notifications_routing_and_device_tokens.sql",
+    "064_booking_mode_lifecycle_unification.sql",
+    "065_financial_commission_snapshot_and_backfill.sql",
+    "066_proposal_accept_idempotency.sql",
+    "067_device_session_generation.sql",
+    "068_clinical_review_duration_and_closure.sql",
+    "069_voice_signal_atomic_ordering.sql",
+    "070_rc2_booking_terms.sql",
+    "071_rc2_currency_accounts.sql",
+    "072_rc2_shared_eligibility.sql",
+    "079_rc2_worker_heartbeat.sql",
+    "080_rc3_financial_accounts.sql",
+    "081_rc3_commission_policy.sql",
+    "085_rc3_worker_runtime_status.sql"
+  ],
+  "apiImageTag": "tamreedy-api:rc3-d142c573b3ef",
+  "workerImageTag": "tamreedy-worker:rc3-d142c573b3ef",
+  "adminImageTag": "tamreedy-admin:rc3-d142c573b3ef",
+  "sourceBundle": [
+    {
+      "path": "tamreedy-server.tar.gz",
+      "size": 1395546,
+      "sha256": "6fb549f473f0792dfb3b7991e252d2048e4acee7d89dad6440340f946f5eb361"
+    },
+    {
+      "path": "tamreedy-server.zip",
+      "size": 1605058,
+      "sha256": "5241ba71ae27410577b2c2d510e1a9bf579a5e96dc6bb4b15eab5b722ea040a3"
+    }
+  ],
+  "prebuiltImagesAvailable": false,
+  "prebuiltImagesArchive": null,
+  "serverUploadFiles": [
+    "tamreedy-server.tar.gz",
+    "RELEASE_MANIFEST.json",
+    "SHA256SUMS.txt"
+  ],
+  "androidPatientArtifact": {
+    "applicationId": "com.tamreedy.patient",
+    "versionName": "3.1.0-rc.3",
+    "versionCode": 8,
+    "signingType": "debug-signed-review",
+    "signerCertificateSha256": "39dcf10be4f422cccd52e5dd0a9b38f3c9f586b145ce54bd7f1db3379e936641",
+    "apk": {
+      "path": "mobile/tamreedy-patient-3.1.0-rc.3-debug-signed-review.apk",
+      "size": 100441449,
+      "sha256": "42b2acfc9dd1d96d52be31cd891c133ad81c5d47b05094bad3271b61ec1433f0"
+    },
+    "aab": {
+      "path": "mobile/tamreedy-patient-3.1.0-rc.3-debug-signed-review.aab",
+      "size": 81057261,
+      "sha256": "2083256c6f926b361e9cff1321928183d46afb044784332c365aec5a2d97fa7e"
+    }
+  },
+  "androidNurseArtifact": {
+    "applicationId": "com.tamreedy.nurse",
+    "versionName": "3.1.0-rc.3",
+    "versionCode": 8,
+    "signingType": "debug-signed-review",
+    "signerCertificateSha256": "39dcf10be4f422cccd52e5dd0a9b38f3c9f586b145ce54bd7f1db3379e936641",
+    "apk": {
+      "path": "mobile/tamreedy-nurse-3.1.0-rc.3-debug-signed-review.apk",
+      "size": 99392269,
+      "sha256": "a06e02b44e731e5d714854efa519e52028d7952c8b2adf204e7164f1013ca810"
+    },
+    "aab": {
+      "path": "mobile/tamreedy-nurse-3.1.0-rc.3-debug-signed-review.aab",
+      "size": 80224921,
+      "sha256": "02c4c84e67ab9bc633cab3b8de236b5743529de7c28a22e1e489f84187cc061f"
+    }
+  },
+  "signingType": "debug-signed-review",
+  "apiBaseUrl": "https://tamredy.dardus.com.sy/api",
+  "deploymentFiles": [
+    {
+      "path": "DEPLOY_AR.txt",
+      "size": 3827,
+      "sha256": "d55295be4ae6e7242ad928a7d229ba170f20ef027f49b4fda5a5eec4b5dfd793"
+    },
+    {
+      "path": "scripts/backup.sh",
+      "size": 3145,
+      "sha256": "b2e0f538402b00cb2559f53685534232b7245c4c9ebce72061cf3e00fedbe8de"
+    },
+    {
+      "path": "scripts/common.sh",
+      "size": 3678,
+      "sha256": "4796e5ac2c34343ceaacf81e13b65d243822d736aec691508bddda0d6b1e1c8b"
+    },
+    {
+      "path": "scripts/deploy.sh",
+      "size": 2333,
+      "sha256": "a8c75892951809b06be2a14815a39f24d589c9e72d79fd1322658acfd76a603d"
+    },
+    {
+      "path": "scripts/images.override.yml",
+      "size": 285,
+      "sha256": "c4160e0e7de877530f130e0e0a5349c97624b591d53db483922d71ebe58ddc11"
+    },
+    {
+      "path": "scripts/preflight.sh",
+      "size": 2085,
+      "sha256": "e49e486ccba0f23f8d04cf3befc4702c11de5d9be985274d95d05a877ecf341a"
+    },
+    {
+      "path": "scripts/release-checks.py",
+      "size": 9240,
+      "sha256": "1f803fc0427415d3a8de0224e826681a13802f7de40ee91b8699f73d00c27ae8"
+    },
+    {
+      "path": "scripts/rollback.sh",
+      "size": 2109,
+      "sha256": "e9c13d9febc2089c1884ef19560fc0abe86933386c799b2ce20371bbfd224f8e"
+    },
+    {
+      "path": "scripts/verify.sh",
+      "size": 1812,
+      "sha256": "3399fe9a6c5366d146faeed44a5cb08810458c7fb42a9fa6de7dc6bd8a5a839b"
+    }
+  ],
+  "evidenceFiles": [
+    {
+      "path": "SERVER_BUNDLE_EVIDENCE.json",
+      "size": 3845,
+      "sha256": "863b387961f6ced8ca36699f9fda478f74fbb86e8d2f464855ef756fe69f6910"
+    },
+    {
+      "path": "validation/admin-build.txt",
+      "size": 447,
+      "sha256": "850f2f4a9ef10688d29ed8d3dfa5a4e4fbbd067eecfd3ba2f41b0e405817b754"
+    },
+    {
+      "path": "validation/api-build.txt",
+      "size": 78,
+      "sha256": "90bd8058432f70c3a7aadba4e6bf8f4e345c2ecd26384e0c4d06397dbbdbd08c"
+    },
+    {
+      "path": "validation/dispatch-final.txt",
+      "size": 1622,
+      "sha256": "0c4bdc8b63ae8e23e01334b6d6bfdee29d53387c9f01ae61a3981f373b3664fd"
+    },
+    {
+      "path": "validation/flutter_core-analyze.txt",
+      "size": 99,
+      "sha256": "bc477c4a70e21e8047160e2bbffe8c3ff57ea5c75d579986d006d937bbadf06e"
+    },
+    {
+      "path": "validation/flutter_core-test.txt",
+      "size": 258,
+      "sha256": "2a8bcc7da7360c7087ea0a8b61e57fe1053e077570accfcbc4afe67a09f817e3"
+    },
+    {
+      "path": "validation/nurse_app-analyze.txt",
+      "size": 99,
+      "sha256": "5f360b406e9e591455388b4c102fd93f5fe21bf37fd5b80988a8bf0354e19a11"
+    },
+    {
+      "path": "validation/nurse_app-test.txt",
+      "size": 575,
+      "sha256": "fad5ebdf4dff2f3d39bdb4536b116cc61bdb96c05221798a722f974fb3be4e56"
+    },
+    {
+      "path": "validation/onboarding-final.txt",
+      "size": 227,
+      "sha256": "0dde8ef73d8bd4d2b3c684edc7186dc77718e030c8acc1e9bf1231ca48066eee"
+    },
+    {
+      "path": "validation/patient_app-analyze.txt",
+      "size": 99,
+      "sha256": "dcfde85e7f216f2ff4c64a6dc15f1394ee2cae47f6bb91697329ada314523510"
+    },
+    {
+      "path": "validation/report-and-migrations.txt",
+      "size": 98,
+      "sha256": "684b34c1483288dba4232e50e3b930170c1cce1e8c906f45792b8ec51d3fa428"
+    },
+    {
+      "path": "validation/targeted-final.txt",
+      "size": 4126,
+      "sha256": "295074c03c49af61f901825db0534195619361c75856bcbdf325202ec36ae902"
+    },
+    {
+      "path": "validation/typecheck.txt",
+      "size": 323,
+      "sha256": "8bade20492ce4f2cbac64a72bc7b0dd2a8bc0dc72c0528b7c9df7f1b69fca6eb"
+    },
+    {
+      "path": "validation/worker-build.txt",
+      "size": 90,
+      "sha256": "477aa7a3dcdfd3654240d97e34949f2f74926e8e836993cd93f10c0b63f7cb29"
+    },
+    {
+      "path": "mobile/nurse-apk-build.log",
+      "size": 1232,
+      "sha256": "446b38167caa39bc8fadb9c1826ecb7b584aa8efe5b0197be4ffa3cd031ff976"
+    },
+    {
+      "path": "mobile/nurse-appbundle-build.log",
+      "size": 1234,
+      "sha256": "c5c8cb972e8206bb5e3e42430a86822f4d40ca179c3afaa67f18343570107cff"
+    },
+    {
+      "path": "mobile/patient-apk-build.log",
+      "size": 1232,
+      "sha256": "b4ac8a57d98a0a34c1d64d5c914d69b1e2b7fde9c99d98d087516da021364ef2"
+    },
+    {
+      "path": "mobile/patient-appbundle-build.log",
+      "size": 1021,
+      "sha256": "65198f588b20c7310972124246c8cc24a3e93b74658b9c479454d31f39df7ecd"
+    }
+  ],
+  "fixMatrix": {
+    "path": "RC3_FIX_MATRIX.json",
+    "size": 20434,
+    "sha256": "9d2ae916a15b16e56f5fe9ba1066a647eb2e780be7628a3c6bd80b38697929a0"
+  },
+  "validationResults": {
+    "nodeTargeted": {
+      "status": "PASS",
+      "passed": 10,
+      "failed": 0,
+      "evidence": "validation/targeted-final.txt"
+    },
+    "postgresql": {
+      "status": "PASS",
+      "appliedMigrations": 78,
+      "financialDashboard": "Eight independent per-currency metrics, exact decimal strings in billed and collected amounts"
+    },
+    "flutterTargeted": {
+      "status": "PASS",
+      "passed": 8,
+      "failed": 0,
+      "packages": {
+        "flutter_core": 2,
+        "nurse_app": 6
+      }
+    },
+    "flutterAnalyze": {
+      "status": "PASS",
+      "packages": [
+        "flutter_core",
+        "nurse_app",
+        "patient_app"
+      ]
+    },
+    "releaseScripts": {
+      "status": "PASS",
+      "pythonPassed": 4,
+      "bashSyntax": "PASS"
+    },
+    "syntheticCompose": {
+      "status": "PASS",
+      "servicesStarted": false,
+      "run": "https://github.com/tahadardas/tamredy/actions/runs/46170518141"
+    },
+    "serverBuild": {
+      "status": "PASS",
+      "commands": [
+        "pnpm typecheck",
+        "pnpm --filter @tamreedy/api build",
+        "pnpm --filter @tamreedy/worker build",
+        "pnpm --filter @tamreedy/admin build"
+      ]
+    },
+    "sourceArchives": {
+      "status": "PASS",
+      "formats": [
+        "tar.gz",
+        "zip"
+      ],
+      "verified": [
+        "checksums",
+        "members",
+        "migrations",
+        "extraction"
+      ]
+    },
+    "androidReview": {
+      "status": "PASS",
+      "outputs": 4,
+      "verified": [
+        "apksigner",
+        "aapt2",
+        "jarsigner",
+        "keytool"
+      ]
+    },
+    "linuxDockerImages": {
+      "status": "DEFERRED",
+      "reason": "No local Docker Engine. Source build is provided."
+    }
+  },
+  "deferredTests": [
+    "Staging large-scale dispatch and WebSocket load, and long performance tests",
+    "Staging real-device Firebase push delivery and WebRTC/ICE/TURN",
+    "Independent restoration test for PostgreSQL and encrypted uploads",
+    "Production smoke testing after authorized deployment and iOS build on macOS",
+    "Admin account-management browser acceptance and review of historical account reconciliations"
+  ],
+  "remainingBlockers": [
+    "Linux host with Docker Engine/Compose v2 and the current protected environment, volumes, encryption key and applicable Firebase/TURN files",
+    "Approved finance onboarding policy and evidence for flagged legacy accounts",
+    "Store keystores and credentials for both apps and their verified next store version codes; version code 8 is for review only",
+    "Owner-authorized maintenance window and independent Staging sign-off before commercial release"
+  ]
+}
