@@ -1,3 +1,4 @@
+import { readFinancialPolicy } from '../nurses/nurse-financial-account.service.js';
 import { lockAccountAdministration, removeAccount } from './account-removal.js';
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Put, Query, Request, UseGuards } from '@nestjs/common';
 import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
@@ -11,6 +12,10 @@ const str = (v: unknown, max: number, code: string) => { if (typeof v !== 'strin
 
 /** Each setting group validates its own shape; unknown keys are dropped so junk can never be stored. */
 const VALIDATORS: Record<string, (v: any) => unknown> = {
+  nurse_financial_default_policy: v => {
+    if (v === null || v?.enabled === false) return null;
+    return readFinancialPolicy(v) ?? bad('INVALID_FINANCIAL_ACCOUNT_POLICY');
+  },
   company: v => ({ name: str(v?.name ?? '', 80, 'BAD_NAME'), phone: str(v?.phone ?? '', 30, 'BAD_PHONE'), email: str(v?.email ?? '', 120, 'BAD_EMAIL'), address: str(v?.address ?? '', 200, 'BAD_ADDRESS'), currencyLabel: str(v?.currencyLabel ?? 'ل.س', 12, 'BAD_CURRENCY') }),
   dispatch: v => {
     if (!Array.isArray(v?.waves) || v.waves.length < 1 || v.waves.length > 5) bad('BAD_WAVES');

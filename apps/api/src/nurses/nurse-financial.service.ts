@@ -61,7 +61,8 @@ export class NurseFinancialService {
 
     // 3. Nurse financial account & credit limit
     const accRes = await this.db.query(`
-      SELECT currency_code, financial_model, credit_limit, prepaid_balance, reserved_balance, settlement_required
+      SELECT currency_code, financial_model, credit_limit, prepaid_balance, reserved_balance, settlement_required,
+        greatest(0,prepaid_balance-reserved_balance)::text AS available_balance
       FROM nurse_financial_currency_accounts
       WHERE nurse_id = $1 ORDER BY currency_code
     `, [nurseId]);
@@ -126,12 +127,14 @@ export class NurseFinancialService {
 
     return {
       hasFinancialAccount,
+      financialStatus:hasFinancialAccount?'FINANCIAL_CONFIGURED':'FINANCIAL_SETUP_REQUIRED',
+      isFinanciallyBlocked:accRes.rows.length>0 && accRes.rows.every(row=>row.settlement_required===true),
       legacyReconciliationRequired: legacy.rows.some(row => row.reconciliation_required),
       financialAccountsByCurrency: accRes.rows.map(row => ({
         currencyCode:row.currency_code, financialModel:row.financial_model,
-        creditLimit:Number(row.credit_limit),prepaidBalance:Number(row.prepaid_balance),
-        reservedBalance:Number(row.reserved_balance),
-        availableBalance:Math.max(0,Number(row.prepaid_balance)-Number(row.reserved_balance)),
+        creditLimit:row.credit_limit,prepaidBalance:row.prepaid_balance,
+        reservedBalance:row.reserved_balance,
+        availableBalance:row.available_balance,
         settlementRequired:row.settlement_required,
       })),
       currencyCode: primaryCurrency,

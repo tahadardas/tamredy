@@ -85,6 +85,10 @@ class TamreedyApi {
     if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
       throw StateError('API_BASE_URL must be a valid URL');
     }
+    if (kReleaseMode && (kAppEnvironment == AppEnvironment.dev ||
+        const {'localhost', '127.0.0.1', '::1', '10.0.2.2', '0.0.0.0'}.contains(uri.host))) {
+      throw StateError('Release builds require a non-development API_BASE_URL');
+    }
     if (kAppEnvironment == AppEnvironment.production) {
       if (uri.scheme != 'https') {
         throw StateError('Production API_BASE_URL must be a valid HTTPS URL');
@@ -368,6 +372,21 @@ class TamreedyApi {
   Future<String?> getCachedRole() => _storage.read(key: 'cached_user_role');
 
   Future<String?> readLocal(String key) => _storage.read(key: 'pref_$key');
+
+  Future<Map<String, String>> readLocalByPrefix(String prefix) async {
+    final scoped = 'pref_$prefix';
+    return {
+      for (final entry in (await _storage.readAll()).entries)
+        if (entry.key.startsWith(scoped)) entry.key.substring(5): entry.value,
+    };
+  }
+
+  Future<Map<String, dynamic>> readCashCollection(String requestId, String key) async {
+    final response = await dio.get('/v1/nurse/requests/$requestId/collection-status',
+      options: RequestTimeoutPolicy.forClass(ApiRequestClass.read)
+          .toOptions(base: Options(headers: {'Idempotency-Key': key})));
+    return Map<String, dynamic>.from(response.data as Map);
+  }
 
   Future<void> writeLocal(String key, String? value) => value == null
       ? _storage.delete(key: 'pref_$key')

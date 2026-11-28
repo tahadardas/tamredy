@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { LedgerService, fromMinor, toMinor, type LedgerLegInput } from '../wallet/ledger.service.js';
+import { assertCashCurrency } from './cash-currency.js';
 import { FinancialReservationsService } from '../wallet/financial-reservations.service.js';
-import { DuesService } from './fees.service.js';
+import { DuesService, type Q } from './fees.service.js';
 import { ReferralService } from './referral.service.js';
 import { buildNotificationPayload } from '../notifications/notification-routing.js';
 
@@ -184,10 +185,13 @@ export class BillingService {
     if (!idempotencyKey || idempotencyKey.length > 128) {
       throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
     }
+    if (!Number.isSafeInteger(amount) || amount < 1 || amount > 1_000_000_000) {
+      throw new BadRequestException({code:'INVALID_CASH_COLLECTION_AMOUNT'});
+    }
     const digest = createHash('sha256').update(JSON.stringify({ requestId, amount })).digest('hex');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
       [`payment.collection:${nurseUserId}:${idempotencyKey}`]);
-    const existing = await client.query(`SELECT cc.*,i.status AS invoice_status,
+    const existing = await client.query(`SELECT cc.*,i.status AS invoice_status,i.id AS invoice_id,i.version AS invoice_version,i.currency_code,
       i.total_amount+i.tip_amount-i.paid_amount AS remaining
       FROM cash_collections cc JOIN invoices i ON i.visit_id=cc.visit_id
       JOIN nurses n ON n.id=cc.collector_nurse_id
@@ -196,7 +200,8 @@ export class BillingService {
       if (existing.rows[0].payload_digest !== digest) throw new ConflictException({ code: 'FINANCIAL_IDEMPOTENCY_KEY_REUSED' });
       const previous=existing.rows[0];
       return { ...previous,status:previous.invoice_status,remaining:Number(previous.remaining),
-        change:Number(previous.change_amount),replayed:true };
+        change:Number(previous.change_amount), paymentId:previous.id, invoiceId:previous.invoice_id,
+        invoiceVersion:previous.invoice_version, currencyCode:previous.currency_code, replayed:true };
     }
 
     const row = (await client.query(`SELECT i.*,cr.requester_user_id,n.id AS nurse_id,v.id AS visit_id
@@ -205,10 +210,14 @@ export class BillingService {
       JOIN nurses n ON n.id=a.nurse_id
       WHERE i.request_id=$1 AND n.user_id=$2 FOR UPDATE OF i,cr`, [requestId,nurseUserId])).rows[0];
     if (!row) throw new ConflictException({ code: 'INVOICE_NOT_COLLECTIBLE' });
+    assertCashCurrency(row.currency_code);
     if (row.status === 'PAID') throw new ConflictException({ code: 'ALREADY_PAID' });
 
     const payable = toMinor(row.total_amount)+toMinor(row.tip_amount);
     const previouslyPaid=toMinor(row.paid_amount);
+    if (payable % 100n !== 0n || previouslyPaid % 100n !== 0n) {
+      throw new ConflictException({code:'HISTORICAL_INVOICE_PRECISION_UNSUPPORTED'});
+    }
     const remainingBefore = payable-previouslyPaid;
     if (remainingBefore<=0n) throw new ConflictException({code:'ALREADY_PAID'});
     const received=toMinor(amount);
@@ -256,7 +265,23 @@ export class BillingService {
         targetApp: 'PATIENT_APP',
         requestId,
       }))]);
-    return { ...collection,status,remaining,change:Number(change),replayed:false };
+    return { ...collection,status,remaining,change:Number(change), paymentId:collection.id,
+      invoiceId:row.id, invoiceVersion:Number(row.version)+1, currencyCode:row.currency_code, replayed:false };
+  }
+
+  async collectionStatus(runner: Q, nurseUserId: string, requestId: string, key: string) {
+    if (!key || key.length > 128) throw new BadRequestException({code:'IDEMPOTENCY_KEY_REQUIRED'});
+    const row = (await runner.query(`SELECT i.id AS invoice_id, i.version, i.currency_code, i.status,
+      greatest(0,i.total_amount+i.tip_amount-i.paid_amount) AS remaining,
+      cc.id AS payment_id, cc.received_amount, cc.change_amount
+      FROM invoices i JOIN visits v ON v.id=i.visit_id
+      JOIN request_assignments a ON a.id=v.assignment_id JOIN nurses n ON n.id=a.nurse_id
+      LEFT JOIN cash_collections cc ON cc.visit_id=v.id AND cc.collector_nurse_id=n.id AND cc.idempotency_key=$3
+      WHERE i.request_id=$1 AND n.user_id=$2`, [requestId,nurseUserId,key])).rows[0];
+    if (!row) throw new ConflictException({code:'INVOICE_NOT_COLLECTIBLE'});
+    return {found: Boolean(row.payment_id), paymentId:row.payment_id, invoiceId:row.invoice_id,
+      invoiceVersion:row.version, currencyCode:row.currency_code, status:row.status,
+      remaining:row.remaining, receivedAmount:row.received_amount, change:row.change_amount};
   }
 
   async setTip(
@@ -275,6 +300,7 @@ export class BillingService {
       JOIN nurses n ON n.id=a.nurse_id
       WHERE i.request_id=$1 AND cr.requester_user_id=$2 FOR UPDATE OF i,cr`, [requestId,patientUserId])).rows[0];
     if (!row) throw new ConflictException({ code: 'INVOICE_NOT_FOUND' });
+    assertCashCurrency(row.currency_code);
     if (row.status === 'PAID') throw new ConflictException({ code: 'ALREADY_PAID' });
     if (Number(row.tip_amount) > 0) {
       if (Number(row.tip_amount) === amount) return {tip:amount,replayed:true};

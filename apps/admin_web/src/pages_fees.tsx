@@ -132,13 +132,13 @@ export function Dues({live}: {live: Live}) {
       <div className="stat"><span>موقوف استقبالهم لتجاوز الحد</span><strong>{items.filter(i => i.blocked).length}</strong></div>
     </div>
     <Panel title="مستحقات الشركة من الممرضين">
-      <Table head={['الممرض', 'زيارات مدفوعة', 'الرصيد (+ عليه للشركة / − للشركة عليها)', 'الحالة', 'تسوية']} rows={items.map(i => [i.name, i.visits, <b style={{color: Number(i.balance) > 0 ? '#b12f3e' : '#05866b'}}>{n(i.balance)} {i.currency_code}</b>,
-        i.blocked ? 'موقوف عن الطلبات' : 'سليم',
-        <span className="acts"><input className="amt" type="number" placeholder="المبلغ" value={amount[`${i.nurse_id}:${i.currency_code}`] ?? ''} onChange={e => setAmount({...amount, [`${i.nurse_id}:${i.currency_code}`]: e.target.value})}/>
-          <button className="pill on" onClick={() => void settle(i.nurse_id, i.currency_code, 'FROM_NURSE')}>استلمتُ منه</button><button className="pill" onClick={() => void settle(i.nurse_id, i.currency_code, 'TO_NURSE')}>دفعتُ له</button></span>])}/>
+      <Table head={['الممرض', 'زيارات مدفوعة', 'الرصيد (+ عليه للشركة / − للشركة عليها)', 'الحالة', 'تسوية']} rows={items.map(i => [i.name, i.visits, <b style={{color: Number(i.balance) > 0 ? '#b12f3e' : '#05866b'}}>{i.currency_code ? `${i.balance} ${i.currency_code}` : '—'}</b>,
+        i.financial_status==='FINANCIAL_SETUP_REQUIRED' ? 'يتطلب إعدادًا ماليًا' : i.blocked ? 'موقوف عن الطلبات' : i.reconciliation_required ? 'يتطلب تسوية تاريخية' : 'سليم',
+        i.currency_code && i.financial_status==='FINANCIAL_CONFIGURED' ? <span className="acts"><input className="amt" type="number" placeholder="المبلغ" value={amount[`${i.nurse_id}:${i.currency_code}`] ?? ''} onChange={e => setAmount({...amount, [`${i.nurse_id}:${i.currency_code}`]: e.target.value})}/>
+          <button className="pill on" onClick={() => void settle(i.nurse_id, i.currency_code, 'FROM_NURSE')}>استلمتُ منه</button><button className="pill" onClick={() => void settle(i.nurse_id, i.currency_code, 'TO_NURSE')}>دفعتُ له</button></span> : '—'])}/>
       {msg && <p className="hint err">{msg}</p>}{err && <p className="hint err">{err}</p>}
     </Panel>
-    <Notice>الممرض يقبض نقدًا من المريض ثم يسلّم الشركة حصتها (المبلغ المدفوع − نصيبه). الحساب يعتمد الزيارات المدفوعة بالكامل فقط. إن كان الرصيد سالبًا فالشركة مدينة للممرض (مثلًا عند خصومات كبيرة تتحمّلها الشركة). كل تسوية تُسجَّل في سجل التدقيق.</Notice>
+    <Notice>الممرض يقبض نقدًا من المريض ثم يسلّم الشركة حصتها (المبلغ المدفوع − نصيبه). يُحسب المركز المالي من القيود المرحّلة لكل عملة. إن كان الرصيد سالبًا فالشركة مدينة للممرض (مثلًا عند خصومات كبيرة تتحمّلها الشركة). كل تسوية تُسجَّل في سجل التدقيق.</Notice>
   </>;
 }
 

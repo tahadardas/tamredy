@@ -1,3 +1,4 @@
+import { NurseFinancialAccountService } from './nurse-financial-account.service.js';
 import { Injectable, Optional } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { AvailabilityDto } from '../common/dto.js';
@@ -16,6 +17,7 @@ export class NursesService {
     private readonly dues: DuesService = new DuesService(),
     private readonly locationAuth: AssignmentLocationAuthorizationService = new AssignmentLocationAuthorizationService(),
     @Optional() private readonly live?: LiveGateway,
+    private readonly finance: NurseFinancialAccountService = new NurseFinancialAccountService(),
   ) {}
   async availability(userId: string, dto: AvailabilityDto) {
     return this.db.transaction(async c => {
@@ -24,7 +26,9 @@ export class NursesService {
       if(!n) missing();
       if(dto.availability==='AVAILABLE') {
         if(!n.verified) conflict('NURSE_NOT_VERIFIED');
-        if((await this.dues.balancesByCurrency(c,n.id)).some(balance=>balance.blocked)) conflict('SETTLEMENT_REQUIRED'); // settle cash dues with the company first
+        const finance=await this.finance.accountStatus(c,n.id);
+        if(!finance.configured) conflict('FINANCIAL_SETUP_REQUIRED');
+        if(finance.blocked) conflict('SETTLEMENT_REQUIRED');
         const valid=await c.query(`SELECT 1 FROM nurse_credentials WHERE nurse_id=$1 AND approved=true AND expires_at>now()`,[n.id]);
         if(!valid.rowCount) conflict('LICENSE_NOT_VERIFIED');
       }

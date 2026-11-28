@@ -74,7 +74,10 @@ export const requiredMigrations = Object.freeze([
   "070_rc2_booking_terms.sql",
   "071_rc2_currency_accounts.sql",
   "072_rc2_shared_eligibility.sql",
-  "079_rc2_worker_heartbeat.sql"
+  "079_rc2_worker_heartbeat.sql",
+  "080_rc3_financial_accounts.sql",
+  "081_rc3_commission_policy.sql",
+  "085_rc3_worker_runtime_status.sql"
 ]);
 export function missingMigrations(applied) {
   const names = new Set(applied);

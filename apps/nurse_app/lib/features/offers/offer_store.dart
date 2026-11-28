@@ -173,7 +173,7 @@ class OfferStore extends ChangeNotifier {
       AlarmData(
         next.offerId,
         'طلب زيارة جديد في ${next.area}',
-        '${next.serviceTitle} — حصتك ${formatMoney(next.nurseShare)}',
+        '${next.serviceTitle} — حصتك ${next.formattedNurseShare}',
         remaining.inSeconds.clamp(2, 60),
         data: Map<String, dynamic>.from(rawOffers.first as Map),
       ),

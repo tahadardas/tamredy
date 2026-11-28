@@ -1,3 +1,4 @@
+import { NurseFinancialAccountService } from '../nurses/nurse-financial-account.service.js';
 import { BadRequestException, Body, Controller, Get, HttpCode, HttpException, Param, Post, Query, Request, Res, StreamableFile, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { IsDateString, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
@@ -79,7 +80,8 @@ export class ApplicationsPublicController {
 /** Staff: review applications, schedule the interview, approve (creates the account) or reject. */
 @Controller('v1/admin') @UseGuards(AuthGuard)
 export class AdminApplicationsController {
-  constructor(private readonly db: DbService, private readonly docs: DocStore) {}
+  constructor(private readonly db: DbService, private readonly docs: DocStore,
+    private readonly finance: NurseFinancialAccountService = new NurseFinancialAccountService()) {}
 
   private audit(c: { query: (s: string, p?: unknown[]) => Promise<any> }, actor: string, action: string, id: string, detail: unknown = {}) {
     return c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,$2,'nurse_application',$3,$4::jsonb)`, [actor, action, id, JSON.stringify(detail)]);
@@ -155,9 +157,10 @@ export class AdminApplicationsController {
       }
       await c.query(`INSERT INTO nurse_credentials(nurse_id,license_ref,expires_at,document_id,doc_kind,approved,review_status,verified_at,verified_by) VALUES($1,$2,$3,$4,$5,true,'APPROVED',now(),$6)`,
         [n.id, a.license_ref, a.expires_at, credDoc, a.doc_kind, r.user!.id]);
+      const financial=await this.finance.initializeAccount(c,n.id,r.user!.id);
       await c.query(`UPDATE nurse_applications SET status='APPROVED',nurse_id=$2,decided_by=$3,decided_at=now() WHERE id=$1`, [id, n.id, r.user!.id]);
       await this.audit(c, r.user!.id, 'application.approved', id, { nurseId: n.id, nurseNo: n.nurse_no });
-      return { id, status: 'APPROVED', nurseId: n.id, nurseNo: n.nurse_no, account: { phone: a.phone_e164, name: a.display_name, defaultPassword: password } };
+      return { id, status: 'APPROVED', nurseId: n.id, nurseNo: n.nurse_no,financialStatus:financial.status,account: { phone: a.phone_e164, name: a.display_name, defaultPassword: password } };
     });
   }
 }

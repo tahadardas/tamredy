@@ -1,3 +1,5 @@
+# Local infrastructure only. Set shared runtime flags once for both host-run applications
+# using the root .env; production config merges the same flags into both containers.
 services:
   postgres:
     image: postgis/postgis:18-3.7

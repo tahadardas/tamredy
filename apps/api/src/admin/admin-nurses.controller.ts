@@ -1,5 +1,7 @@
+import { NurseFinancialAccountService } from '../nurses/nurse-financial-account.service.js';
+import { InitializeNurseFinancialAccountDto, ReconcileLegacyNurseAccountDto, UpdateNurseFinancialAccountDto } from '../nurses/nurse-financial-admin.dto.js';
 import { lockAccountAdministration, removeAccount } from './account-removal.js';
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Request, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Patch, Post, Put, Query, Request, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { AuthGuard, AuthRequest, requireAnyRole, requireRole } from '../auth/auth.guard.js';
@@ -50,7 +52,8 @@ const maskId = (v: string | null) => (v ? `••••${v.slice(-3)}` : null);
 /** Nurse administration: add / edit / suspend / delete, number, skills, and encrypted documents. */
 @Controller('v1/admin') @UseGuards(AuthGuard)
 export class AdminNursesController {
-  constructor(private readonly db: DbService, private readonly docs: DocStore) {}
+  constructor(private readonly db: DbService, private readonly docs: DocStore,
+    private readonly finance: NurseFinancialAccountService = new NurseFinancialAccountService()) {}
 
   private audit(c: { query: (s: string, p?: unknown[]) => Promise<any> }, actor: string, action: string, id: string, detail: unknown = {}) {
     return c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,$2,'nurse',$3,$4::jsonb)`, [actor, action, id, JSON.stringify(detail)]);
@@ -108,10 +111,40 @@ export class AdminNursesController {
         [d.phone, d.displayName, hashPassword(password), r.user!.id])).rows[0];
       const n = (await c.query(`INSERT INTO nurses(user_id,nurse_no,governorate_id,area_id,specialty,national_id_enc,notes) VALUES($1,coalesce($2,nextval('nurse_no_seq')),$3,$4,$5,$6,$7) RETURNING id,nurse_no`,
         [u.id, d.nurseNo ?? null, d.governorateId ?? null, d.areaId ?? null, d.specialty ?? null, d.nationalId ? this.docs.encryptText(d.nationalId) : null, d.notes ?? null])).rows[0];
-      await c.query(`INSERT INTO nurse_financial_accounts(nurse_id) VALUES($1) ON CONFLICT(nurse_id) DO NOTHING`, [n.id]);
+      const financial = await this.finance.initializeAccount(c,n.id,r.user!.id);
       await this.audit(c, r.user!.id, 'nurse.created', n.id, { phone: d.phone, nurseNo: n.nurse_no });
-      return { id: n.id, nurseNo: n.nurse_no, temporaryPassword: password, note: 'Shown once.' };
+      return { id: n.id, nurseNo: n.nurse_no, temporaryPassword: password,financialStatus:financial.status,note:'Shown once.' };
     });
+  }
+
+  @Get('nurses/:id/financial-accounts') financialAccounts(@Request() r:AuthRequest,@Param('id',ParseUUIDPipe) id:string) {
+    requireRole(r.user!,'ADMIN');
+    return this.finance.listAccounts(this.db,id);
+  }
+
+  @Post('nurses/:id/financial-accounts') initializeFinancialAccount(@Request() r:AuthRequest,@Param('id',ParseUUIDPipe) id:string,
+    @Headers('idempotency-key') key:string,@Body() body:InitializeNurseFinancialAccountDto) {
+    requireRole(r.user!,'ADMIN');
+    const actor=r.user!.id;
+    return this.db.transaction(c=>this.finance.runAdminMutation(c,actor,id,key,{action:'initialize',body},
+      ()=>this.finance.initializeAccount(c,id,actor,body)));
+  }
+
+  @Patch('nurses/:id/financial-accounts/:currencyCode') updateFinancialAccount(@Request() r:AuthRequest,
+    @Param('id',ParseUUIDPipe) id:string,@Param('currencyCode') currencyCode:string,@Headers('idempotency-key') key:string,
+    @Body() body:UpdateNurseFinancialAccountDto) {
+    requireRole(r.user!,'ADMIN');
+    const actor=r.user!.id;
+    return this.db.transaction(c=>this.finance.runAdminMutation(c,actor,id,key,{action:'updatePolicy',currencyCode,body},
+      ()=>this.finance.updatePolicy(c,id,currencyCode,actor,body)));
+  }
+
+  @Post('nurses/:id/financial-reconciliation') reconcileLegacyFinancialAccount(@Request() r:AuthRequest,
+    @Param('id',ParseUUIDPipe) id:string,@Headers('idempotency-key') key:string,@Body() body:ReconcileLegacyNurseAccountDto) {
+    requireRole(r.user!,'ADMIN');
+    const actor=r.user!.id;
+    return this.db.transaction(c=>this.finance.runAdminMutation(c,actor,id,key,{action:'reconcileLegacy',body},
+      ()=>this.finance.reconcileLegacyAccount(c,id,actor,body)));
   }
 
   @Patch('nurses/:id/profile') async update(@Request() r: AuthRequest, @Param('id') id: string, @Body() d: UpdateNurseDto) {

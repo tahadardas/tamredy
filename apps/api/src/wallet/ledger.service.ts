@@ -165,12 +165,32 @@ export class LedgerService {
   }
 
   async reverseTransaction(client: PoolClient, transactionId: string, idempotencyKey: string, actorUserId: string) {
+    const locked=await client.query<{transaction_type:string}>('SELECT transaction_type FROM financial_transactions WHERE id=$1 FOR UPDATE',[transactionId]);
+    if (!locked.rowCount) throw new NotFoundException({code:'FINANCIAL_TRANSACTION_NOT_FOUND'});
+    if (locked.rows[0]?.transaction_type==='REVERSAL')
+      throw new ConflictException({code:'REVERSAL_REQUIRES_APPROVED_CORRECTION'});
+    const reversed=(await client.query(`SELECT idempotency_key FROM financial_transactions
+      WHERE reversal_of_transaction_id=$1 LIMIT 1`,[transactionId])).rows[0];
+    if (reversed && reversed.idempotency_key!==idempotencyKey)
+      throw new ConflictException({code:'FINANCIAL_TRANSACTION_ALREADY_REVERSED'});
+    const usedAsProof=(await client.query(`SELECT 1 FROM nurse_legacy_financial_reconciliations
+      WHERE proof_transaction_id=$1`,[transactionId])).rowCount;
+    if (usedAsProof) throw new ConflictException({code:'LEGACY_RECONCILIATION_PROOF_CANNOT_BE_REVERSED'});
     const original = await client.query(`SELECT t.*,e.account_id,e.debit_amount,e.credit_amount
       FROM financial_transactions t JOIN financial_ledger_entries e ON e.transaction_id=t.id
       WHERE t.id=$1 ORDER BY e.id`, [transactionId]);
     if (!original.rowCount) throw new NotFoundException({ code: 'FINANCIAL_TRANSACTION_NOT_FOUND' });
     const first = original.rows[0];
-    return this.postTransaction(client, {
+    const positions=new Set<string>();
+    for (const row of original.rows) {
+      const match=/^(?:CASH_HELD_BY_NURSE|NURSE_PAYABLE|PREPAID_LIABILITY):([a-f0-9-]{36})$/i.exec(row.account_id);
+      if (match?.[1]) positions.add(match[1]);
+    }
+    for (const nurseId of [...positions].sort()) {
+      await client.query(`SELECT id FROM nurse_financial_currency_accounts
+        WHERE nurse_id=$1 AND currency_code=$2 FOR UPDATE`,[nurseId,first.currency_code]);
+    }
+    const result=await this.postTransaction(client, {
       transactionType: 'REVERSAL', referenceType: first.reference_type,
       referenceId: first.reference_id, idempotencyKey, currencyCode: first.currency_code,
       reversalOfTransactionId: transactionId, actorUserId,
@@ -180,5 +200,17 @@ export class LedgerService {
         creditAmount: row.debit_amount,
       })),
     });
+    if (!result.replayed) {
+      for (const nurseId of positions) {
+        if (first.transaction_type==='PREPAID_COMMISSION_APPLIED') {
+          const entry=original.rows.find(row=>row.account_id===`PREPAID_LIABILITY:${nurseId}`);
+          if (entry) await client.query(`UPDATE nurse_financial_currency_accounts SET
+            prepaid_balance=prepaid_balance+$3::numeric,version=version+1,updated_at=statement_timestamp()
+            WHERE nurse_id=$1 AND currency_code=$2`,[nurseId,first.currency_code,entry.debit_amount]);
+        }
+        await client.query('SELECT recompute_nurse_financial_eligibility($1,$2)',[nurseId,first.currency_code]);
+      }
+    }
+    return result;
   }
 }

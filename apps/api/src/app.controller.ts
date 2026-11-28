@@ -10,7 +10,7 @@ export class AppController {
     private readonly metrics: OperationalMetricsService) {}
 
   @Get('/health')
-  health() { return {service:'tamreedy-api', status:'ok'}; }
+  health() { return {service:'tamreedy-api', status:'ok', version:process.env.TAMREEDY_RELEASE ?? '3.1.0-rc.3'}; }
 
   @Get('/ready')
   ready() { return this.readiness.report(); }

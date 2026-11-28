@@ -275,7 +275,7 @@ class _RequestSummaryCard extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    formatMoney(req.amountDue ?? req.priceAmount),
+                    req.formattedTotal,
                     style: aeroText(size: 14, weight: FontWeight.w800, color: tc.textPrimary),
                   ),
                 ],

@@ -1,3 +1,4 @@
+import 'package:tamreedy_nurse_app/features/visit/pending_cash_collection_store.dart';
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,8 +14,15 @@ class VisitCommandApi extends VisitApi {
   Map<String, dynamic> reply = {};
   String? sentKey;
   bool loseResponse = false;
+  String owner = 'confirmed-nurse';
+  Map<String,dynamic> lookup = {'found':false,'invoiceId':'bill-a','currencyCode':'SYP_NEW'};
   @override
-  Future<String?> currentUserId() async => 'confirmed-nurse';
+  Future<Map<String,String>> readLocalByPrefix(String prefix) async =>
+      Map.fromEntries(local.entries.where((entry) => entry.key.startsWith(prefix)));
+  @override
+  Future<Map<String,dynamic>> readCashCollection(String requestId,String key) async => lookup;
+  @override
+  Future<String?> currentUserId() async => owner;
   @override
   Future<String?> readLocal(String key) async => local[key];
   @override
@@ -39,26 +47,55 @@ Map<String,dynamic> snapshot(String id,{required bool authorized}) => {'hasActiv
   'beneficiary_name':authorized?'المستفيد أ':null,'address_text':authorized?'دمشق':null,
   'patient_lat':authorized?33.5:null,'patient_lng':authorized?36.3:null,'items':[]}};
 void main(){
-  test('upgrade retries an unresolved cash operation with its original key', () async {
+  test('legacy key, uncertain POST, failed bill refresh and a second equal payment', () async {
     final api = VisitCommandApi();
     api.local['cash_collect_v3_request-a_50'] = 'original-operation-key';
-    api.read = (_) async => {'due':100,'minutes':30,'gross':100,'discount':0,
-      'collected':50,'remaining':50,'paymentStatus':'PARTIAL','visitId':'visit-a'};
+    var version = 1;
+    var failBill = false;
+    api.read = (_) async {
+      if (failBill) throw StateError('bill unavailable');
+      return {'requestId':'request-a','invoiceId':'bill-a','invoiceVersion':version,
+        'currencyCode':'SYP_NEW','cashCollectionSupported':true,'due':100,'gross':100,
+        'collected':(version-1)*50,'remaining':100-(version-1)*50,
+        'paymentStatus':version==3?'PAID':version==2?'PARTIAL':'DUE','visitId':'visit-a'};
+    };
     final store = VisitStore(api:api,eventBus:RealtimeEventBus(),onActiveAssignmentChanged:(_){});
     store.requestId = 'request-a';
-    store.bill = const BillInfo(due:100,minutes:30,gross:100,discount:0,
-      collected:0,remaining:100,status:'DUE',visitId:'visit-a');
+    await store.loadBill();
+    expect(api.sentKey,isNull);
+    expect(store.canStartCashCollection,isFalse);
     api.loseResponse = true;
-    expect(await store.collectCash(50),isFalse);
+    expect(await store.resumeCashCollection(),CashCollectionOutcome.failed);
     expect(api.sentKey,'original-operation-key');
-    expect(api.local['cash_collect_v3_request-a_50'],'original-operation-key');
     api.loseResponse = false;
-    api.reply = {'remaining':50,'change':0,'status':'PARTIALLY_PAID'};
-    await store.collectCash(50);
+    api.reply = {'paymentId':'payment-a','invoiceId':'bill-a','currencyCode':'SYP_NEW','invoiceVersion':2,'change':0};
+    failBill = true;
+    expect(await store.resumeCashCollection(),CashCollectionOutcome.pendingReconciliation);
     expect(api.sentKey,'original-operation-key');
-    expect(store.bill!.collected,50);
+    expect(store.canStartCashCollection,isFalse);
+    expect(store.pendingCashCollection!.status,CashCollectionStatus.confirmed);
+    expect(await store.collectCash(50),CashCollectionOutcome.failed);
+    failBill = false;
+    version = 2;
+    await store.loadBill();
+    expect(store.canStartCashCollection,isTrue);
     expect(api.local.containsKey('cash_collect_v3_request-a_50'),isFalse);
+    version = 3;
+    api.reply = {'paymentId':'payment-b','invoiceId':'bill-a','currencyCode':'SYP_NEW','invoiceVersion':3,'change':0};
+    expect(await store.collectCash(50),CashCollectionOutcome.fullyConfirmed);
+    expect(api.sentKey,isNot('original-operation-key'));
     store.dispose();
+  });
+
+  test('cash recovery record is scoped to owner and invoice', () async {
+    final api = VisitCommandApi();
+    final operations = PendingCashCollectionStore(api);
+    final bill = BillInfo.fromJson({'requestId':'request-a','invoiceId':'bill-a','invoiceVersion':1,
+      'currencyCode':'SYP_NEW','paymentStatus':'DUE','remaining':100});
+    final operation = operations.create('owner-a',bill,50);
+    await operations.save('owner-a',bill,operation);
+    expect(await operations.read('owner-b',bill),isNull);
+    expect((await operations.read('owner-a',bill))!.key,operation.key);
   });
   test('no-service completion preserves reason without requesting an absent bill', () async {
     final api = VisitCommandApi();

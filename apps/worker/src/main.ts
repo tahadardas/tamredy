@@ -1,7 +1,7 @@
 import { closeLocationReader } from './live-location.js';
 import { randomUUID } from 'node:crypto';
 import { missingMigrations } from '../../../packages/backend-policy/schema.mjs';
-import { featureCapabilities } from '../../../packages/backend-policy/capabilities.mjs';
+import { featureCapabilities, runtimeConfigFingerprint } from '../../../packages/backend-policy/capabilities.mjs';
 import { closeNightIneligibleOffers, nightPolicyEnabled } from './night-safety.js';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ import Redis from 'ioredis';
 import 'dotenv/config';
 import { FcmClient, loadServiceAccount, pushDeliverBatch, retryPendingPushes } from './push.js';
 import { notifyDelayedDepartures } from './departure-reminders.js';
-import { deliverOutbox } from './outbox.js';
+import { deliverOutbox, publishRealtimeEvents } from './outbox.js';
 import { runSafetyRetention } from './safety-retention.js';
 import { routeSafetyCase } from './safety-routing.js';
 import { runSafetyCheckin } from './safety-checkins.js';
@@ -29,7 +29,8 @@ const pool = new pg.Pool({
   connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 3_000),
   idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30_000),
 });
-const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { enableOfflineQueue: false, maxRetriesPerRequest: 1, commandTimeout: 2000, retryStrategy: (times) => Math.min(times * 500, 5000) }) : undefined;
+const features = featureCapabilities();
+const redis = features.realtimeEnabled && process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { enableOfflineQueue: false, maxRetriesPerRequest: 1, commandTimeout: 2000, retryStrategy: (times) => Math.min(times * 500, 5000) }) : undefined;
 
 function logFailure(job: string,error: unknown) {
   const candidate = typeof error==='object' && error!==null && 'code' in error ? error.code : null;
@@ -42,28 +43,43 @@ redis?.on('error',error=>logFailure('redis',error));
 
 let sa;
 try {
-  const raw = process.env.FCM_SERVICE_ACCOUNT_FILE
+  const raw = features.pushEnabled && process.env.FCM_SERVICE_ACCOUNT_FILE
     ? readFileSync(process.env.FCM_SERVICE_ACCOUNT_FILE, 'utf8')
-    : process.env.FCM_SERVICE_ACCOUNT_JSON;
-  sa = loadServiceAccount(raw);
+    : features.pushEnabled ? process.env.FCM_SERVICE_ACCOUNT_JSON : undefined;
+  sa = features.pushEnabled ? loadServiceAccount(raw) : undefined;
 } catch (e) {
   logFailure('push.configuration',e);
 }
 
-const fcm = sa ? new FcmClient(sa) : undefined;
+type LoopName = 'push' | 'realtime' | 'dispatch';
+const loopState: Record<LoopName, { success: Date | null; error: Date | null }> = {
+  push: { success: null, error: null }, realtime: { success: null, error: null },
+  dispatch: { success: null, error: null },
+};
+function observeLoop(name: LoopName, ok: boolean) {
+  loopState[name][ok ? 'success' : 'error'] = new Date();
+}
+function operational(name: LoopName): boolean | null {
+  const { success, error } = loopState[name];
+  if (!success && !error) return null;
+  return !!success && (!error || success.getTime() >= error.getTime());
+}
+const fcm = sa ? new FcmClient(sa, undefined, ok => observeLoop('push', ok)) : undefined;
 
+let lastRealtimeProbe = 0;
 async function flushRealtimeOutbox(): Promise<boolean> {
-  if (!redis) return false;
-  return deliverOutbox(pool, 'realtime', async events => {
-    for (const event of events) {
-      const eventId = typeof event.payload?.eventId === 'string' && event.payload.eventId
-        ? event.payload.eventId
-        : String(event.id);
-      await redis.publish('tamreedy:events', JSON.stringify({
-        eventId, type: event.event_type, payload: event.payload,
-      }));
+  if (!redis) throw Object.assign(new Error('Redis not configured'), {code:'REDIS_CONFIGURATION_REQUIRED'});
+  const worked = await deliverOutbox(pool, 'realtime', events => publishRealtimeEvents(pool, redis, events));
+  if (worked || Date.now() - lastRealtimeProbe >= 5000) {
+    // Pub/Sub can acknowledge a publish while no API replica is listening.
+    const subscriberCounts = await redis.pubsub('NUMSUB', 'tamreedy:events');
+    if (!Array.isArray(subscriberCounts) || Number(subscriberCounts[1]) < 1) {
+      throw Object.assign(new Error('No realtime subscriber'), {code:'REALTIME_SUBSCRIBER_UNAVAILABLE'});
     }
-  });
+    lastRealtimeProbe = Date.now();
+    observeLoop('realtime', true);
+  }
+  return worked;
 }
 
 async function flushPushOutbox(): Promise<boolean> {
@@ -86,16 +102,24 @@ async function runWorker(): Promise<void> {
   }
   const missing = missingMigrations(applied);
   if (missing.length) throw Object.assign(new Error('Required release migrations missing'), {code:'MIGRATION_COMPATIBILITY_ERROR'});
-  const features = featureCapabilities();
   if (features.openDispatchEnabled && !features.openMarketplaceEnabled) throw new Error('FEATURE_FLAGS_CONFLICT');
-  if (features.liveLocationRedisEnabled && !redis) throw new Error('REDIS_CONFIGURATION_REQUIRED');
+  if (features.liveLocationRedisEnabled && !process.env.REDIS_URL) throw new Error('REDIS_CONFIGURATION_REQUIRED');
   const workerId = randomUUID();
-  let lastHeartbeat = 0;
   async function heartbeat(): Promise<void> {
-    if (Date.now()-lastHeartbeat < 5000) return;
-    await pool.query(`INSERT INTO worker_heartbeats(worker_id) VALUES($1)
-      ON CONFLICT(worker_id) DO UPDATE SET received_at=statement_timestamp()`, [workerId]);
-    lastHeartbeat = Date.now();
+    await pool.query(`INSERT INTO worker_heartbeats(worker_id,worker_version,runtime_config_fingerprint,
+      push_configured,push_operational,push_last_success_at,push_last_error_at,
+      realtime_operational,realtime_last_success_at,realtime_last_error_at,
+      dispatch_last_success_at,dispatch_last_error_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      ON CONFLICT(worker_id) DO UPDATE SET received_at=statement_timestamp(),
+        push_operational=excluded.push_operational,push_last_success_at=excluded.push_last_success_at,
+        push_last_error_at=excluded.push_last_error_at,realtime_operational=excluded.realtime_operational,
+        realtime_last_success_at=excluded.realtime_last_success_at,realtime_last_error_at=excluded.realtime_last_error_at,
+        dispatch_last_success_at=excluded.dispatch_last_success_at,dispatch_last_error_at=excluded.dispatch_last_error_at`,
+      [workerId, process.env.TAMREEDY_RELEASE ?? '3.1.0-rc.3', runtimeConfigFingerprint(features), !!fcm,
+       operational('push'), loopState.push.success, loopState.push.error,
+       operational('realtime'), loopState.realtime.success, loopState.realtime.error,
+       loopState.dispatch.success, loopState.dispatch.error]);
   }
   await heartbeat();
   console.info(JSON.stringify({
@@ -110,14 +134,15 @@ async function runWorker(): Promise<void> {
   process.on('SIGINT', () => { stopping = true; });
   process.on('SIGTERM', () => { stopping = true; });
 
-  async function poll(name: string, run: () => Promise<boolean>): Promise<void> {
+  async function poll(name: string, run: () => Promise<boolean>, channel?: LoopName, idleMs = 500): Promise<void> {
     while (!stopping) {
-      let delay = 500;
+      let delay = idleMs;
       try {
         const worked = await run();
-        await heartbeat();
+        if (channel === 'dispatch') observeLoop(channel, true);
         if (worked) continue;
       } catch (error) {
+        if (channel) observeLoop(channel, false);
         logFailure(name,error);
         delay = 1500;
       }
@@ -146,7 +171,7 @@ async function runWorker(): Promise<void> {
     }
     if (fcm && Date.now() - lastPushRetry > 5000) {
       lastPushRetry = Date.now();
-      await retryPendingPushes(pool,fcm).catch(error=>logFailure('retryPush',error));
+      await retryPendingPushes(pool,fcm).catch(error=>{observeLoop('push', false);logFailure('retryPush',error);});
     }
     if (Date.now() - lastWinback > 6 * 3600_000) {
       lastWinback = Date.now();
@@ -158,11 +183,12 @@ async function runWorker(): Promise<void> {
   await Promise.all([
     ...(features.scheduledVisitsEnabled ? [poll('Scheduled Visits', () => releaseScheduledVisit(pool))] : []),
     ...(process.env.GUARDIAN_CHECKINS_ENABLED === 'true' ? [poll('Safety Check-ins', () => runSafetyCheckin(pool))] : []),
-    ...(process.env.GUARDIAN_ROUTING_ENABLED === 'true' ? [poll('Safety Case Routing', () => routeSafetyCase(pool))] : []),
+    ...(features.guardianRoutingEnabled ? [poll('Safety Case Routing', () => routeSafetyCase(pool))] : []),
     ...(nightPolicyEnabled() ? [poll('Night Safety Offers', () => closeNightIneligibleOffers(pool))] : []),
-    poll('Dispatch', () => doDispatch(pool)),
-    poll('Realtime', flushRealtimeOutbox),
-    poll('Push', flushPushOutbox),
+    poll('Dispatch', () => doDispatch(pool), 'dispatch'),
+    ...(features.realtimeEnabled ? [poll('Realtime', flushRealtimeOutbox, 'realtime')] : []),
+    ...(fcm ? [poll('Push', flushPushOutbox, 'push')] : []),
+    poll('Heartbeat', async () => { await heartbeat(); return false; }, undefined, 2500),
     poll('Background Jobs', runBackgroundJobs),
   ]);
   await pool.query('DELETE FROM worker_heartbeats WHERE worker_id=$1', [workerId]);

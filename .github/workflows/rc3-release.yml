@@ -1,0 +1,60 @@
+name: RC3 release checks
+on:
+  push:
+    branches: [feature/tamreedy-rc3-production-closure]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check release scripts and synthetic validation cases
+        run: |
+          for script in infra/docker/build-sequential.sh infra/docker/release/*.sh; do
+            bash -n "$script"
+          done
+          python3 -B scripts/test-rc3-release.py
+      - name: Validate rendered production Compose without starting services
+        env:
+          POSTGRES_PASSWORD: synthetic-postgres
+          REDIS_PASSWORD: synthetic-redis
+          JWT_SECRET: synthetic-rc3-fixture-not-a-credential
+          DOCS_ENC_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+          ALLOWED_ORIGINS: https://test.invalid
+          TURN_REALM: turn.test.invalid
+          TURN_EXTERNAL_IP: 192.0.2.1
+          TURN_SHARED_SECRET: synthetic-turn
+          TURN_TLS_DIR: /tmp/rc3-synthetic-turn
+          TURN_URLS: turns:turn.test.invalid:5349
+          FCM_SERVICE_ACCOUNT_HOST_FILE: /tmp/rc3-synthetic-fcm.json
+          LIVE_LOCATION_REDIS_ENABLED: 'true'
+          LOCATION_POSTGRES_FALLBACK_ENABLED: 'false'
+          OPEN_MARKETPLACE_ENABLED: 'true'
+          OPEN_DISPATCH_ENABLED: 'true'
+          PUSH_ENABLED: 'true'
+          VOICE_ENABLED: 'false'
+          TAMREEDY_API_IMAGE: tamreedy-api:rc3-000000000000
+          TAMREEDY_WORKER_IMAGE: tamreedy-worker:rc3-000000000000
+          TAMREEDY_ADMIN_IMAGE: tamreedy-admin:rc3-000000000000
+        run: |
+          printf '%s\n' '{"project_id":"fixture","client_email":"fixture@test.invalid","private_key":"synthetic"}' > "$FCM_SERVICE_ACCOUNT_HOST_FILE"
+          compose=(docker compose -p tamreedy -f infra/docker/docker-compose.prod.yml -f infra/docker/release/images.override.yml)
+          "${compose[@]}" config --format json | python3 infra/docker/release/release-checks.py compose tamreedy_uploads
+          if OPEN_MARKETPLACE_ENABLED=false "${compose[@]}" config --format json | python3 infra/docker/release/release-checks.py compose tamreedy_uploads; then
+            echo 'Invalid Open Dispatch flag combination passed'
+            exit 1
+          fi
+      - name: Build and verify source archives from this commit
+        run: |
+          out="$RUNNER_TEMP/rc3-transfer"
+          extracted="$RUNNER_TEMP/rc3-extracted"
+          python3 scripts/package-rc3-source.py "$PWD" "$out" "$GITHUB_SHA" source-build
+          mkdir "$extracted"
+          cd "$out"
+          cp SERVER_BUNDLE_EVIDENCE.json RELEASE_MANIFEST.json
+          sha256sum tamreedy-server.tar.gz tamreedy-server.zip RELEASE_MANIFEST.json > SHA256SUMS.txt
+          tar -xzf tamreedy-server.tar.gz -C "$extracted"
+          python3 "$extracted/infra/docker/release/release-checks.py" bundle "$out/RELEASE_MANIFEST.json" "$extracted" "$out"

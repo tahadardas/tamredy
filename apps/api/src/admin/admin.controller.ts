@@ -1,3 +1,4 @@
+import { loadFinancialDashboard } from './admin-financial-report.service.js';
 import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Query, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
@@ -31,20 +32,10 @@ export class AdminController {
       (SELECT count(*)::integer FROM care_requests WHERE status='OFFERING') AS searching_requests,
       (SELECT count(*)::integer FROM care_requests WHERE status IN ('ASSIGNED', 'EN_ROUTE')) AS en_route,
       (SELECT count(*)::integer FROM care_requests WHERE status IN ('ARRIVED', 'IN_SERVICE')) AS in_service,
-      (SELECT count(*)::integer FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS completed_today,
-      (SELECT count(*)::integer FROM care_requests WHERE status='CANCELLED' AND updated_at>=date_trunc('day',now())) AS cancelled_today,
-      (SELECT count(*)::integer FROM care_requests WHERE status='ESCALATED') AS escalated_requests,
-      (SELECT coalesce(sum(price_amount),0)::bigint FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS revenue_today,
-      (SELECT coalesce(sum(price_amount*commission_bps/10000),0)::bigint FROM care_requests WHERE status='COMPLETED' AND updated_at>=date_trunc('day',now())) AS commission_today,
-      (SELECT coalesce(
-        (SELECT coalesce(sum(cr.owed_to_company),0) FROM care_requests cr
-         JOIN request_assignments a ON a.request_id=cr.id
-         JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL
-         WHERE cr.payment_status='PAID')
-        - (SELECT coalesce(sum(amount),0) FROM nurse_settlements WHERE direction='FROM_NURSE')
-        + (SELECT coalesce(sum(amount),0) FROM nurse_settlements WHERE direction='TO_NURSE'),
-      0)::bigint) AS dues_pending`);
-    return counts.rows[0];
+      (SELECT count(*)::integer FROM care_requests WHERE status='COMPLETED' AND updated_at>=(date_trunc('day',now() AT TIME ZONE 'Asia/Damascus') AT TIME ZONE 'Asia/Damascus')) AS completed_today,
+      (SELECT count(*)::integer FROM care_requests WHERE status='CANCELLED' AND updated_at>=(date_trunc('day',now() AT TIME ZONE 'Asia/Damascus') AT TIME ZONE 'Asia/Damascus')) AS cancelled_today,
+      (SELECT count(*)::integer FROM care_requests WHERE status='ESCALATED') AS escalated_requests`);
+    return {...counts.rows[0],...await loadFinancialDashboard(this.db)};
   }
   @Get('requests') async requests(@Request() r:AuthRequest,@Query('limit') limit?:string,@Query('cursor') cursor?:string,@Query('status') status?:string) {
     requireRole(r.user!,'ADMIN');

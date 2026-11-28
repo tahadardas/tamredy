@@ -6,12 +6,25 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Local secrets: android/local.properties (git-ignored) or env vars.
-val localProps = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
+val signingProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.isFile) file.inputStream().use { load(it) }
 }
-fun secret(name: String): String = (localProps.getProperty(name) ?: System.getenv(name) ?: "")
+fun signingValue(property: String, variable: String): String? =
+    (System.getenv(variable) ?: signingProperties.getProperty(property))?.takeIf { it.isNotBlank() }
+
+val reviewSigning = System.getenv("TAMREEDY_ANDROID_REVIEW_SIGNING") == "true"
+val releaseRequested = gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
+val signingPath = signingValue("storeFile", "TAMREEDY_ANDROID_KEYSTORE")
+val releaseFile = signingPath?.let { rootProject.file(it) }
+val releaseStorePassword = signingValue("storePassword", "TAMREEDY_ANDROID_STORE_PASSWORD")
+val releaseKeyPassword = signingValue("keyPassword", "TAMREEDY_ANDROID_KEY_PASSWORD")
+val releaseAlias = signingValue("keyAlias", "TAMREEDY_ANDROID_KEY_ALIAS")
+val hasStoreSigning = releaseFile?.isFile == true && releaseStorePassword != null &&
+    releaseKeyPassword != null && releaseAlias != null
+if (releaseRequested && !reviewSigning && !hasStoreSigning) {
+    throw GradleException("Store release requires a valid external keystore and signing credentials. Use explicit review signing for internal testing only.")
+}
 
 android {
     namespace = "com.tamreedy.tamreedy_nurse_app"
@@ -35,11 +48,23 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasStoreSigning && !reviewSigning) {
+            create("storeRelease") {
+                storeFile = releaseFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = when {
+                reviewSigning -> signingConfigs.getByName("debug")
+                hasStoreSigning -> signingConfigs.getByName("storeRelease")
+                else -> null
+            }
         }
     }
 }

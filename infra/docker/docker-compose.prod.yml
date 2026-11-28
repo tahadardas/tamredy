@@ -4,18 +4,28 @@
 # Only 127.0.0.1 ports are published; put HTTPS in front with Plesk (see docs/DEPLOY_PLESK_AR.md).
 name: tamreedy
 
+x-runtime-env: &runtime-env
+  LIVE_LOCATION_REDIS_ENABLED: ${LIVE_LOCATION_REDIS_ENABLED:-false}
+  LOCATION_POSTGRES_FALLBACK_ENABLED: ${LOCATION_POSTGRES_FALLBACK_ENABLED:-true}
+  SCHEDULED_VISITS_ENABLED: ${SCHEDULED_VISITS_ENABLED:-false}
+  OPEN_MARKETPLACE_ENABLED: ${OPEN_MARKETPLACE_ENABLED:-true}
+  OPEN_DISPATCH_ENABLED: ${OPEN_DISPATCH_ENABLED:-false}
+  GUARDIAN_NIGHT_POLICY_ENABLED: ${GUARDIAN_NIGHT_POLICY_ENABLED:-false}
+  GUARDIAN_ROUTING_ENABLED: ${GUARDIAN_ROUTING_ENABLED:-false}
+  PUSH_ENABLED: ${PUSH_ENABLED:-true}
+  REALTIME_ENABLED: ${REALTIME_ENABLED:-true}
+  VOICE_ENABLED: ${VOICE_ENABLED:-true}
+  TAMREEDY_RELEASE: ${TAMREEDY_RELEASE:-3.1.0-rc.3}
+
 x-api-env: &api-env
+  <<: *runtime-env
   NODE_ENV: production
   DATABASE_URL: postgresql://tamreedy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/tamreedy
   REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
   JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>=32 chars)}
   JWT_ISSUER: tamreedy-api
   JWT_AUDIENCE: tamreedy-mobile
-  GUARDIAN_NIGHT_POLICY_ENABLED: ${GUARDIAN_NIGHT_POLICY_ENABLED:-false}
-  GUARDIAN_ROUTING_ENABLED: ${GUARDIAN_ROUTING_ENABLED:-false}
   API_PORT: "3000"
-  SCHEDULED_VISITS_ENABLED: ${SCHEDULED_VISITS_ENABLED:-false}
-  OPEN_DISPATCH_ENABLED: ${OPEN_DISPATCH_ENABLED:-false}
   UPLOADS_DIR: /data/uploads
   GUARDIAN_EVIDENCE_KEY: ${GUARDIAN_EVIDENCE_KEY:-}
   DOCS_ENC_KEY: ${DOCS_ENC_KEY:?set DOCS_ENC_KEY (64 hex chars)}
@@ -26,8 +36,6 @@ x-api-env: &api-env
   MAPS_PROVIDER: ${MAPS_PROVIDER:-osm}
   ORS_API_KEY: ${ORS_API_KEY:-}
   GOOGLE_MAPS_SERVER_KEY: ${GOOGLE_MAPS_SERVER_KEY:-}
-  LIVE_LOCATION_REDIS_ENABLED: ${LIVE_LOCATION_REDIS_ENABLED:-false}
-  LOCATION_POSTGRES_FALLBACK_ENABLED: "true"
   TURN_URLS: ${TURN_URLS:?set TURN_URLS}
   TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?set TURN_SHARED_SECRET}
   TURN_CREDENTIAL_TTL_SECONDS: ${TURN_CREDENTIAL_TTL_SECONDS:-900}
@@ -118,19 +126,16 @@ services:
     restart: unless-stopped
     mem_limit: 250m   # one runaway service must not take the whole server down
     environment:
-      GUARDIAN_NIGHT_POLICY_ENABLED: ${GUARDIAN_NIGHT_POLICY_ENABLED:-false}
-      GUARDIAN_ROUTING_ENABLED: ${GUARDIAN_ROUTING_ENABLED:-false}
+      <<: *runtime-env
       GUARDIAN_ACK_SECONDS: ${GUARDIAN_ACK_SECONDS:-30}
       GUARDIAN_RETENTION_ENABLED: ${GUARDIAN_RETENTION_ENABLED:-false}
       GUARDIAN_CHECKINS_ENABLED: ${GUARDIAN_CHECKINS_ENABLED:-false}
       NODE_ENV: production
       DATABASE_URL: postgresql://tamreedy:${POSTGRES_PASSWORD}@db:5432/tamreedy
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      SCHEDULED_VISITS_ENABLED: ${SCHEDULED_VISITS_ENABLED:-false}
-      OPEN_DISPATCH_ENABLED: ${OPEN_DISPATCH_ENABLED:-false}
-      # An EMPTY file disables push; put the Firebase service-account JSON in it to enable FCM.
+      # Mount the existing Firebase file only in the worker. Set PUSH_ENABLED=false to disable delivery.
       FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm.json
-    volumes: ["./secrets/fcm.json:/run/secrets/fcm.json:ro"]
+    volumes: ["${FCM_SERVICE_ACCOUNT_HOST_FILE:-./secrets/fcm.json}:/run/secrets/fcm.json:ro"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }

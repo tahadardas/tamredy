@@ -38,7 +38,9 @@ class AvailabilityStore extends ChangeNotifier {
       await manager.setAvailability(available);
       await api.writeLocal('nurse_last_availability_intent', available ? 'AVAILABLE' : 'OFFLINE');
     } catch (e) {
-      toggleError = explainError(
+      toggleError = state == NurseReadinessState.financialSetupRequired
+          || state == NurseReadinessState.settlementBlocked
+          ? state.description : explainError(
         e,
         fallback: 'تعذر تحديث حالة التوفر. تأكد من الاتصال وأذونات الموقع.',
       );

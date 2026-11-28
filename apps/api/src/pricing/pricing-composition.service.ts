@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { assertCashCurrency } from './cash-currency.js';
 import { invalid } from '../common/errors.js';
 import { AutoDiscountService, type AutoDiscount } from './auto-discounts.service.js';
 import { FeesService, type Q } from './fees.service.js';
@@ -107,6 +108,7 @@ export class PricingCompositionService {
     if (new Set(servicesRes.rows.map(row => row.currency_code)).size !== 1) {
       invalid('REQUEST_ITEMS_REQUIRE_SINGLE_CURRENCY');
     }
+    for (const service of servicesRes.rows) assertCashCurrency(service.currency_code);
 
     const serviceMap = new Map(servicesRes.rows.map(r => [r.id, r]));
     const requiredSkills = new Set<string>();
@@ -182,7 +184,7 @@ export class PricingCompositionService {
       canonicalItems,
       serviceIds,
       primaryService,
-      currencyCode: primaryService.currency_code ?? 'SYP_NEW',
+      currencyCode: primaryService.currency_code,
       combinedPricingRule,
       totalBasePrice,
       totalExpectedMinutes,

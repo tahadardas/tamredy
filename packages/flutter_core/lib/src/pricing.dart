@@ -1,3 +1,4 @@
+import 'format.dart';
 /// Dart mirror of apps/api/src/pricing/pricing.ts (the server is the source of truth).
 /// Used for the demo mode and for instant on-screen previews.
 class PricingRule {
@@ -113,7 +114,20 @@ class BillInfo {
   final int surcharge, distanceFee, tax, tip, payable, nurseEarning;
   final String status; // DUE | PARTIAL | PAID
   final String taxLabel;
-  final String? visitId, promoCode;
+  final String? visitId, promoCode, requestId, invoiceId;
+  final int? invoiceVersion;
+  final String currencyCode;
+  final int currencyDecimalPlaces;
+  final bool cashCollectionSupported;
+  final Map<String, MoneyAmount> exactAmounts;
+
+  MoneyAmount money(String field) => exactAmounts[field] ?? MoneyAmount.parse(
+    switch (field) {
+      'due' => due,'gross' => gross,'discount' => discount,'collected' => collected,
+      'remaining' => remaining,'surcharge' => surcharge,'distanceFee' => distanceFee,
+      'tax' => tax,'tip' => tip,'payable' => payable,'nurseEarning' => nurseEarning,
+      _ => throw ArgumentError.value(field),
+    }, currencyCode, decimalPlaces: currencyDecimalPlaces);
   const BillInfo({
     required this.due,
     required this.minutes,
@@ -123,6 +137,13 @@ class BillInfo {
     required this.remaining,
     required this.status,
     this.visitId,
+    this.requestId,
+    this.invoiceId,
+    this.invoiceVersion,
+    this.currencyCode = 'SYP_NEW',
+    this.currencyDecimalPlaces = 0,
+    this.cashCollectionSupported = false,
+    this.exactAmounts = const {},
     this.promoCode,
     this.surcharge = 0,
     this.distanceFee = 0,
@@ -135,22 +156,40 @@ class BillInfo {
 
   static int _i(Object? v) => (num.tryParse('$v') ?? 0).round();
 
-  factory BillInfo.fromJson(Map<String, dynamic> j) => BillInfo(
-    due: _i(j['due']),
+  factory BillInfo.fromJson(Map<String, dynamic> j) {
+    final currency = (j['currencyCode'] ?? j['currency'])?.toString();
+    if (currency == null || currency.isEmpty) throw const FormatException('عملة الفاتورة غير متوفرة');
+    final scale = j['currencyDecimalPlaces'] as int? ?? (currency == 'SYP_NEW' ? 0 : 2);
+    final raw = j['moneyAmounts'] as Map? ?? j;
+    final exact = {
+      for (final field in ['due','gross','discount','collected','remaining','surcharge','distanceFee','tax','tip','payable','nurseEarning'])
+        if (raw[field] != null) field: MoneyAmount.parse(raw[field] as Object,currency,decimalPlaces:scale),
+    };
+    int major(String field) {
+      final amount = exact[field];
+      return amount == null ? 0 : (amount.amountMinor ~/ BigInt.from(10).pow(amount.decimalPlaces)).toInt();
+    }
+    return BillInfo(
+    requestId: j['requestId']?.toString(), invoiceId: j['invoiceId']?.toString(),
+    invoiceVersion: int.tryParse('${j['invoiceVersion']}'), currencyCode: currency,
+    currencyDecimalPlaces: scale, cashCollectionSupported: j['cashCollectionSupported'] == true,
+    exactAmounts: Map.unmodifiable(exact),
+    due: major('due'),
     minutes: _i(j['minutes']),
-    gross: _i(j['gross']),
-    discount: _i(j['discount']),
-    collected: _i(j['collected']),
-    remaining: _i(j['remaining']),
+    gross: major('gross'),
+    discount: major('discount'),
+    collected: major('collected'),
+    remaining: major('remaining'),
     status: '${j['paymentStatus']}',
     visitId: j['visitId']?.toString(),
     promoCode: j['promoCode']?.toString(),
-    surcharge: _i(j['surcharge']),
-    distanceFee: _i(j['distanceFee']),
-    tax: _i(j['tax']),
-    tip: _i(j['tip']),
-    payable: j['payable'] == null ? null : _i(j['payable']),
-    nurseEarning: _i(j['nurseEarning']),
+    surcharge: major('surcharge'),
+    distanceFee: major('distanceFee'),
+    tax: major('tax'),
+    tip: major('tip'),
+    payable: !exact.containsKey('payable') ? null : major('payable'),
+    nurseEarning: major('nurseEarning'),
     taxLabel: '${j['taxLabel'] ?? 'ضريبة'}',
   );
+  }
 }

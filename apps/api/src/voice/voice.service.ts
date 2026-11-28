@@ -1,5 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import type { PoolClient } from 'pg';
+import { featureCapabilities } from '../../../../packages/backend-policy/capabilities.mjs';
 import { DbService } from '../db/db.service.js';
 import { LiveGateway } from '../realtime/live.gateway.js';
 import { TrustService } from '../trust/trust.service.js';
@@ -36,17 +38,28 @@ export class VoiceService {
     private readonly metrics: OperationalMetricsService,
   ) {}
 
-  private async sendCallEvent(receiverId: string, eventType: string, call: Record<string, any>, extra: Record<string, unknown> = {}) {
-    const recipient = await this.db.query("SELECT role FROM users WHERE id=$1 AND status='ACTIVE'", [receiverId]);
-    if (!recipient.rowCount) return;
-    const recipientRole = recipient.rows[0].role as RecipientRole;
+  private async enqueueCallEvent(
+    client: PoolClient, receiverId: string, eventType: string, call: Record<string, any>,
+    extra: Record<string, unknown> = {},
+  ) {
+    const recipient = await client.query("SELECT role FROM users WHERE id=$1 AND status='ACTIVE'", [receiverId]);
+    if (!recipient.rowCount) return null;
     const payload = buildNotificationPayload({
-      eventType, recipientUserId: receiverId, recipientRole,
+      eventType, recipientUserId: receiverId, recipientRole: recipient.rows[0].role as RecipientRole,
       callId: call.id, requestId: call.request_id, entityVersion: Number(call.session_version),
-      expiresAt: eventType === 'call.incoming' ? new Date(call.ring_expires_at).toISOString() : null,
+      skipPush: true,
       extra: { ...extra, sessionVersion: Number(call.session_version) },
     });
-    await this.live.sendToUser(receiverId, eventType, payload);
+    await client.query(`INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES($1,$2,$3::jsonb)`,
+      [eventType, call.id, JSON.stringify(payload)]);
+    return payload;
+  }
+
+  private sendCallEvent(receiverId: string, eventType: string, payload: ReturnType<typeof buildNotificationPayload> | null) {
+    if (!payload) return;
+    // State and the stable event ID are already committed. Delivery remains retryable by the worker.
+    void Promise.resolve().then(() => this.live.sendToUser(receiverId, eventType, payload))
+      .catch(() => this.metrics.increment('private_event_delivery_failures_total'));
   }
 
   private getIceServers(userId: string, callId: string) {
@@ -66,6 +79,7 @@ export class VoiceService {
   }
 
   async initiateCall(callerUserId: string, requestId: string, idempotencyKey?: string) {
+    if (!featureCapabilities().voiceEnabled) throw new ServiceUnavailableException({ code: 'VOICE_DISABLED' });
     const request = await this.db.query(
       `SELECT r.id,r.status,r.requester_user_id,n.user_id AS nurse_user_id,patient.role AS patient_role,nurse_user.role AS nurse_role
        FROM care_requests r
@@ -146,14 +160,14 @@ export class VoiceService {
         },
       });
       await client.query(
-        `INSERT INTO outbox_events(event_type,aggregate_id,payload,realtime_published_at) VALUES('call.incoming',$1,$2::jsonb,now())`,
+        `INSERT INTO outbox_events(event_type,aggregate_id,payload) VALUES('call.incoming',$1,$2::jsonb)`,
         [row.id, JSON.stringify(callPayload)],
       );
       return { session: updated.rows[0], callPayload, replayed: false };
     });
     const session = sessionResult.session;
     if (!sessionResult.replayed && sessionResult.callPayload) {
-      await this.live.sendToUser(receiverUserId, 'call.incoming', sessionResult.callPayload);
+      this.sendCallEvent(receiverUserId, 'call.incoming', sessionResult.callPayload);
       this.metrics.increment('voice_calls_started_total');
     }
     return session;
@@ -176,72 +190,62 @@ export class VoiceService {
          WHERE id=$1 RETURNING *`, [callId],
       );
       await client.query(`INSERT INTO voice_call_events(session_id,actor_user_id,event_type) VALUES($1,$2,'ACCEPTED')`, [callId, receiverUserId]);
-      return updated.rows[0];
+      const accepted = updated.rows[0];
+      const payload = await this.enqueueCallEvent(client, accepted.caller_user_id, 'call.accepted', accepted, {
+        acceptedAt: accepted.accepted_at,
+      });
+      return { call: accepted, payload };
     });
-    await this.sendCallEvent(result.caller_user_id, 'call.accepted', result, {
-      eventId: randomUUID(),
-      callId,
-      acceptedAt: result.accepted_at,
-      sessionVersion: result.session_version,
-    });
-    return result;
+    this.sendCallEvent(result.call.caller_user_id, 'call.accepted', result.payload);
+    return result.call;
   }
 
   async markConnected(userId: string, callId: string) {
-    const result = await this.db.query(
-      `UPDATE voice_call_sessions SET call_status='CONNECTED',connected_at=coalesce(connected_at,now()),
-        session_version=session_version+CASE WHEN call_status='CONNECTED' THEN 0 ELSE 1 END
-       WHERE id=$1 AND $2 IN (caller_user_id,receiver_user_id)
-         AND call_status IN ('ACCEPTED','CONNECTING','CONNECTED','RECONNECTING') RETURNING *`, [callId, userId],
-    );
-    if (!result.rowCount) throw new ConflictException({ code: 'CALL_CANNOT_CONNECT' });
-    const call = result.rows[0];
-    const peer = call.caller_user_id === userId ? call.receiver_user_id : call.caller_user_id;
-    await this.sendCallEvent(peer, 'call.connected', call, {
-      eventId: randomUUID(),
-      callId,
-      connectedAt: call.connected_at,
-      sessionVersion: call.session_version,
+    const result = await this.db.transaction(async client => {
+      const row = await client.query(`SELECT * FROM voice_call_sessions WHERE id=$1
+        AND $2 IN (caller_user_id,receiver_user_id) FOR UPDATE`, [callId, userId]);
+      const current = row.rows[0];
+      if (!current || !['ACCEPTED','CONNECTING','CONNECTED','RECONNECTING'].includes(current.call_status)) {
+        throw new ConflictException({ code: 'CALL_CANNOT_CONNECT' });
+      }
+      const peer = current.caller_user_id === userId ? current.receiver_user_id : current.caller_user_id;
+      if (current.call_status === 'CONNECTED') return { call: current, peer, payload: null };
+      const updated = await client.query(`UPDATE voice_call_sessions SET call_status='CONNECTED',
+        connected_at=coalesce(connected_at,now()),session_version=session_version+1 WHERE id=$1 RETURNING *`, [callId]);
+      const call = updated.rows[0];
+      const payload = await this.enqueueCallEvent(client, peer, 'call.connected', call, { connectedAt: call.connected_at });
+      return { call, peer, payload };
     });
-    return call;
+    this.sendCallEvent(result.peer, 'call.connected', result.payload);
+    return result.call;
   }
 
   async rejectCall(userId: string, callId: string, reason = 'DECLINED') {
-    const result = await this.finish(userId, callId, 'REJECTED', reason, ['INITIATED', 'RINGING']);
-    const peer = result.caller_user_id === userId ? result.receiver_user_id : result.caller_user_id;
-    await this.sendCallEvent(peer, 'call.rejected', result, {
-      eventId: randomUUID(),
-      callId,
-      reason,
-      sessionVersion: result.session_version,
-    });
-    return result;
+    return this.finish(userId, callId, 'reject', reason);
   }
 
   async endCall(userId: string, callId: string, reason = 'NORMAL_HANGUP') {
-    const current = await this.db.query('SELECT call_status FROM voice_call_sessions WHERE id=$1', [callId]);
-    if (!current.rowCount) throw new NotFoundException({ code: 'CALL_NOT_FOUND' });
-    if ((TERMINAL_CALL_STATES as readonly string[]).includes(current.rows[0].call_status)) return this.getCall(userId, callId, false);
-    const cancelled = ['INITIATED', 'RINGING'].includes(current.rows[0].call_status);
-    const result = await this.finish(userId, callId, cancelled ? 'CANCELLED' : 'ENDED', reason, [...ACTIVE_CALL_STATES]);
-    const peer = result.caller_user_id === userId ? result.receiver_user_id : result.caller_user_id;
-    await this.sendCallEvent(peer, cancelled ? 'call.cancel' : 'call.ended', result, {
-      eventId: randomUUID(),
-      callId,
-      durationSeconds: result.duration_seconds,
-      reason,
-      sessionVersion: result.session_version,
-    });
-    return result;
+    return this.finish(userId, callId, 'end', reason);
   }
 
-  private async finish(userId: string, callId: string, status: string, reason: string, allowed: readonly string[]) {
-    return this.db.transaction(async client => {
-      const result = await client.query('SELECT * FROM voice_call_sessions WHERE id=$1 FOR UPDATE', [callId]);
-      if (!result.rowCount) throw new NotFoundException({ code: 'CALL_NOT_FOUND' });
-      const call = result.rows[0];
-      if (![call.caller_user_id, call.receiver_user_id].includes(userId)) throw new ForbiddenException({ code: 'NOT_CALL_PARTICIPANT' });
-      if (!allowed.includes(call.call_status)) throw new ConflictException({ code: 'CALL_TERMINAL', currentStatus: call.call_status });
+  private async finish(userId: string, callId: string, action: 'reject' | 'end', reason: string) {
+    const result = await this.db.transaction(async client => {
+      const locked = await client.query('SELECT * FROM voice_call_sessions WHERE id=$1 FOR UPDATE', [callId]);
+      if (!locked.rowCount) throw new NotFoundException({ code: 'CALL_NOT_FOUND' });
+      const current = locked.rows[0];
+      if (![current.caller_user_id, current.receiver_user_id].includes(userId)) {
+        throw new ForbiddenException({ code: 'NOT_CALL_PARTICIPANT' });
+      }
+      const peer = current.caller_user_id === userId ? current.receiver_user_id : current.caller_user_id;
+      if (action === 'end' && (TERMINAL_CALL_STATES as readonly string[]).includes(current.call_status)) {
+        return { call: current, peer, eventType: 'call.ended', payload: null };
+      }
+      const ringing = ['INITIATED', 'RINGING'].includes(current.call_status);
+      if (action === 'reject' ? !ringing : !(ACTIVE_CALL_STATES as readonly string[]).includes(current.call_status)) {
+        throw new ConflictException({ code: 'CALL_TERMINAL', currentStatus: current.call_status });
+      }
+      const status = action === 'reject' ? 'REJECTED' : ringing ? 'CANCELLED' : 'ENDED';
+      const eventType = action === 'reject' ? 'call.rejected' : ringing ? 'call.cancel' : 'call.ended';
       const updated = await client.query(
         `UPDATE voice_call_sessions SET call_status=$2,ended_at=now(),end_reason=$3,
           duration_seconds=CASE WHEN connected_at IS NULL THEN 0 ELSE greatest(0,extract(epoch FROM now()-connected_at)::integer) END,
@@ -249,8 +253,12 @@ export class VoiceService {
       );
       await client.query(`DELETE FROM voice_call_events WHERE session_id=$1 AND event_type IN ('SDP_OFFER','SDP_ANSWER','ICE_CANDIDATE','ICE_RESTART')`, [callId]);
       await client.query(`INSERT INTO voice_call_events(session_id,actor_user_id,event_type,event_data) VALUES($1,$2,$3,$4::jsonb)`, [callId, userId, status, JSON.stringify({ reason })]);
-      return updated.rows[0];
+      const call = updated.rows[0];
+      const payload = await this.enqueueCallEvent(client, peer, eventType, call, { durationSeconds: call.duration_seconds, reason });
+      return { call, peer, eventType, payload };
     });
+    this.sendCallEvent(result.peer, result.eventType, result.payload);
+    return result.call;
   }
 
   /** BUG-038: Serialize WebRTC signals per session + actor inside one transaction lock to eliminate sequence races. */

@@ -1,5 +1,4 @@
-import { dispatchLocations } from './live-location.ts';
-import { nightPolicyEnabled } from './night-safety.ts';
+import { collectDispatchCandidates, diagnoseExclusions } from './dispatch-candidates.ts';
 import type pg from 'pg';
 import { runOpenSearch } from './open-dispatch.ts';
 import { featureCapabilities } from '../../../packages/backend-policy/capabilities.mjs';
@@ -21,42 +20,12 @@ async function loadWaves(c: pg.PoolClient) {
   return defaultWaves;
 }
 
-/** Evaluates all potential nurses against dispatch criteria and returns diagnostic breakdown. */
-async function diagnoseExclusions(c: pg.PoolClient, requestId: string, serviceId: string, radiusM: number) {
-  const locations=await dispatchLocations(c,requestId,radiusM);
-  const diagQuery=await c.query(`
-    SELECT n.id AS nurse_id,'N-'||substring(n.id::text,1,6) AS nurse_code,
-      coalesce(reasons[1],'ELIGIBLE') AS status,coalesce(reasons[1],'ELIGIBLE') AS detail
-    FROM nurses n CROSS JOIN care_requests req
-    LEFT JOIN LATERAL (SELECT x FROM jsonb_array_elements($4::jsonb) x WHERE x->>'nurseId'=n.id::text) live ON true
-    CROSS JOIN LATERAL (SELECT nurse_eligibility_reasons(n.id,req.id,'OFFER',
-      statement_timestamp(),statement_timestamp()+greatest(1,coalesce((SELECT sum(expected_minutes)
-        FROM care_request_items WHERE request_id=req.id),30))*interval '1 minute',
-      CASE WHEN $4::jsonb IS NULL THEN NULL ELSE coalesce(live.x,'{"unavailable":true}'::jsonb) END,$3,$5) AS reasons) policy
-    WHERE req.id=$1 AND req.service_id=$2 AND (n.availability_intent='AVAILABLE' OR n.verified) LIMIT 100`,
-  [requestId,serviceId,radiusM,locations===null?null:JSON.stringify(locations),nightPolicyEnabled()]);
-
-  const reasons: Record<string, number> = {};
-  const excludedNurses: { nurse_code: string; reason: string; detail: string }[] = [];
-
-  for (const r of diagQuery.rows) {
-    if (r.status !== 'ELIGIBLE') {
-      reasons[r.status] = (reasons[r.status] ?? 0) + 1;
-      if (excludedNurses.length < 15) {
-        excludedNurses.push({ nurse_code: r.nurse_code, reason: r.status, detail: r.detail });
-      }
-    }
-  }
-
-  return { reasons, excludedNurses };
-}
-
 export async function doDispatch(pool: pg.Pool): Promise<boolean> {
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
     const due = await c.query(`
-      SELECT j.request_id, cr.status, cr.service_id, cr.requester_user_id, cr.search_expires_at,
+      SELECT j.request_id, cr.status, cr.requester_user_id, cr.search_expires_at,
         cr.clinical_approval_status
       FROM dispatch_jobs j JOIN care_requests cr ON cr.id = j.request_id
       WHERE j.next_run_at <= now() AND ($1::boolean OR cr.search_expires_at IS NULL)
@@ -139,26 +108,15 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
     await c.query(`UPDATE request_offers SET status='EXPIRED'
       WHERE request_id=$1 AND status='OPEN' AND expires_at <= now()`, [requestId]);
 
-    // 1. Diagnostics: evaluate candidate pool and record exclusion reasons
-    const diag = await diagnoseExclusions(c, requestId, request.service_id, cfg.radius);
-
-    // 2. Offer the visit to every eligible nurse who has not already received it.
-    const locations=await dispatchLocations(c,requestId,cfg.radius);
+    const snapshot = await collectDispatchCandidates(c, requestId, cfg.radius);
+    const diag = diagnoseExclusions(snapshot);
+    const eligible = snapshot.filter(candidate => !candidate.reasons.length);
+    const recipients = eligible.filter(candidate => !candidate.alreadyOffered).map(candidate => candidate.nurseId);
     const candidateOffers = await c.query(`
-      WITH candidates AS (
-        SELECT n.id,n.user_id FROM nurses n CROSS JOIN care_requests req
-        LEFT JOIN LATERAL (SELECT x FROM jsonb_array_elements($6::jsonb) x WHERE x->>'nurseId'=n.id::text) live ON true
-        WHERE req.id=$1 AND req.service_id=$2
-          AND ($6::jsonb IS NULL OR live.x IS NOT NULL)
-          AND cardinality(nurse_eligibility_reasons(n.id,req.id,'OFFER',statement_timestamp(),
-            statement_timestamp()+greatest(1,coalesce((SELECT sum(expected_minutes)
-              FROM care_request_items WHERE request_id=req.id),30))*interval '1 minute',
-            live.x,$3,$7))=0
-          AND NOT EXISTS(SELECT 1 FROM request_offers existing WHERE existing.request_id=req.id AND existing.nurse_id=n.id)
-      ), inserted AS (
+      WITH inserted AS (
         INSERT INTO request_offers(request_id, nurse_id, wave_no, expires_at)
-        SELECT $1, id, $4, now() + ($5::integer * interval '1 second')
-        FROM candidates
+        SELECT $1, id, $2, now() + ($3::integer * interval '1 second')
+        FROM unnest($4::uuid[]) AS candidates(id)
         ON CONFLICT(request_id, nurse_id) DO NOTHING
         RETURNING id, nurse_id, expires_at
       ), emitted AS (
@@ -179,7 +137,7 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
         FROM inserted i JOIN nurses n ON n.id = i.nurse_id
         RETURNING id
       ) SELECT count(*)::integer AS emitted_count FROM emitted
-    `, [requestId, request.service_id, cfg.radius, wave, cfg.seconds,locations===null?null:JSON.stringify(locations),nightPolicyEnabled()]);
+    `, [requestId, wave, cfg.seconds, recipients]);
 
     const emittedCount = candidateOffers.rows[0]?.emitted_count ?? 0;
 
@@ -188,7 +146,7 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
       INSERT INTO dispatch_diagnostics(
         request_id, wave_no, radius_m, candidates_found, offers_created, exclusion_reasons, excluded_nurses
       ) VALUES($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
-    `, [requestId, wave, cfg.radius, emittedCount, emittedCount, JSON.stringify(diag.reasons), JSON.stringify(diag.excludedNurses)]);
+    `, [requestId, wave, cfg.radius, eligible.length, emittedCount, JSON.stringify(diag.reasons), JSON.stringify(diag.excludedNurses)]);
 
     console.log(`[Dispatch] Request ${requestId} Wave ${wave}/${waveConfig.length} (r: ${cfg.radius}m): ${emittedCount} offers created. Excluded reasons: ${JSON.stringify(diag.reasons)}`);
 
@@ -203,7 +161,6 @@ export async function doDispatch(pool: pg.Pool): Promise<boolean> {
     return true;
   } catch (e) {
     await c.query('ROLLBACK');
-    console.error('[Dispatch Error]', e);
     throw e;
   } finally {
     c.release();

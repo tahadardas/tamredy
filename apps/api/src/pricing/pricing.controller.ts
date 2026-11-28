@@ -3,7 +3,8 @@ import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
 import { conflict, missing } from '../common/errors.js';
-import { estimateV2, payableTotal, ruleFromRow } from './pricing.js';
+import { fromMinor, toMinor } from '../wallet/ledger.service.js';
+import { CASH_CURRENCY_CODE } from './cash-currency.js';
 import { FeesService } from './fees.service.js';
 import { AutoDiscountService } from './auto-discounts.service.js';
 import { PromoService } from './promo.service.js';
@@ -20,7 +21,7 @@ const BILL_SQL = `SELECT cr.id AS request_id,cr.status,cr.requester_user_id,cr.s
     CASE i.status WHEN 'PARTIALLY_PAID' THEN 'PARTIAL' WHEN 'ISSUED' THEN 'DUE' ELSE i.status END AS payment_status,
     i.currency_code,cr.nurse_earning,cr.commission_bps_applied,i.surcharge_amount,i.distance_fee,i.tax_amount,
     i.tip_amount,cr.pricing->'fees'->>'taxLabel' AS tax_label,cr.promo_snapshot->>'code' AS promo_code,
-    s.title_ar AS service_title,v.id AS visit_id,i.id AS invoice_id,i.invoice_number,i.issued_at,
+    s.title_ar AS service_title,v.id AS visit_id,i.id AS invoice_id,i.invoice_number,i.issued_at,i.version AS invoice_version,
     coalesce(i.paid_amount,0) AS collected
   FROM care_requests cr JOIN services s ON s.id=cr.service_id
   LEFT JOIN invoices i ON i.request_id=cr.id
@@ -28,15 +29,26 @@ const BILL_SQL = `SELECT cr.id AS request_id,cr.status,cr.requester_user_id,cr.s
   LEFT JOIN request_assignments a ON a.id=v.assignment_id`;
 
 function shape(r: any) {
-  const due = Number(r.amount_due ?? 0), collected = Number(r.collected ?? 0);
+  const money = {
+    due: toMinor(r.amount_due ?? 0), collected: toMinor(r.collected ?? 0),
+    gross: toMinor(r.gross_amount ?? 0), discount: toMinor(r.discount_amount ?? 0),
+    surcharge: toMinor(r.surcharge_amount ?? 0), distanceFee: toMinor(r.distance_fee ?? 0),
+    tax: toMinor(r.tax_amount ?? 0), tip: toMinor(r.tip_amount ?? 0),
+    ...(r.nurseEarning == null ? {} : {nurseEarning: toMinor(r.nurseEarning) + toMinor(r.tip_amount ?? 0)}),
+  };
+  const payable = money.due + money.tip;
+  const remaining = payable > money.collected ? payable - money.collected : 0n;
+  const exact = Object.fromEntries(Object.entries({...money, payable, remaining}).map(([key, value]) => [key, fromMinor(value)]));
+  const legacy = Object.fromEntries(Object.entries(exact).map(([key, value]) => [key, Number(value)]));
   return {
+    ...legacy, moneyAmounts: exact,
     requestId: r.request_id, visitId: r.visit_id, invoiceId: r.invoice_id, invoiceNumber: r.invoice_number,
+    invoiceVersion: r.invoice_version, currencyCode: r.currency_code,
+    currencyDecimalPlaces: r.currency_code === CASH_CURRENCY_CODE ? 0 : 2,
+    cashCollectionSupported: r.currency_code === CASH_CURRENCY_CODE && Object.values(money).every(value => value % 100n === 0n),
     status: r.status, serviceTitle: r.service_title, currency: r.currency_code,
-    billed: r.amount_due != null, minutes: r.service_minutes, gross: Number(r.gross_amount ?? 0), discount: Number(r.discount_amount ?? 0),
-    promoCode: r.promo_code, due, collected, paymentStatus: r.payment_status,
-    surcharge: Number(r.surcharge_amount ?? 0), distanceFee: Number(r.distance_fee ?? 0), tax: Number(r.tax_amount ?? 0), taxLabel: r.tax_label ?? 'ضريبة',
-    tip: Number(r.tip_amount ?? 0), payable: payableTotal(due, Number(r.tip_amount ?? 0)),
-    remaining: Math.max(0, payableTotal(due, Number(r.tip_amount ?? 0)) - collected),
+    billed: r.amount_due != null, minutes: r.service_minutes,
+    promoCode: r.promo_code, paymentStatus: r.payment_status, taxLabel: r.tax_label ?? 'ضريبة',
   };
 }
 
@@ -83,7 +95,7 @@ export class PricingController {
     const q = await this.db.query(`${BILL_SQL} JOIN nurses n ON n.id=a.nurse_id WHERE cr.id=$1 AND n.user_id=$2 LIMIT 1`, [id, r.user!.id]);
     if (!q.rowCount) missing();
     const row = q.rows[0];
-    return { ...shape(row), nurseEarning: Number(row.nurse_earning ?? 0) + Number(row.tip_amount ?? 0), commissionBps: row.commission_bps_applied };
+    return { ...shape({...row, nurseEarning:row.nurse_earning ?? 0}), commissionBps: row.commission_bps_applied };
   }
 
   /** Optional tip, added to the cash the patient hands over; 100% goes to the nurse. Allowed until the bill is fully paid. */
@@ -103,5 +115,11 @@ export class PricingController {
     return this.db.transaction(async c => {
       return this.billing.collectCash(c,r.user!.id,id,dto.amount,key);
     });
+  }
+
+  @Get('nurse/requests/:id/collection-status') async collectionStatus(@Request() r: AuthRequest,
+    @Param('id') id: string, @Headers('idempotency-key') key: string) {
+    requireRole(r.user!, 'NURSE');
+    return this.billing.collectionStatus(this.db, r.user!.id, id, key);
   }
 }

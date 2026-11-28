@@ -10,6 +10,7 @@ import 'clinical_notes_screen.dart';
 import 'post_visit_report_screen.dart';
 import 'service_outcomes_screen.dart';
 import 'visit_store.dart';
+import 'pending_cash_collection_store.dart';
 
 class VisitWorkspaceScreen extends StatelessWidget {
   final NurseSessionCoordinator session;
@@ -271,11 +272,13 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
       return;
     }
     setState(() => _fieldError = null);
-    final paid = await widget.session.visit.collectCash(amt);
-    if (paid && mounted) {
-      _amountCtrl.clear();
-      await widget.session.finance.refresh();
-    }
+    await _showOutcome(await widget.session.visit.collectCash(amt));
+  }
+
+  Future<void> _showOutcome(CashCollectionOutcome outcome) async {
+    if (!mounted || outcome == CashCollectionOutcome.failed) return;
+    _amountCtrl.clear();
+    await widget.session.finance.refresh();
   }
 
   @override
@@ -322,15 +325,15 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  formatMoney(bill.payable),
+                  bill.money('payable').formatted,
                   style: aeroText(size: 28, weight: FontWeight.w800, color: tc.primary),
                 ),
                 const Divider(height: 20),
                 KeyValueRow('مدة الزيارة', '${bill.minutes} دقيقة'),
-                KeyValueRow('المستلم حتى الآن', formatMoney(bill.collected)),
-                KeyValueRow('المتبقي', formatMoney(bill.remaining)),
-                KeyValueRow('صافي حصتك من الزيارة', formatMoney(bill.nurseEarning)),
-                if (bill.tip > 0) KeyValueRow('إكرامية المريض (لك كاملة)', formatMoney(bill.tip)),
+                KeyValueRow('المستلم حتى الآن', bill.money('collected').formatted),
+                KeyValueRow('المتبقي', bill.money('remaining').formatted),
+                KeyValueRow('صافي حصتك من الزيارة', bill.money('nurseEarning').formatted),
+                if (bill.money('tip').amountMinor > BigInt.zero) KeyValueRow('إكرامية المريض (لك كاملة)', bill.money('tip').formatted),
               ],
             ),
           ),
@@ -345,7 +348,7 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
                     const SizedBox(height: 8),
                     ActionChip(
                       avatar: Icon(Icons.bolt_rounded, size: 16, color: tc.primary),
-                      label: Text('تعبئة كامل المتبقي (${formatMoney(bill.remaining)})'),
+                      label: Text('تعبئة كامل المتبقي (${bill.money('remaining').formatted})'),
                       onPressed: () {
                         setState(() {
                           _amountCtrl.text = '${bill.remaining}';
@@ -357,7 +360,7 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
                   const SizedBox(height: 10),
                   TamTextField(
                     controller: _amountCtrl,
-                    hint: 'أدخل المبلغ بالليرة السورية',
+                    hint: 'أدخل المبلغ نقدًا (${bill.currencyCode})',
                     errorText: _fieldError,
                     keyboardType: TextInputType.number,
                     textDirection: TextDirection.ltr,
@@ -367,12 +370,21 @@ class _CompletedCollectionViewState extends State<_CompletedCollectionView> {
                   AeroButton.teal(
                     'تأكيد استلام المبلغ',
                     isLoading: v.collecting,
-                    onPressed: v.collecting ? null : _collect,
+                    onPressed: v.canStartCashCollection ? _collect : null,
                   ),
                 ],
               ),
             ),
           if (v.collectionMessage != null) NoticeBox(v.collectionMessage!),
+          if (v.billIsStale || (v.pendingCashCollection != null && !v.canResumeCashCollection)) ...[
+            NoticeBox(v.error ?? 'تحقق من مزامنة الفاتورة قبل تسجيل دفعة أخرى'),
+            SoftButton('تحديث الفاتورة', onPressed: v.billLoading ? null : () async { await v.loadBill(); }),
+          ],
+          if (!bill.cashCollectionSupported && !kDemoMode)
+            const NoticeBox('عملة الفاتورة أو دقتها تتطلب مراجعة الإدارة قبل التحصيل'),
+          if (v.canResumeCashCollection)
+            SoftButton('تحقق من الدفعة السابقة أو أعد المحاولة بالمفتاح نفسه',
+              onPressed: () async => _showOutcome(await v.resumeCashCollection())),
           if (paid) ...[
             SoftButton(
               'كتابة تقرير ما بعد الزيارة (داخلي)',

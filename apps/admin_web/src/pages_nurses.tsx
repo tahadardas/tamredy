@@ -1,3 +1,4 @@
+import {NurseFinancialAccounts} from './nurse_financial_accounts';
 import {toast} from './toast';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {api, errorAr, getJson, sendJson} from './session';
@@ -101,7 +102,7 @@ function Detail({id, onClose, onChanged}: {id: string; onClose: () => void; onCh
   useEffect(() => { void load().catch(() => onClose()); }, [load]);
   if (!p) return <Modal title="..." onClose={onClose}><p className="hint">جارٍ التحميل...</p></Modal>;
   return <Modal title={`${p.display_name} — رقم ${p.nurse_no}`} onClose={onClose} maxWidth="840px">
-    <div className="tabs">{[['info', 'البيانات'], ['skills', 'المهارات'], ['docs', `المستندات (${p.documents.length})`], ['lic', 'الرخص']].map(([k, l]) =>
+    <div className="tabs">{[['info', 'البيانات'], ['skills', 'المهارات'], ['docs', `المستندات (${p.documents.length})`], ['lic', 'الرخص'], ['finance', 'الحساب المالي']].map(([k, l]) =>
       <button key={k} className={'pill ' + (tab === k ? 'on' : '')} onClick={() => setTab(k)}>{l}</button>)}</div>
     {tab === 'info' && <>
       <p className="hint">الرقم الوطني: {p.nationalIdMasked ?? '—'}</p>
@@ -168,6 +169,7 @@ function Detail({id, onClose, onChanged}: {id: string; onClose: () => void; onCh
       </div>
       {msg && <p className="hint" style={{color: '#059669', fontWeight: 600}}>{msg}</p>}
     </>}
+    {tab === 'finance' && <NurseFinancialAccounts nurseId={id}/>}
     {tab === 'docs' && <Documents nurseId={id} docs={p.documents} reload={async () => { await load(); onChanged(); }}/>}
     {tab === 'lic' && <Table head={['النوع', 'رقم الوثيقة', 'تنتهي', 'الحالة', 'ملاحظة']} rows={p.credentials.map((c: any) => [KIND[c.doc_kind] ?? 'رخصة', c.license_ref, fmtDate(c.expires_at), LIC[c.review_status]?.[0] ?? c.review_status, c.review_reason ?? '—'])}/>}
   </Modal>;

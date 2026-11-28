@@ -1,5 +1,4 @@
-import { dispatchLocations } from './live-location.ts';
-import { nightPolicyEnabled } from './night-safety.ts';
+import { collectDispatchCandidates } from './dispatch-candidates.ts';
 import type pg from 'pg';
 import { featureCapabilities } from '../../../packages/backend-policy/capabilities.mjs';
 
@@ -42,21 +41,15 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
   }
 
   const request=(await client.query('SELECT search_radius_meters FROM care_requests WHERE id=$1',[requestId])).rows[0];
-  const locations=await dispatchLocations(client,requestId,Number(request?.search_radius_meters??10000));
+  const snapshot = await collectDispatchCandidates(client, requestId, Number(request?.search_radius_meters ?? 10000));
+  const recipients = snapshot.filter(candidate => !candidate.reasons.length && !candidate.alreadyOffered)
+    .map(candidate => candidate.nurseId);
   const offers = await client.query(`
-    WITH candidates AS (
-      SELECT n.id,r.search_expires_at FROM nurses n CROSS JOIN care_requests r
-      LEFT JOIN LATERAL (SELECT x FROM jsonb_array_elements($2::jsonb) x WHERE x->>'nurseId'=n.id::text) live ON true
-      WHERE r.id=$1 AND r.status='OFFERING' AND r.search_expires_at>statement_timestamp()
-        AND ($2::jsonb IS NULL OR live.x IS NOT NULL)
-        AND cardinality(nurse_eligibility_reasons(n.id,r.id,'OFFER',statement_timestamp(),
-          statement_timestamp()+greatest(1,coalesce((SELECT sum(expected_minutes)
-            FROM care_request_items WHERE request_id=r.id),30))*interval '1 minute',
-          live.x,NULL,$3))=0
-        AND NOT EXISTS(SELECT 1 FROM request_offers o WHERE o.request_id=r.id AND o.nurse_id=n.id)
-    ), inserted AS (
+    WITH inserted AS (
       INSERT INTO request_offers(request_id,nurse_id,wave_no,expires_at)
-      SELECT $1,id,1,search_expires_at FROM candidates
+      SELECT r.id,candidate.id,1,r.search_expires_at
+      FROM care_requests r CROSS JOIN unnest($2::uuid[]) AS candidate(id)
+      WHERE r.id=$1 AND r.status='OFFERING' AND r.search_expires_at>statement_timestamp()
       ON CONFLICT(request_id,nurse_id) DO NOTHING
       RETURNING id,nurse_id,expires_at
     )
@@ -66,7 +59,7 @@ export async function runOpenSearch(client: pg.PoolClient, requestId: string): P
       'recipientRole','NURSE','targetApp','NURSE_APP','expiresAt',i.expires_at,
       'priority','CRITICAL','deepLink','tamreedy://nurse/offers/' || i.id::text,'createdAt',statement_timestamp())
     FROM inserted i JOIN nurses n ON n.id=i.nurse_id
-  `, [requestId,locations===null?null:JSON.stringify(locations),nightPolicyEnabled()]);
+  `, [requestId, recipients]);
 
   if ((offers.rowCount ?? 0) > 0) {
     console.info(`[Dispatch] Open search ${requestId} created ${offers.rowCount} offers`);

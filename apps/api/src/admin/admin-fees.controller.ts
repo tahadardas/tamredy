@@ -1,8 +1,10 @@
+import { NurseFinancialAccountService } from '../nurses/nurse-financial-account.service.js';
+import { toMinor } from '../wallet/ledger.service.js';
 import { BadRequestException, Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Request, UseGuards } from '@nestjs/common';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, AuthRequest, requireRole } from '../auth/auth.guard.js';
 import { DbService } from '../db/db.service.js';
-import { missing } from '../common/errors.js';
+import { conflict, missing } from '../common/errors.js';
 import { DuesService } from '../pricing/fees.service.js';
 import { LedgerService } from '../wallet/ledger.service.js';
 
@@ -52,7 +54,8 @@ class SettleDto { @IsString() @Matches(/^[A-Z][A-Z0-9_]{2,15}$/) currencyCode!: 
 /** Administrator controls for fees, tax, holidays, commission tiers, nurse dues and promo-abuse review. */
 @Controller('v1/admin') @UseGuards(AuthGuard)
 export class AdminFeesController {
-  constructor(private readonly db: DbService, private readonly dues: DuesService, private readonly ledger: LedgerService) {}
+  constructor(private readonly db: DbService, private readonly dues: DuesService, private readonly ledger: LedgerService,
+    private readonly finance: NurseFinancialAccountService = new NurseFinancialAccountService()) {}
 
   @Get('pricing-settings') async settings(@Request() r: AuthRequest) {
     requireRole(r.user!, 'ADMIN');
@@ -119,18 +122,25 @@ export class AdminFeesController {
         FROM financial_ledger_entries e JOIN financial_transactions t ON t.id=e.transaction_id
         WHERE e.account_id LIKE 'CASH_HELD_BY_NURSE:%' OR e.account_id LIKE 'NURSE_PAYABLE:%'
         GROUP BY split_part(e.account_id,':',2)::uuid,e.currency
-      ) SELECT n.id AS nurse_id,p.currency_code,coalesce(u.display_name,u.phone_e164) AS name,
+      ), account_keys AS (
+        SELECT nurse_id,currency_code FROM nurse_financial_currency_accounts
+        UNION SELECT nurse_id,currency_code FROM positions
+      ) SELECT n.id AS nurse_id,k.currency_code,coalesce(u.display_name,u.phone_e164) AS name,
         greatest(coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0),0) AS owed,coalesce(o.cnt,0) AS visits,
         coalesce(p.settled_from_nurse,0) AS settled_from_nurse,coalesce(p.paid_to_nurse,0) AS paid_to_nurse,
         coalesce(p.cash_held,0)-coalesce(p.nurse_payable,0) AS balance,
-        a.credit_limit,a.settlement_required
+        a.credit_limit,a.settlement_required,l.reconciliation_required,
+        CASE WHEN k.currency_code IS NULL THEN 'FINANCIAL_SETUP_REQUIRED'
+             WHEN a.id IS NULL THEN 'FINANCIAL_SETUP_REQUIRED' ELSE 'FINANCIAL_CONFIGURED' END AS financial_status
       FROM nurses n JOIN users u ON u.id=n.user_id
-      LEFT JOIN positions p ON p.nurse_id=n.id
-      LEFT JOIN nurse_financial_currency_accounts a ON a.nurse_id=n.id AND a.currency_code=p.currency_code
+      LEFT JOIN account_keys k ON k.nurse_id=n.id
+      LEFT JOIN positions p ON p.nurse_id=n.id AND p.currency_code=k.currency_code
+      LEFT JOIN nurse_financial_currency_accounts a ON a.nurse_id=n.id AND a.currency_code=k.currency_code
+      LEFT JOIN nurse_financial_accounts l ON l.nurse_id=n.id
       LEFT JOIN (SELECT a.nurse_id,count(*)::int AS cnt FROM request_assignments a
         JOIN visits v ON v.assignment_id=a.id AND v.completed_at IS NOT NULL GROUP BY a.nurse_id) o ON o.nurse_id=n.id
-      WHERE p.nurse_id IS NOT NULL ORDER BY balance DESC`)).rows;
-    return { limit:null, totalsByCurrency: Object.fromEntries([...new Set(rows.map(row=>String(row.currency_code)))].map(currency=>[currency,rows.filter(row=>row.currency_code===currency).reduce((total,row)=>total+Math.max(0,Number(row.balance)),0)])),
+      ORDER BY balance DESC,n.id,k.currency_code`)).rows;
+    return { limit:null, totalsByCurrency: Object.fromEntries([...new Set(rows.filter(row=>row.currency_code!=null).map(row=>String(row.currency_code)))].map(currency=>[currency,rows.filter(row=>row.currency_code===currency).reduce((total,row)=>total+Math.max(0,Number(row.balance)),0)])),
       items: rows.map(x => ({ ...x, blocked: x.settlement_required===true ||
         (Number(x.credit_limit)>0 && Number(x.balance)>Number(x.credit_limit)) })) };
   }
@@ -139,24 +149,42 @@ export class AdminFeesController {
     @Body() d: SettleDto, @Headers('idempotency-key') idempotencyKey: string) {
     requireRole(r.user!, 'ADMIN');
     if (!idempotencyKey || idempotencyKey.length > 128) throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
-    return this.db.transaction(async c => {
-      if (!(await c.query('SELECT 1 FROM nurses WHERE id=$1', [nurseId])).rowCount) missing();
+    return this.db.transaction(async c => this.finance.runAdminMutation(c,r.user!.id,nurseId,idempotencyKey,
+      {action:'settle',body:d},async()=>{
+      const key=`nurse-settlement:${r.user!.id}:${idempotencyKey}`;
+      const existing=(await c.query('SELECT id FROM financial_transactions WHERE idempotency_key=$1',[key])).rows[0];
+      const account=await this.finance.getAccount(c,nurseId,d.currencyCode,true);
+      if (!existing) {
+        if (!account) conflict('FINANCIAL_SETUP_REQUIRED');
+        const position=(await c.query(`SELECT coalesce(sum(debit_amount-credit_amount),0)::text AS amount
+          FROM financial_ledger_entries WHERE currency=$2 AND account_id IN
+          ('CASH_HELD_BY_NURSE:'||$1::text,'NURSE_PAYABLE:'||$1::text)`,[nurseId,d.currencyCode])).rows[0];
+        const raw=String(position.amount);
+        const owed=raw.startsWith('-')?-toMinor(raw.slice(1)):toMinor(raw);
+        const payable=d.direction==='FROM_NURSE'?owed:-owed;
+        if (toMinor(d.amount)>payable) conflict('SETTLEMENT_EXCEEDS_OUTSTANDING_AMOUNT');
+      }
       const transaction = await this.ledger.postTransaction(c, {
         transactionType:d.direction==='FROM_NURSE'?'NURSE_SETTLEMENT_FROM_NURSE':'NURSE_SETTLEMENT_TO_NURSE',
         referenceType:'NURSE',referenceId:nurseId,currencyCode:d.currencyCode,
-        idempotencyKey:`nurse-settlement:${r.user!.id}:${idempotencyKey}`,actorUserId:r.user!.id,
+        idempotencyKey:key,actorUserId:r.user!.id,
         legs:d.direction==='FROM_NURSE'
           ? [{accountId:'CASH_CLEARING',debitAmount:d.amount,creditAmount:0},{accountId:`CASH_HELD_BY_NURSE:${nurseId}`,debitAmount:0,creditAmount:d.amount}]
           : [{accountId:`NURSE_PAYABLE:${nurseId}`,debitAmount:d.amount,creditAmount:0},{accountId:'CASH_CLEARING',debitAmount:0,creditAmount:d.amount}],
       });
-      await c.query(`INSERT INTO nurse_settlements(nurse_id,direction,amount,note,created_by,transaction_id)
-        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(transaction_id) DO NOTHING`,
-      [nurseId,d.direction,d.amount,d.note ?? null,r.user!.id,transaction.transactionId]);
       if (!transaction.replayed) {
-        await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail) VALUES($1,'dues.settled','nurse',$2,$3::jsonb)`, [r.user!.id, nurseId, JSON.stringify({ direction: d.direction, amount: d.amount, transactionId: transaction.transactionId })]);
+        await c.query(`INSERT INTO nurse_settlements(nurse_id,direction,amount,note,created_by,transaction_id)
+          VALUES($1,$2,$3,$4,$5,$6)`,[nurseId,d.direction,d.amount,d.note ?? null,r.user!.id,transaction.transactionId]);
+        if (account && d.direction==='FROM_NURSE') {
+          await this.finance.allocateCommissionSettlement(c,account.id,transaction.transactionId,toMinor(d.amount));
+        }
+        await this.finance.recomputeEligibility(c,nurseId,d.currencyCode);
+        await c.query(`INSERT INTO audit_log(actor_user_id,action,target_type,target_id,detail)
+          VALUES($1,'dues.settled','nurse',$2,$3::jsonb)`,[r.user!.id,nurseId,JSON.stringify({
+          direction:d.direction,amount:d.amount,currencyCode:d.currencyCode,transactionId:transaction.transactionId})]);
       }
       return this.dues.balance(c,nurseId,d.currencyCode);
-    });
+    }));
   }
 
   // ---------- promo abuse review ----------

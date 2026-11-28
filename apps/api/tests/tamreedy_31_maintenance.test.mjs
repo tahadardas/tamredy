@@ -1,3 +1,4 @@
+import { runtimeConfigFingerprint } from '../../../packages/backend-policy/capabilities.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -304,7 +305,6 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
     if (sql.includes('FROM outbox_events')) return {rows:[{pending_realtime:0,pending_push:0,oldest_realtime:null,oldest_push:null,dead_letter_count:0}]};
     return db.query(sql,params);
   }};
-  await pg.query("INSERT INTO worker_heartbeats(worker_id) VALUES('isolated-test-worker')");
   const readinessSvc = new ReadinessService(healthDb, {async healthStatus(){return {enabled:true,connected:true};}},features);
   const appCtrl = new AppController(readinessSvc, features, new OperationalMetricsService());
   const caps = await appCtrl.capabilities();
@@ -314,6 +314,9 @@ test('Tamreedy 3.1 Backend Surgical Verification (BUG-001..048 subset on PGlite)
   const savedPush=process.env.PUSH_ENABLED, savedVoice=process.env.VOICE_ENABLED;
   process.env.PUSH_ENABLED='false';process.env.VOICE_ENABLED='false';
   try {
+    await pg.query(`INSERT INTO worker_heartbeats(worker_id,worker_version,runtime_config_fingerprint,
+      realtime_operational,dispatch_last_success_at) VALUES('isolated-test-worker',$1,$2,true,now())`,
+    [process.env.TAMREEDY_RELEASE ?? '3.1.0-rc.3', runtimeConfigFingerprint()]);
     const ready = await appCtrl.healthReady();
     assert.equal(ready.status, 'ready');
     assert.equal(ready.checks.database.ok, true);

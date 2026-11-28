@@ -8,8 +8,9 @@ import { VoiceService } from '../dist/voice/voice.service.js';
 for(const role of ['PATIENT','NURSE']) {
   test(`call transitions carry server recipient ${role} and session version`,async()=>{
     const delivered=[];
-    const call={id:'call-a',request_id:'request-a',session_version:8,connected_at:new Date(),caller_user_id:'caller',receiver_user_id:'receiver'};
-    const db={query:async(sql)=>sql.includes('SELECT role')?{rowCount:1,rows:[{role}]}:{rowCount:1,rows:[call]}};
+    const call={id:'call-a',request_id:'request-a',session_version:8,connected_at:new Date(),caller_user_id:'caller',receiver_user_id:'receiver',call_status:'ACCEPTED'};
+    const client={query:async(sql)=>sql.includes('SELECT role')?{rowCount:1,rows:[{role}]}:{rowCount:1,rows:[call]}};
+    const db={transaction:async work=>work(client)};
     const voice=new VoiceService(db,{sendToUser:async(...args)=>delivered.push(args)},{},{increment(){}});
     await voice.markConnected('caller','call-a');
     const [user,type,payload]=delivered[0];

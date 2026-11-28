@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import { requiredMigrations, missingMigrations } from '../../../packages/backend-policy/schema.mjs';
-import { featureCapabilities, bookingCapabilityError, ordersState } from '../../../packages/backend-policy/capabilities.mjs';
+import { featureCapabilities, bookingCapabilityError, ordersState, runtimeConfigFingerprint } from '../../../packages/backend-policy/capabilities.mjs';
 import { ReadinessService } from '../dist/capabilities/readiness.service.js';
 import { FeatureCapabilitiesService } from '../dist/capabilities/feature-capabilities.service.js';
 
@@ -19,12 +19,17 @@ test('missing orders settings fail closed; optional feature gates do not auto en
   assert.equal(caps.openDispatchEnabled,false);
   assert.equal(caps.liveLocationRedisEnabled,false);
 });
+function workerStatus(extra={}) {
+  return {age_seconds:0,worker_version:process.env.TAMREEDY_RELEASE??'3.1.0-rc.3',
+    runtime_config_fingerprint:runtimeConfigFingerprint(),push_configured:true,push_operational:null,
+    realtime_operational:true,dispatch_last_success_at:new Date(),dispatch_last_error_at:null,...extra};
+}
 function probe(overrides={}) {
   const db={poolStats:()=>({}),async query(sql){
     if(sql==='SELECT 1')return {rows:[{}]};
     if(sql.includes('schema_migrations'))return {rows:requiredMigrations.map(name=>({name}))};
     if(sql.includes('FROM outbox_events'))return {rows:[{pending_realtime:0,pending_push:0,oldest_realtime:null,oldest_push:null,dead_letter_count:0}]};
-    if(sql.includes('worker_heartbeats'))return {rows:[{last_seen:new Date()}]};
+    if(sql.includes('worker_heartbeats'))return {rows:[workerStatus()]};
     if(sql.includes('app_settings'))return {rows:[{value:{accepting:true}}]};
     throw new Error('unexpected SQL');
   },...overrides};
@@ -35,10 +40,9 @@ test('readiness rejects database, monitor, missing migration, heartbeat and back
   process.env.PUSH_ENABLED='false';process.env.VOICE_ENABLED='false';
   try {
     assert.equal((await probe().report()).status,'ready');
-    const base=probe;
     for(const [pattern,result,code] of [
       ['schema_migrations',{rows:requiredMigrations.slice(1).map(name=>({name}))},'MIGRATION_COMPATIBILITY_ERROR'],
-      ['worker_heartbeats',{rows:[{last_seen:null}]},'WORKER_UNAVAILABLE'],
+      ['worker_heartbeats',{rows:[]},'WORKER_UNAVAILABLE'],
       ['FROM outbox_events',{rows:[{pending_realtime:1,pending_push:0,oldest_realtime:new Date(Date.now()-300000),dead_letter_count:0}]},'OUTBOX_UNHEALTHY'],
     ]){
       const original=probe();
@@ -68,28 +72,37 @@ test('actual PostgreSQL outbox monitor counts required channels, expiry and dead
         ('{"skipPush":true}',now()),
         ('{"expiresAt":"2000-01-01T00:00:00Z"}',now()),
         ('{}',now());
-      INSERT INTO outbox_events(payload,push_dead_at,realtime_published_at) VALUES('{}',now(),now());`);
-    const row=(await db.query(OUTBOX_HEALTH_SQL)).rows[0];
+      INSERT INTO outbox_events(payload,push_dead_at,realtime_published_at) VALUES('{}',now(),now()),
+        ('{"expiresAt":"2000-01-01T00:00:00Z"}',now(),now());`);
+    const row=(await db.query(OUTBOX_HEALTH_SQL, [true,true])).rows[0];
     assert.equal(row.pending_push,1);
     assert.equal(row.pending_realtime,0);
     assert.equal(row.dead_letter_count,1);
+    const disabled=(await db.query(OUTBOX_HEALTH_SQL, [true,false])).rows[0];
+    assert.equal(disabled.pending_push,0);
+    assert.equal(disabled.dead_letter_count,0);
   }finally{await db.close();}
 });
 
-test('readiness validates configured FCM key and TURN URL without claiming provider delivery',async()=>{
+test('readiness trusts fresh worker push status and detects flag drift without API Firebase credentials',async()=>{
   const keys=['PUSH_ENABLED','VOICE_ENABLED','FCM_SERVICE_ACCOUNT_FILE','FCM_SERVICE_ACCOUNT_JSON','TURN_URLS','TURN_SHARED_SECRET'];
   const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
   try{
     process.env.PUSH_ENABLED='true';process.env.VOICE_ENABLED='false';
     delete process.env.FCM_SERVICE_ACCOUNT_FILE;
-    process.env.FCM_SERVICE_ACCOUNT_JSON='not-json';
-    await assert.rejects(probe().report(),e=>e.getResponse().failures.includes('FCM_NOT_CONFIGURED'));
-    process.env.FCM_SERVICE_ACCOUNT_JSON=JSON.stringify({project_id:'isolated-test',client_email:'rc2@example.test',private_key:'not-a-key'});
-    await assert.rejects(probe().report(),e=>e.getResponse().failures.includes('FCM_NOT_CONFIGURED'));
-    const {generateKeyPairSync}=await import('node:crypto');
-    const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
-    process.env.FCM_SERVICE_ACCOUNT_JSON=JSON.stringify({project_id:'isolated-test',client_email:'rc2@example.test',private_key:privateKey.export({type:'pkcs8',format:'pem'})});
-    assert.equal((await probe().report()).checks.push.configured,true);
+    delete process.env.FCM_SERVICE_ACCOUNT_JSON;
+    assert.deepEqual((await probe().report()).checks.push,
+      {status:'CONFIGURED',configured:true,operational:null,required:true,lastSuccessAt:null,lastErrorAt:null});
+    for(const [state,code] of [
+      [{push_configured:false},'FCM_NOT_CONFIGURED'],
+      [{push_operational:false},'FCM_DEGRADED'],
+      [{runtime_config_fingerprint:'other'},'WORKER_CONFIGURATION_MISMATCH'],
+    ]) {
+      const readiness=probe();
+      const query=readiness.db.query.bind(readiness.db);
+      readiness.db.query=async sql=>sql.includes('worker_heartbeats')?{rows:[workerStatus(state)]}:query(sql);
+      await assert.rejects(readiness.report(),e=>e.getResponse().failures.includes(code));
+    }
     process.env.VOICE_ENABLED='true';process.env.TURN_URLS='https://invalid.example.test';process.env.TURN_SHARED_SECRET='isolated-test-fixture';
     await assert.rejects(probe().report(),e=>e.getResponse().failures.includes('VOICE_NOT_CONFIGURED'));
     process.env.TURN_URLS='turn:127.0.0.1:3478?transport=udp';

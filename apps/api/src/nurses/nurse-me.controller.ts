@@ -109,9 +109,8 @@ export class NurseMeController {
     const skillsCount = skills.rowCount ?? 0;
 
     // Check settlement dues
-    const dues = await this.dues.balancesByCurrency(this.db,nurseId);
     const financialAccounts=await this.db.query('SELECT settlement_required FROM nurse_financial_currency_accounts WHERE nurse_id=$1',[nurseId]);
-    const settlementBlocked = dues.some(row=>row.blocked) || financialAccounts.rows.some(row=>row.settlement_required);
+    const settlementBlocked = financialAccounts.rows.length>0 && financialAccounts.rows.every(row=>row.settlement_required===true);
 
     // Check active assignment
     const active = await this.db.query(`SELECT 1 FROM request_assignments a JOIN care_requests cr ON cr.id=a.request_id WHERE a.nurse_id=$1 AND a.status='ACTIVE' AND cr.status IN ('ASSIGNED','EN_ROUTE','ARRIVED','IN_SERVICE')`, [nurseId]);
@@ -138,20 +137,23 @@ export class NurseMeController {
 
     if (hasActiveAssignment || ['RESERVED', 'EN_ROUTE', 'ARRIVED', 'IN_SERVICE'].includes(row.work_status)) {
       calculatedStatus = 'BUSY';
-    } else if (row.availability_intent !== 'AVAILABLE') {
-      calculatedStatus = 'OFFLINE';
     } else if (!row.verified) {
       calculatedStatus = 'VERIFICATION_REQUIRED';
       unmet.push('الحساب بانتظار الاعتماد الإداري النهائي');
     } else if (!credentialsApproved) {
       calculatedStatus = 'VERIFICATION_REQUIRED';
       unmet.push('الترخيص المهني بحاجة إلى اعتماد أو منتهي الصلاحية');
+    } else if (!financialAccounts.rowCount) {
+      calculatedStatus = 'FINANCIAL_SETUP_REQUIRED';
+      unmet.push('حسابك معتمد طبيًا، ويحتاج إلى استكمال الإعداد المالي من الإدارة.');
     } else if (skillsCount === 0) {
       calculatedStatus = 'SKILLS_REQUIRED';
       unmet.push('لم يتم اعتماد أي خدمات تمريضية مؤهل لتنفيذها');
     } else if (settlementBlocked) {
       calculatedStatus = 'SETTLEMENT_BLOCKED';
-      unmet.push('استقبال الطلبات موقوف لتجاوز سقف المستحقات النقدية');
+      unmet.push('استقبال الطلبات موقوف حتى تسوية الالتزامات المالية');
+    } else if (row.availability_intent !== 'AVAILABLE') {
+      calculatedStatus = 'OFFLINE';
     } else if (!hasLocation) {
       calculatedStatus = 'LOCATION_REQUIRED';
       unmet.push('يرجى تمكين أذونات وخدمة الموقع الجغرافي');
@@ -170,7 +172,7 @@ export class NurseMeController {
     const eligibilityReasonCodes=requestEligibility?.reasons.map(reason=>reason.code) ?? [
       ...(!row.verified?['NURSE_NOT_VERIFIED']:[]),...(!credentialsApproved?['LICENSE_MISSING_OR_EXPIRED']:[]),
       ...(skillsCount===0?['MISSING_REQUIRED_SKILLS']:[]),...(settlementBlocked?['SETTLEMENT_REQUIRED']:[]),
-      ...(financialAccounts.rowCount===0?['NURSE_FINANCIAL_ACCOUNT_REQUIRED']:[]),
+      ...(financialAccounts.rowCount===0?['FINANCIAL_SETUP_REQUIRED']:[]),
       ...(!hasLocation?['LOCATION_REQUIRED']:!isLocationFresh?['LOCATION_STALE']:[]),
       ...(!isLocationAccurate?['LOCATION_INACCURATE']:[]),...(!isHeartbeatFresh?['HEARTBEAT_STALE']:[]),
       ...(hasActiveAssignment?['NURSE_HAS_ACTIVE_EXECUTION']:[]),

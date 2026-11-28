@@ -81,7 +81,7 @@ class _InvoicePaymentScreenState extends State<InvoicePaymentScreen> {
         setState(() => _bill = updated);
         TamToast.show(
           context,
-          amount == 0 ? 'تم إلغاء الإكرامية' : 'تمت إضافة الإكرامية (${formatMoney(amount)})',
+          amount == 0 ? 'تم إلغاء الإكرامية' : 'تمت إضافة الإكرامية (${formatMoney(amount, currency: updated.currencyCode)})',
           tone: TamToastTone.success,
         );
       }
@@ -120,7 +120,7 @@ class _InvoicePaymentScreenState extends State<InvoicePaymentScreen> {
                 Text('المبلغ المستحق للدفع', style: aeroText(size: 12.5, color: tc.textSecondary)),
                 const SizedBox(height: 4),
                 Text(
-                  formatMoney(bill.payable),
+                  bill.money('payable').formatted,
                   style: aeroText(size: 28, weight: FontWeight.w800, color: tc.textPrimary),
                 ),
                 const SizedBox(height: 8),
@@ -135,19 +135,19 @@ class _InvoicePaymentScreenState extends State<InvoicePaymentScreen> {
                 ),
                 const Divider(height: 22),
                 KeyValueRow('مدة الزيارة', '${bill.minutes} دقيقة'),
-                KeyValueRow('قيمة الخدمات الأساسية', formatMoney(bill.gross - bill.surcharge)),
-                if (bill.surcharge > 0) KeyValueRow('رسوم ليلي/عطلة', formatMoney(bill.surcharge)),
-                if (bill.distanceFee > 0) KeyValueRow('رسوم المسافة', formatMoney(bill.distanceFee)),
-                if (bill.discount > 0)
+                KeyValueRow('قيمة الخدمات الأساسية', (bill.money('gross') - bill.money('surcharge')).formatted),
+                if (bill.money('surcharge').amountMinor > BigInt.zero) KeyValueRow('رسوم ليلي/عطلة', bill.money('surcharge').formatted),
+                if (bill.money('distanceFee').amountMinor > BigInt.zero) KeyValueRow('رسوم المسافة', bill.money('distanceFee').formatted),
+                if (bill.money('discount').amountMinor > BigInt.zero)
                   KeyValueRow(
                     bill.promoCode != null ? 'خصم ${bill.promoCode}' : 'الخصم',
-                    '−${formatMoney(bill.discount)}',
+                    '−${bill.money('discount').formatted}',
                   ),
-                if (bill.tax > 0) KeyValueRow(bill.taxLabel, formatMoney(bill.tax)),
-                if (bill.tip > 0) KeyValueRow('إكرامية الممرض', formatMoney(bill.tip)),
-                if (bill.collected > 0) KeyValueRow('المبلغ المستلم', formatMoney(bill.collected)),
-                if (!paid && bill.collected > 0)
-                  KeyValueRow('المتبقي', formatMoney(bill.remaining)),
+                if (bill.money('tax').amountMinor > BigInt.zero) KeyValueRow(bill.taxLabel, bill.money('tax').formatted),
+                if (bill.money('tip').amountMinor > BigInt.zero) KeyValueRow('إكرامية الممرض', bill.money('tip').formatted),
+                if (bill.money('collected').amountMinor > BigInt.zero) KeyValueRow('المبلغ المستلم', bill.money('collected').formatted),
+                if (!paid && bill.money('collected').amountMinor > BigInt.zero)
+                  KeyValueRow('المتبقي', bill.money('remaining').formatted),
               ],
             ),
           ),
@@ -172,7 +172,7 @@ class _InvoicePaymentScreenState extends State<InvoicePaymentScreen> {
               ],
             ),
           ),
-          if (!paid) ...[
+          if (!paid && (bill.cashCollectionSupported || kDemoMode)) ...[
             const SectionTitle('إكرامية اختيارية للممرض'),
             Wrap(
               spacing: 8,
@@ -180,7 +180,7 @@ class _InvoicePaymentScreenState extends State<InvoicePaymentScreen> {
               children: [
                 for (final tipAmt in const [0, 5000, 10000, 20000])
                   ChoiceChip(
-                    label: Text(tipAmt == 0 ? 'بدون' : formatMoney(tipAmt)),
+                    label: Text(tipAmt == 0 ? 'بدون' : formatMoney(tipAmt, currency: bill.currencyCode)),
                     selected: bill.tip == tipAmt,
                     onSelected: _busyTip ? null : (_) => _applyTip(tipAmt),
                   ),

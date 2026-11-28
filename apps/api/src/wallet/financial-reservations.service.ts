@@ -46,7 +46,7 @@ export class FinancialReservationsService {
     // untouched until their currency is administratively reconciled.
     let totalMinor = 0n;
     const releasedByCurrency: Record<string, string> = {};
-    for (const row of released.rows) {
+    for (const row of released.rows.sort((a,b)=>(a.currency_account_id ?? '').localeCompare(b.currency_account_id ?? ''))) {
       const amtMinor = toMinor(row.amount);
       totalMinor += amtMinor;
       releasedByCurrency[row.currency_code] = fromMinor(
@@ -57,6 +57,12 @@ export class FinancialReservationsService {
           version=version+1,updated_at=statement_timestamp()
         WHERE id=$1 AND currency_code=$3`,
       [row.currency_account_id,fromMinor(amtMinor),row.currency_code]);
+    }
+
+    const accounts=new Map(released.rows.filter(row=>row.currency_account_id && row.nurse_id)
+      .map(row=>[row.currency_account_id,row]));
+    for (const row of accounts.values()) {
+      await client.query('SELECT recompute_nurse_financial_eligibility($1,$2)',[row.nurse_id,row.currency_code]);
     }
 
     if (actorUserId) {
@@ -139,15 +145,17 @@ export class FinancialReservationsService {
         await client.query(`UPDATE nurse_financial_currency_accounts
           SET reserved_balance=greatest(0,reserved_balance-$2::numeric),
             prepaid_balance=prepaid_balance-$3::numeric,
-            settlement_required=settlement_required OR $4::boolean,
-            version=version+1,updated_at=statement_timestamp() WHERE id=$1 AND currency_code=$5`,
-        [account.id,reservation.amount,fromMinor(allocation.prepaidApplied),allocation.uncoveredCommission>0n,currencyCode]);
+            version=version+1,updated_at=statement_timestamp() WHERE id=$1 AND currency_code=$4`,
+        [account.id,reservation.amount,fromMinor(allocation.prepaidApplied),currencyCode]);
       }
       // The invoice journal already recognizes the full commission. An uncovered
       // portion is a collectible position, never a second revenue posting.
       await client.query(`UPDATE financial_reservations SET status='COMMITTED',
         resolved_at=statement_timestamp(),resolution_reason='INVOICE_COMMITTED'
         WHERE id=$1 AND status='HELD'`, [reservation.id]);
+      if (account && reservation.nurse_id) {
+        await client.query('SELECT recompute_nurse_financial_eligibility($1,$2)',[reservation.nurse_id,currencyCode]);
+      }
     }
   }
 }

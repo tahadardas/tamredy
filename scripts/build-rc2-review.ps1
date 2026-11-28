@@ -2,6 +2,7 @@ param(
     [ValidateSet('patient_app', 'nurse_app', 'all')][string]$App = 'all'
 )
 $ErrorActionPreference = 'Stop'
+$env:TAMREEDY_ANDROID_REVIEW_SIGNING = 'true'
 $rc2Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $rc2Evidence = Join-Path $rc2Root 'docs/rc2-evidence'
 $rc2Output = Join-Path $rc2Root 'handoff/rc2-artifacts'

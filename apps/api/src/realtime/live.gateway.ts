@@ -27,12 +27,18 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     private readonly metrics:OperationalMetricsService,
     private readonly moduleRef:ModuleRef,
   ){}
-  async onModuleInit() {
-    if(!process.env.REDIS_URL)return;
-    this.subscriber=new Redis(process.env.REDIS_URL);
+  onModuleInit() {
+    if(!process.env.REDIS_URL || process.env.REALTIME_ENABLED === 'false')return;
+    const subscriber=new Redis(process.env.REDIS_URL, {autoResubscribe:false});
+    this.subscriber=subscriber;
     this.publisher=new Redis(process.env.REDIS_URL, {enableOfflineQueue:false,maxRetriesPerRequest:1,commandTimeout:1500});
-    await this.subscriber.subscribe('tamreedy:events');
-    this.subscriber.on('message',(_channel,data)=>{
+    subscriber.on('error', () => this.metrics.increment('realtime_publish_failures_total'));
+    this.publisher.on('error', () => this.metrics.increment('realtime_publish_failures_total'));
+    // Re-establish the subscription after every successful connection, even if startup occurred during an outage.
+    subscriber.on('ready', () => {
+      void subscriber.subscribe('tamreedy:events').catch(() => this.metrics.increment('realtime_publish_failures_total'));
+    });
+    subscriber.on('message',(_channel,data)=>{
       try {
         const evt=JSON.parse(data) as {eventId?:string;type:string;payload:{eventId?:string;recipientUserId?:string;recipientUserIds?:string[];recipientRole?:string;requestId?:string;namespace?:string}};
         // Retryable outbox invalidation is received on all API replicas.
@@ -203,7 +209,11 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
   }
   private async canAccessEntity(userId: string, type: string, payload: PrivateEventEnvelope): Promise<boolean> {
     if (typeof payload.callId === 'string') {
-      const call = await this.db.query('SELECT 1 FROM voice_call_sessions WHERE id=$1 AND $2 IN (caller_user_id,receiver_user_id)', [payload.callId,userId]);
+      const call = await this.db.query(`SELECT 1 FROM voice_call_sessions
+        WHERE id=$1 AND $2 IN (caller_user_id,receiver_user_id)
+          AND (NOT $3::boolean OR (receiver_user_id=$2 AND call_status='RINGING'
+            AND ring_expires_at>statement_timestamp() AND session_version=$4))`,
+        [payload.callId,userId,type==='call.incoming',payload.sessionVersion ?? null]);
       return !!call.rowCount;
     }
     if (typeof payload.conversationId === 'string') {

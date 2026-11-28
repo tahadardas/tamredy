@@ -21,6 +21,9 @@ google-services.json
 GoogleService-Info.plist
 *service-account*.json
 local.properties
+key.properties
+*.jks
+*.keystore
 *firebase-adminsdk*.json
 secrets/
 .deploytest/

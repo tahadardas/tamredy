@@ -159,7 +159,7 @@ class _IncomingOfferOverlayState extends State<IncomingOfferOverlay> {
                               const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
-                                  formatMoney(offer.nurseShare),
+                                  offer.formattedNurseShare,
                                   textAlign: TextAlign.end,
                                   style: aeroText(size: 19, weight: FontWeight.w800, color: const Color(0xFF2DD4BF)),
                                 ),

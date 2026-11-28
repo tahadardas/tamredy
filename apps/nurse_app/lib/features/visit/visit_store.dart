@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../../guardian.dart';
+import 'pending_cash_collection_store.dart';
 
 enum NurseVisitPhase {
   idle,
@@ -80,6 +81,15 @@ class VisitStore extends ChangeNotifier {
   bool collecting = false;
   String? collectionMessage;
   bool collectionShort = false;
+  bool billIsStale = true;
+  bool _cashRecoveryBlocked = false;
+  PendingCashCollection? pendingCashCollection;
+  late final _cashOperations = PendingCashCollectionStore(api);
+  bool get canStartCashCollection => !collecting && !billLoading && !billIsStale &&
+      !_cashRecoveryBlocked && pendingCashCollection == null &&
+      (kDemoMode || bill?.cashCollectionSupported == true);
+  bool get canResumeCashCollection => !collecting && !billLoading && !billIsStale &&
+      pendingCashCollection?.status == CashCollectionStatus.pending;
 
   int _entityVersion = 0;
   int _restoreGeneration = 0;
@@ -202,6 +212,7 @@ class VisitStore extends ChangeNotifier {
       ];
 
       if (res['hasActive'] != true && res['assignment'] == null) {
+        if (collecting) return;
         activeSnapshot = null;
         if (unpaidInvoices.isEmpty) {
           activeUnpaidInvoice = null;
@@ -551,119 +562,164 @@ class VisitStore extends ChangeNotifier {
     route = null;
   }
 
-  Future<void> loadBill({String? targetRequestId}) async {
+  Future<BillInfo?> loadBill({String? targetRequestId}) =>
+      _refreshBill(targetRequestId: targetRequestId);
+
+  Future<BillInfo?> _refreshBill({String? targetRequestId, bool afterCollection = false}) async {
+    if (collecting && !afterCollection) return null;
     final reqId = targetRequestId ?? _collectionRequestId ?? activeUnpaidInvoice?.requestId ?? requestId;
     if (kDemoMode) {
-      bill = const BillInfo(
-        due: 45000,
-        minutes: 35,
-        gross: 45000,
-        discount: 0,
-        collected: 0,
-        remaining: 45000,
-        status: 'DUE',
-        visitId: 'demo-visit-1',
-        nurseEarning: 36000,
-      );
+      bill = const BillInfo(due:45000,minutes:35,gross:45000,discount:0,collected:0,
+        remaining:45000,status:'DUE',visitId:'demo-visit-1',nurseEarning:36000);
+      billIsStale = false;
       notifyListeners();
-      return;
+      return bill;
     }
-    if (reqId == null || reqId.isEmpty) return;
-    if (reqId == requestId && invoiceAbsent) {
-      bill = null;
-      billLoading = false;
-      notifyListeners();
-      return;
-    }
-    final sessGen = _sessionGeneration;
-    final billGen = ++_billGeneration;
+    if (reqId == null || reqId.isEmpty || (reqId == requestId && invoiceAbsent)) return null;
+    final session = _sessionGeneration;
+    final generation = ++_billGeneration;
+    bool current() => session == _sessionGeneration && generation == _billGeneration;
     billLoading = true;
+    billIsStale = true;
     notifyListeners();
     try {
-      final fetched = BillInfo.fromJson(await api.getMap('/v1/nurse/requests/$reqId/bill'));
-      if (sessGen != _sessionGeneration || billGen != _billGeneration) return;
+      final response = await api.getMap('/v1/nurse/requests/$reqId/bill', cancelToken: CancelToken());
+      final fetched = BillInfo.fromJson(response);
+      if (!current()) return null;
+      if (fetched.requestId != reqId || fetched.invoiceId == null || fetched.invoiceVersion == null) {
+        throw const FormatException('بيانات الفاتورة غير مكتملة');
+      }
       bill = fetched;
       _collectionRequestId = reqId;
-      notifyListeners();
+      error = null;
+      final owner = await api.currentUserId();
+      if (!current()) return null;
+      if (owner == null || owner.isEmpty) throw const FormatException('تعذر التحقق من الحساب');
+      var operation = await _cashOperations.read(owner,fetched);
+      if (!current()) return null;
+      operation ??= await _cashOperations.recoverLegacy(owner,fetched);
+      if (!current()) return null;
+      if (operation?.status == CashCollectionStatus.reconciled) operation = null;
+      pendingCashCollection = operation;
+      if (!afterCollection && operation?.status == CashCollectionStatus.pending && operation!.legacyKey == null) {
+        final receipt = await api.readCashCollection(reqId,operation.key);
+        if (!current()) return null;
+        if (receipt['found'] == true) {
+          operation = operation.confirm(receipt);
+          await _cashOperations.save(owner,fetched,operation);
+          if (!current()) return null;
+          pendingCashCollection = operation;
+        }
+      }
+      if (operation?.status == CashCollectionStatus.confirmed &&
+          fetched.invoiceVersion! >= operation!.invoiceVersion!) {
+        await _cashOperations.reconcile(owner,fetched,operation);
+        if (!current()) return null;
+        pendingCashCollection = null;
+      }
+      _cashRecoveryBlocked = false;
+      billIsStale = false;
+      return fetched;
     } catch (e) {
-      if (sessGen != _sessionGeneration || billGen != _billGeneration) return;
-      error = explainError(e, fallback: 'تعذر تحميل تفاصيل الفاتورة');
+      if (!current()) return null;
+      _cashRecoveryBlocked = true;
+      error = e is FormatException ? e.message : explainError(e, fallback:'تعذر مزامنة الفاتورة');
+      return null;
     } finally {
-      if (sessGen == _sessionGeneration && billGen == _billGeneration) {
+      if (current()) {
         billLoading = false;
         notifyListeners();
       }
     }
   }
 
-  Future<bool> collectCash(int amount, {String? targetRequestId}) async {
+  Future<CashCollectionOutcome> resumeCashCollection() async {
+    final operation = pendingCashCollection;
+    if (operation == null || !canResumeCashCollection) return CashCollectionOutcome.failed;
+    return _collectCash(operation.amount, existing:operation);
+  }
+
+  Future<CashCollectionOutcome> collectCash(int amount, {String? targetRequestId}) {
+    if (!canStartCashCollection || (targetRequestId != null && targetRequestId != bill?.requestId)) {
+      return Future.value(CashCollectionOutcome.failed);
+    }
+    return _collectCash(amount);
+  }
+
+  Future<CashCollectionOutcome> _collectCash(int amount, {PendingCashCollection? existing}) async {
     final b = bill;
-    if (b == null || amount <= 0 || collecting) return false;
+    if (b == null || (b.status == 'PAID' && existing == null) || amount <= 0 || amount > 1000000000 || collecting) {
+      return CashCollectionOutcome.failed;
+    }
     final session = _sessionGeneration;
     final generation = _assignmentGeneration;
+    bool current() => session == _sessionGeneration && generation == _assignmentGeneration &&
+        bill?.invoiceId == b.invoiceId;
     collecting = true;
     collectionMessage = null;
     notifyListeners();
     try {
       if (kDemoMode) {
-        final r = applyCollection(b.payable, b.collected, amount);
+        final r = applyCollection(b.payable,b.collected,amount);
+        bill = BillInfo(due:b.due,minutes:b.minutes,gross:b.gross,discount:b.discount,
+          collected:r.collected,remaining:r.remaining,status:r.paid?'PAID':'PARTIAL',visitId:b.visitId,
+          tip:b.tip,nurseEarning:b.nurseEarning);
         collectionMessage = r.message;
-        collectionShort = !r.paid;
-        bill = BillInfo(
-          due: b.due,
-          minutes: b.minutes,
-          gross: b.gross,
-          discount: b.discount,
-          collected: r.collected,
-          remaining: r.remaining,
-          status: r.paid ? 'PAID' : 'PARTIAL',
-          visitId: b.visitId,
-          tip: b.tip,
-          nurseEarning: b.nurseEarning,
-        );
-        return r.paid;
+        return r.paid ? CashCollectionOutcome.fullyConfirmed : CashCollectionOutcome.partialConfirmed;
       }
-
-      final id = targetRequestId ?? _collectionRequestId ?? activeUnpaidInvoice?.requestId ?? requestId;
-      if (id == null || id.isEmpty) return false;
       final owner = await api.currentUserId();
-      if (owner == null || owner.isEmpty || session != _sessionGeneration) return false;
-      // Keep issued operation keys stable across upgrades. The request bill is
-      // server-authorized for this account and session before collection opens.
-      final storageKey = 'cash_collect_v3_${id}_$amount';
-      var idemKey = await api.readLocal(storageKey);
-      if (idemKey == null || idemKey.isEmpty) {
-        idemKey = api.newIdempotencyKey();
-        await api.writeLocal(storageKey, idemKey);
+      if (!current() || owner == null || owner.isEmpty || b.requestId == null || b.invoiceId == null ||
+          !b.cashCollectionSupported || (existing != null && !existing.matches(b,owner))) {
+        return CashCollectionOutcome.failed;
       }
-
-      final r = await api.post(
-        '/v1/nurse/requests/$id/collect',
-        {'amount': amount},
-        {'Idempotency-Key': idemKey},
-      );
-      if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
-      await api.writeLocal(storageKey, null);
-      final remaining = (num.tryParse('${r['remaining'] ?? 0}') ?? 0).round();
-      final change = (num.tryParse('${r['change'] ?? 0}') ?? 0).round();
-      collectionMessage = remaining > 0
-          ? 'تم استلام دفعة جزئية — المتبقي ${formatMoney(remaining)}'
-          : change > 0
-              ? 'تم التحصيل بالكامل — أعد للمريض ${formatMoney(change)}'
-              : 'تم تحصيل كامل المبلغ بنجاح';
-      collectionShort = r['status'] != 'PAID';
-      await loadBill(targetRequestId: id);
-      if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
-      if (!collectionShort) {
-        unpaidInvoices = unpaidInvoices.where((inv) => inv.requestId != id).toList();
-        if (activeUnpaidInvoice?.requestId == id) activeUnpaidInvoice = null;
+      final operation = existing ?? _cashOperations.create(owner,b,amount);
+      await _cashOperations.save(owner,b,operation);
+      if (!current()) return CashCollectionOutcome.failed;
+      pendingCashCollection = operation;
+      final lookup = existing == null ? null : await api.readCashCollection(b.requestId!,operation.key);
+      if (!current()) return CashCollectionOutcome.failed;
+      if (lookup != null && (lookup['invoiceId'] != b.invoiceId || lookup['currencyCode'] != b.currencyCode)) {
+        throw const FormatException('بيانات التحصيل لا تطابق الفاتورة');
       }
-      return !collectionShort;
+      if (lookup?['found'] != true && b.status == 'PAID') {
+        final failed = PendingCashCollection({...operation.data, 'status':CashCollectionStatus.failedRequiresAction.name});
+        await _cashOperations.save(owner,b,failed);
+        if (current()) {
+          pendingCashCollection = failed;
+          collectionMessage = 'الفاتورة مدفوعة، لكن لم يُعثر على إيصال العملية المحفوظة. راجع الإدارة.';
+        }
+        return CashCollectionOutcome.failed;
+      }
+      final receipt = lookup?['found'] == true ? lookup! : await api.post(
+        '/v1/nurse/requests/${b.requestId}/collect', {'amount':operation.amount}, {'Idempotency-Key':operation.key});
+      if (!current()) return CashCollectionOutcome.failed;
+      final confirmed = operation.confirm(receipt);
+      await _cashOperations.save(owner,b,confirmed);
+      if (!current()) return CashCollectionOutcome.failed;
+      pendingCashCollection = confirmed;
+      final refreshed = await _refreshBill(targetRequestId:b.requestId,afterCollection:true);
+      if (!current()) return CashCollectionOutcome.failed;
+      if (refreshed == null || pendingCashCollection != null) {
+        collectionMessage = 'تم تسجيل الدفعة، جارٍ تحديث الفاتورة.';
+        return CashCollectionOutcome.pendingReconciliation;
+      }
+      final paid = refreshed.status == 'PAID';
+      collectionShort = !paid;
+      final change = MoneyAmount.parse(receipt['change'] as Object? ?? 0,b.currencyCode,decimalPlaces:0);
+      collectionMessage = paid
+          ? (change.amountMinor > BigInt.zero ? 'تم التحصيل بالكامل — أعد للمريض ${change.formatted}' : 'تم تحصيل كامل المبلغ بنجاح')
+          : 'تم استلام دفعة جزئية — المتبقي ${refreshed.money('remaining').formatted}';
+      if (paid) {
+        unpaidInvoices = unpaidInvoices.where((inv) => inv.requestId != b.requestId).toList();
+        if (activeUnpaidInvoice?.requestId == b.requestId) activeUnpaidInvoice = null;
+      }
+      return paid ? CashCollectionOutcome.fullyConfirmed : CashCollectionOutcome.partialConfirmed;
     } catch (e) {
-      if (session != _sessionGeneration || generation != _assignmentGeneration) return false;
-      collectionMessage = explainError(e, fallback: 'تعذر تأكيد التحصيل النقدي. حاول مرة أخرى.');
-      collectionShort = true;
-      return false;
+      if (!current()) return CashCollectionOutcome.failed;
+      final confirmed = pendingCashCollection?.status == CashCollectionStatus.confirmed;
+      collectionMessage = confirmed ? 'تم تسجيل الدفعة، جارٍ تحديث الفاتورة.' :
+          explainError(e, fallback:'تعذر تأكيد التحصيل. تحقق من العملية المحفوظة.');
+      return confirmed ? CashCollectionOutcome.pendingReconciliation : CashCollectionOutcome.failed;
     } finally {
       if (session == _sessionGeneration && generation == _assignmentGeneration) {
         collecting = false;
@@ -714,6 +770,9 @@ class VisitStore extends ChangeNotifier {
     collecting = false;
     billLoading = false;
     _billGeneration++;
+    pendingCashCollection = null;
+    billIsStale = true;
+    _cashRecoveryBlocked = false;
     error = null;
     unpaidInvoices = const [];
     assignments = const [];
@@ -729,6 +788,7 @@ class VisitStore extends ChangeNotifier {
     _detailCancelToken = null;
     stopNavigation();
     busy = false;
+    collecting = false;
     billLoading = false;
     visitOutcome = null;
     visitOutcomeReason = null;

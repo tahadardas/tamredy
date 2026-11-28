@@ -12,6 +12,7 @@ enum NurseReadinessState {
   verificationRequired,
   skillsRequired,
   settlementBlocked,
+  financialSetupRequired,
   ready,
   busy,
   connectionLost,
@@ -31,6 +32,8 @@ extension NurseReadinessStateX on NurseReadinessState {
         return 'لم يتم اعتماد الخدمات التي تستطيع تنفيذها';
       case NurseReadinessState.connectionLost:
         return 'الاتصال بالخادم غير مستقر';
+      case NurseReadinessState.financialSetupRequired:
+        return 'يحتاج الحساب إلى إعداد مالي';
       case NurseReadinessState.settlementBlocked:
         return 'استقبال الطلبات موقوف بسبب التسويات';
       case NurseReadinessState.busy:
@@ -55,6 +58,8 @@ extension NurseReadinessStateX on NurseReadinessState {
         return 'يجب اعتماد خدمة تمريضية واحدة على الأقل من قبل الإدارة لتتمكن من تلقي عروضها.';
       case NurseReadinessState.connectionLost:
         return 'تعذر إرسال نبض الاتصال بالخادم. جاري إعادة المحاولة تلقائياً عند استقرار الشبكة.';
+      case NurseReadinessState.financialSetupRequired:
+        return 'حسابك معتمد طبيًا، ويحتاج إلى استكمال الإعداد المالي من الإدارة.';
       case NurseReadinessState.settlementBlocked:
         return 'تم بلوغ سقف المستحقات النقدية غير الموردة. يرجى توريد العهدة النقدية لاستئناف العمل.';
       case NurseReadinessState.busy:
@@ -80,6 +85,7 @@ extension NurseReadinessStateX on NurseReadinessState {
       case NurseReadinessState.connectionLost:
         return const Color(0xFFD97706);
       case NurseReadinessState.verificationRequired:
+      case NurseReadinessState.financialSetupRequired:
       case NurseReadinessState.settlementBlocked:
         return const Color(0xFFDC2626);
       case NurseReadinessState.offline:
@@ -104,6 +110,7 @@ extension NurseReadinessStateX on NurseReadinessState {
         return Icons.medical_services_outlined;
       case NurseReadinessState.connectionLost:
         return Icons.wifi_off_rounded;
+      case NurseReadinessState.financialSetupRequired:
       case NurseReadinessState.settlementBlocked:
         return Icons.account_balance_wallet_outlined;
       case NurseReadinessState.offline:
@@ -187,9 +194,15 @@ class AvailabilityManager extends ChangeNotifier {
       await _locationChannel.start();
       _startLoop();
       await syncNow();
-    } on DioException {
+    } on DioException catch (error) {
       _intentAvailable = false;
-      _state = NurseReadinessState.offline;
+      final data = error.response?.data;
+      final code = data is Map ? data['code'] : null;
+      _state = switch (code) {
+        'FINANCIAL_SETUP_REQUIRED' => NurseReadinessState.financialSetupRequired,
+        'SETTLEMENT_REQUIRED' => NurseReadinessState.settlementBlocked,
+        _ => NurseReadinessState.offline,
+      };
       notifyListeners();
       rethrow;
     } catch (_) {
@@ -412,6 +425,9 @@ class AvailabilityManager extends ChangeNotifier {
           break;
         case 'SKILLS_REQUIRED':
           _state = NurseReadinessState.skillsRequired;
+          break;
+        case 'FINANCIAL_SETUP_REQUIRED':
+          _state = NurseReadinessState.financialSetupRequired;
           break;
         case 'SETTLEMENT_BLOCKED':
           _state = NurseReadinessState.settlementBlocked;

@@ -12,10 +12,18 @@ export type Metrics = {
   completed_today?: number;
   cancelled_today?: number;
   escalated_requests?: number;
-  revenue_today?: number;
-  commission_today?: number;
-  dues_pending?: number;
+  grossBilledByCurrency?: Record<string,string>;
+  commissionRevenueByCurrency?: Record<string,string>;
+  discountExpenseByCurrency?: Record<string,string>;
+  taxPayableByCurrency?: Record<string,string>;
+  cashCollectedByCurrency?: Record<string,string>;
+  outstandingReceivablesByCurrency?: Record<string,string>;
+  nursePayablesByCurrency?: Record<string,string>;
+  roundingAdjustmentsByCurrency?: Record<string,string>;
 };
+function byCurrency(amounts?: Record<string,string>) {
+  return Object.entries(amounts ?? {}).map(([currency, amount]) => `${amount} ${currency}`).join(' / ') || '—';
+}
 export type RequestRow = {id: string; status: string; created_at: string; service_title?: string; beneficiary_name?: string};
 export type Page<T> = {items: T[]; hasMore: boolean; nextCursor: string | null};
 
@@ -129,9 +137,14 @@ export function Dashboard({live}: {live: Live}) {
     </div>
     <div className="stats">
       <Stat icon="check" label="زيارات مكتملة اليوم" value={pad(m?.completed_today ?? 0)} sub={`ملغاة: ${m?.cancelled_today ?? 0}`}/>
-      <Stat icon="wallet" label="إجمالي قيمة الخدمات اليوم" value={`${n(m?.revenue_today ?? (x.extras?.revenueToday ?? 0))} ل.س`} sub="إجمالي قيمة الطلبات"/>
-      <Stat icon="cash" label="عمولة المنصة اليوم" value={`${n(m?.commission_today ?? 0)} ل.س`} sub="صافي دخل المنصة"/>
-      <Stat icon="alert" label="مستحقات نقدية معلقة" value={`${n(m?.dues_pending ?? 0)} ل.س`} sub="لدى الممرضين بانتظار التوريد"/>
+      <Stat icon="wallet" label="إجمالي الفوترة اليوم" value={byCurrency(m?.grossBilledByCurrency)} sub="قبل الخصومات"/>
+      <Stat icon="cash" label="عمولة المنصة اليوم" value={byCurrency(m?.commissionRevenueByCurrency)} sub="صافي قيود العمولة"/>
+      <Stat icon="alert" label="مستحقات المرضى" value={byCurrency(m?.outstandingReceivablesByCurrency)} sub="من دفتر الأستاذ"/>
+      <Stat icon="cash" label="تحصيل نقدي اليوم" value={byCurrency(m?.cashCollectedByCurrency)}/>
+      <Stat icon="wallet" label="مستحقات الممرضين" value={byCurrency(m?.nursePayablesByCurrency)}/>
+      <Stat icon="wallet" label="مصروف الخصومات اليوم" value={byCurrency(m?.discountExpenseByCurrency)}/>
+      <Stat icon="wallet" label="الضرائب المستحقة" value={byCurrency(m?.taxPayableByCurrency)}/>
+      <Stat icon="cash" label="فروق التقريب اليوم" value={byCurrency(m?.roundingAdjustmentsByCurrency)}/>
     </div>
 
     <div className="grid2">

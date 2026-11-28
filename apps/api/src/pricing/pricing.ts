@@ -1,3 +1,4 @@
+import { toMinor } from '../wallet/ledger.service.js';
 /** Pure pricing rules (no I/O) so they are easy to test and identical wherever used.
  *  Money is whole Syrian pounds. Rules are snapshotted on each request at creation. */
 
@@ -116,7 +117,7 @@ export function distanceFeeFor(f: FeeSettings, meters: number): number {
 /** Commission tiers reward high-reputation nurses with a LOWER company cut (never higher than the service default). */
 export interface Tier { minReputation: number; minReviews: number; commissionBps: number; }
 export function commissionFor(serviceBps: number, tiers: Tier[], reputation: number, reviews: number): number {
-  const hit = [...tiers].sort((x, y) => y.minReputation - x.minReputation).find(t => reputation >= t.minReputation && reviews >= t.minReviews);
+  const hit = [...tiers].sort((x, y) => y.minReputation - x.minReputation || y.minReviews - x.minReviews || x.commissionBps - y.commissionBps).find(t => reputation >= t.minReputation && reviews >= t.minReviews);
   return hit ? Math.min(serviceBps, hit.commissionBps) : serviceBps;
 }
 
@@ -137,7 +138,9 @@ export function computeBill(rule: PricingRule, secondsAtPatient: number, ctx: Bi
   const subtotal = serviceValue - discount + distanceFee;
   const tax = fees.taxEnabled ? Math.round((subtotal * fees.taxPercent) / 100) : 0;
   const due = roundUp(subtotal + tax, rule.roundingStep);
-  const commission = Math.round((serviceValue * ctx.commissionBps) / 10000);
+  // Service prices under the cash contract use whole units. The integer calculation
+  // mirrors PostgreSQL round(value * basis_points / 10000, 0).
+  const commission = Number((toMinor(serviceValue) * BigInt(ctx.commissionBps) + 500000n) / 1000000n);
   const nurseEarning = serviceValue - commission + distanceFee;
   return {
     minutes, timeGross, nightApplied: s.night, holidayApplied: s.holiday, surchargePercent: s.percent, surcharge, distanceFee,

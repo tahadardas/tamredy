@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { createPrivateKey, randomUUID } from 'node:crypto';
+import { callIsRinging } from './call-delivery.ts';
 import jwt from 'jsonwebtoken';
 
 export type RecipientRole = 'PATIENT' | 'NURSE' | 'ADMIN' | 'CLINICAL_REVIEWER';
@@ -182,7 +183,12 @@ export class FcmClient {
   private tokenRequest?: Promise<string>;
   private readonly sa: ServiceAccount;
   private readonly fetchImpl: Fetch;
-  constructor(sa: ServiceAccount, fetchImpl: Fetch = fetch) { this.sa = sa; this.fetchImpl = fetchImpl; }
+  private readonly observeResult: ((ok: boolean) => void) | undefined;
+  constructor(sa: ServiceAccount, fetchImpl: Fetch = fetch, observeResult?: (ok: boolean) => void) {
+    this.observeResult = observeResult;
+    this.sa = sa;
+    this.fetchImpl = fetchImpl;
+  }
 
   async accessToken(): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
@@ -240,18 +246,23 @@ export class FcmClient {
         method: 'POST', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (r.ok) return { result: 'ok' };
+      if (r.ok) {
+        this.observeResult?.(true);
+        return { result: 'ok' };
+      }
       const errText = await r.text();
       let e: any = {};
       try { e = JSON.parse(errText); } catch {}
       if (r.status === 404 || r.status === 400) {
         if (e.error?.details?.some((d: any) => d.errorCode === 'UNREGISTERED') || e.error?.status === 'NOT_FOUND') {
-          return { result: 'unregistered', errorDetail: errText };
+          return { result: 'unregistered', errorDetail: 'Device token no longer registered' };
         }
       }
-      return { result: 'error', errorDetail: `HTTP ${r.status}: ${errText}` };
+      this.observeResult?.(false);
+      return { result: 'error', errorDetail: `HTTP ${r.status}` };
     } catch (err: any) {
-      return { result: 'error', errorDetail: err?.message || String(err) };
+      this.observeResult?.(false);
+      return { result: 'error', errorDetail: 'FCM transport failed' };
     }
   }
 }
@@ -477,6 +488,8 @@ export async function pushDeliverBatch(
         targetApp: targetAppForRole(resolvedRole) ?? item.data.targetApp ?? '',
       };
 
+      if (eventType === 'call.incoming' && !await callIsRinging(db, payloadData.callId, item.user, payloadData.sessionVersion)) continue;
+
       const ttl = item.expiresAt ? (item.expiresAt.getTime() - Date.now()) / 1000 : 45;
       const res = ['offer.closed', 'offer.expired'].includes(eventType)
         ? await fcm.sendClosureDetailed(dev.token, payloadData)
@@ -582,7 +595,8 @@ export async function retryPendingPushes(db: Db, fcm: FcmClient): Promise<number
 
     const copy = pushCopy(payload.type, payload, payload.recipientRole);
     const isOffer = payload.type === 'offer.created';
-    if (!copy || (isOffer && !open.has(payload.offerId))) {
+    if (!copy || (isOffer && !open.has(payload.offerId)) ||
+        (payload.type === 'call.incoming' && !await callIsRinging(db, payload.callId, row.recipient_user_id, payload.sessionVersion))) {
       await finish("status='ABANDONED'");
       continue;
     }
@@ -633,13 +647,15 @@ export function loadServiceAccount(raw: string | undefined): ServiceAccount | un
   if (!raw?.trim()) return undefined;
   try {
     const sa = JSON.parse(raw) as ServiceAccount;
-    if (!sa.project_id || !sa.client_email || !sa.private_key) {
+    if (typeof sa.project_id !== 'string' || !sa.project_id.trim() ||
+        typeof sa.client_email !== 'string' || !sa.client_email.includes('@') ||
+        typeof sa.private_key !== 'string' || createPrivateKey(sa.private_key).asymmetricKeyType !== 'rsa') {
       console.warn('[FCM] Incomplete service account structure');
       return undefined;
     }
     return sa;
-  } catch (e) {
-    console.warn('[FCM] Failed to parse service account JSON:', e);
+  } catch {
+    console.warn('[FCM] Invalid service account configuration');
     return undefined;
   }
 }

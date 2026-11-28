@@ -512,7 +512,7 @@ class _UnpaidInvoicesSection extends StatelessWidget {
               ListRow(
                 icon: Icons.payments_outlined,
                 title: invoices[i].serviceTitle ?? 'فاتورة زيارة #${invoices[i].requestId.substring(0, invoices[i].requestId.length.clamp(0, 6))}',
-                subtitle: 'المتبقي: ${formatMoney(invoices[i].remaining)} ${invoices[i].currencyCode}',
+                subtitle: 'المتبقي: ${invoices[i].formattedRemaining}',
                 divider: i < invoices.length - 1,
                 trailing: Icon(Icons.chevron_left_rounded, color: tc.textSecondary),
                 onTap: () async {

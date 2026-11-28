@@ -1,11 +1,10 @@
 import { OUTBOX_HEALTH_SQL } from './readiness-queries.js';
-import { readFile } from 'node:fs/promises';
-import { createPrivateKey } from 'node:crypto';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { GeoIndexService } from '../live-location/geo-index.service.js';
 import { missingMigrations, requiredMigrations } from '../../../../packages/backend-policy/schema.mjs';
 import { FeatureCapabilitiesService } from './feature-capabilities.service.js';
+import { featureCapabilities, runtimeConfigFingerprint } from '../../../../packages/backend-policy/capabilities.mjs';
 
 @Injectable()
 export class ReadinessService {
@@ -15,6 +14,8 @@ export class ReadinessService {
   async report() {
     const checks: Record<string, unknown> = {};
     const failures: string[] = [];
+    const features = featureCapabilities();
+    const expectedFingerprint = runtimeConfigFingerprint(features);
     try {
       await this.db.query('SELECT 1');
       checks.database = {ok:true, pool:this.db.poolStats()};
@@ -31,7 +32,7 @@ export class ReadinessService {
       failures.push('MIGRATION_COMPATIBILITY_ERROR');
     }
     try {
-      const result = (await this.db.query(OUTBOX_HEALTH_SQL)).rows[0];
+      const result = (await this.db.query(OUTBOX_HEALTH_SQL, [features.realtimeEnabled, features.pushEnabled])).rows[0];
       const age = (value: unknown) => value ? (Date.now()-new Date(String(value)).getTime())/1000 : 0;
       const limit = Number(process.env.READINESS_OUTBOX_MAX_AGE_SECONDS ?? 120);
       const healthy = age(result?.oldest_realtime) <= limit && age(result?.oldest_push) <= limit && Number(result?.dead_letter_count) === 0;
@@ -43,17 +44,45 @@ export class ReadinessService {
       failures.push('OUTBOX_MONITOR_UNAVAILABLE');
     }
     try {
-      const heartbeat = (await this.db.query('SELECT max(received_at) AS last_seen FROM worker_heartbeats')).rows[0]?.last_seen;
-      const age = heartbeat ? (Date.now()-new Date(heartbeat).getTime())/1000 : null;
-      const ok = age !== null && age <= Number(process.env.READINESS_WORKER_MAX_AGE_SECONDS ?? 30);
-      checks.worker = {ok, workerHeartbeatAge:age};
-      if (!ok) failures.push('WORKER_UNAVAILABLE');
+      const limit = Number(process.env.READINESS_WORKER_MAX_AGE_SECONDS ?? 30);
+      const worker = (await this.db.query(`SELECT *, extract(epoch FROM statement_timestamp()-received_at) AS age_seconds
+        FROM worker_heartbeats WHERE received_at >= statement_timestamp() - $1::double precision * interval '1 second'
+        ORDER BY (runtime_config_fingerprint IS NOT DISTINCT FROM $2) DESC, received_at DESC LIMIT 1`,
+      [limit, expectedFingerprint])).rows[0];
+      const fresh = !!worker && Number(worker.age_seconds) <= limit;
+      const configMatches = fresh && worker.runtime_config_fingerprint === expectedFingerprint;
+      const versionMatches = fresh && worker.worker_version === (process.env.TAMREEDY_RELEASE ?? '3.1.0-rc.3');
+      const lastDispatchSuccess = worker?.dispatch_last_success_at;
+      const dispatchOperational = fresh && !!lastDispatchSuccess &&
+        Date.now() - new Date(lastDispatchSuccess).getTime() <= limit * 1000 &&
+        (!worker.dispatch_last_error_at || worker.dispatch_last_success_at >= worker.dispatch_last_error_at);
+      checks.worker = {ok:fresh && configMatches && versionMatches && dispatchOperational,
+        workerHeartbeatAge:fresh ? Number(worker.age_seconds) : null, version:worker?.worker_version ?? null,
+        configFingerprint:worker?.runtime_config_fingerprint ?? null, configMatches, versionMatches,
+        dispatchOperational, dispatchLastSuccessAt:worker?.dispatch_last_success_at ?? null,
+        dispatchLastErrorAt:worker?.dispatch_last_error_at ?? null};
+      if (!fresh) failures.push('WORKER_UNAVAILABLE');
+      else if (!configMatches || !versionMatches) failures.push('WORKER_CONFIGURATION_MISMATCH');
+      else if (!dispatchOperational) failures.push('DISPATCH_UNAVAILABLE');
+      const configured = fresh ? worker.push_configured === true : null;
+      const operational = fresh ? worker.push_operational ?? null : null;
+      const pushStatus = !features.pushEnabled ? 'DISABLED' : !fresh || !configured ? 'UNKNOWN'
+        : operational === true ? 'OPERATIONAL' : operational === false ? 'DEGRADED' : 'CONFIGURED';
+      checks.push = {status:pushStatus, configured, operational, required:features.pushEnabled,
+        lastSuccessAt:worker?.push_last_success_at ?? null, lastErrorAt:worker?.push_last_error_at ?? null};
+      if (features.pushEnabled && fresh && !configured) failures.push('FCM_NOT_CONFIGURED');
+      if (features.pushEnabled && fresh && configured && operational === false) failures.push('FCM_DEGRADED');
+      const realtimeOperational = fresh ? worker.realtime_operational ?? null : null;
+      checks.realtime = {operational:realtimeOperational, required:features.realtimeEnabled,
+        lastSuccessAt:worker?.realtime_last_success_at ?? null, lastErrorAt:worker?.realtime_last_error_at ?? null};
+      if (features.realtimeEnabled && fresh && realtimeOperational !== true) failures.push('REALTIME_UNAVAILABLE');
     } catch {
       checks.worker = {ok:false, status:'unknown'};
+      checks.push = {status:features.pushEnabled ? 'UNKNOWN' : 'DISABLED', required:features.pushEnabled};
       failures.push('WORKER_MONITOR_UNAVAILABLE');
     }
     const redis = await this.geo.healthStatus();
-    const redisRequired = redis.enabled || process.env.REALTIME_ENABLED !== 'false';
+    const redisRequired = (redis.enabled && !features.locationPostgresFallbackEnabled) || features.realtimeEnabled;
     // Geo client only exists when live GEO is enabled; test the realtime Redis separately otherwise.
     let connected = redis.connected;
     if (redisRequired && !redis.enabled) {
@@ -71,23 +100,7 @@ export class ReadinessService {
     }
     checks.redis = {...redis, required:redisRequired, connected};
     if (redisRequired && !connected) failures.push('REDIS_UNAVAILABLE');
-    let pushConfigured = false;
-    if (process.env.FCM_SERVICE_ACCOUNT_FILE || process.env.FCM_SERVICE_ACCOUNT_JSON) {
-      try {
-        const raw = process.env.FCM_SERVICE_ACCOUNT_FILE
-          ? await readFile(process.env.FCM_SERVICE_ACCOUNT_FILE, 'utf8')
-          : process.env.FCM_SERVICE_ACCOUNT_JSON!;
-        const account = JSON.parse(raw) as Record<string, unknown>;
-        pushConfigured = typeof account.project_id === 'string' && account.project_id.length > 0
-          && typeof account.client_email === 'string' && account.client_email.includes('@')
-          && typeof account.private_key === 'string'
-          && createPrivateKey(account.private_key).asymmetricKeyType === 'rsa';
-      } catch { pushConfigured = false; }
-    }
-    const pushRequired = process.env.PUSH_ENABLED !== 'false';
-    checks.push = {configured:pushConfigured, required:pushRequired};
-    if (pushRequired && !pushConfigured) failures.push('FCM_NOT_CONFIGURED');
-    const voiceRequired = process.env.VOICE_ENABLED !== 'false';
+    const voiceRequired = features.voiceEnabled;
     const turnUrls = process.env.TURN_URLS?.split(',').map(value => value.trim()).filter(Boolean) ?? [];
     const voiceConfigured = turnUrls.length > 0 && turnUrls.every(value => /^turns?:[^\s,]+$/.test(value))
       && Boolean(process.env.TURN_SHARED_SECRET?.trim());

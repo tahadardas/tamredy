@@ -1,7 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import { conflict, gone, missing } from '../common/errors.js';
-import { commissionFor, computeBill, ruleFromRow } from '../pricing/pricing.js';
+import { computeBill, ruleFromRow } from '../pricing/pricing.js';
 import { FeesService } from '../pricing/fees.service.js';
 import { RoutesService } from '../maps/routes.service.js';
 import { NurseEligibilityEngine } from './nurse-eligibility.engine.js';
@@ -183,7 +183,7 @@ export class DispatchService {
         JOIN nurses n ON n.id=a.nurse_id WHERE a.id=$1 AND n.user_id=$2`,[assignmentId,userId]);
       if(!assignmentLookup.rowCount) missing();
       const {request_id:requestId,nurse_id:nurseId}=assignmentLookup.rows[0];
-      const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,currency_code,commission_bps,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
+      const rr=await c.query('SELECT id,status,version,requester_user_id,pricing,promo_snapshot,price_amount,currency_code,commission_bps,commission_bps_applied,travel_distance_m FROM care_requests WHERE id=$1 FOR UPDATE',[requestId]);
       const request=rr.rows[0];
       await c.query('SELECT id FROM nurses WHERE id=$1 FOR UPDATE',[nurseId]);
       const assignment=await c.query(`SELECT id,status,commission_policy_snapshot,
@@ -325,14 +325,10 @@ export class DispatchService {
             FROM visits WHERE assignment_id=$1`,[assignmentId]);
           const pricing=request.pricing&&Object.keys(request.pricing).length?request.pricing:{basePrice:request.price_amount};
           const policySnapshot = assignment.rows[0]?.commission_policy_snapshot as { appliedCommissionBps?: number } | null;
-          let bps: number;
-          if (policySnapshot && typeof policySnapshot.appliedCommissionBps === 'number') {
-            // BUG-012: apply locked commission snapshot captured at assignment instead of retroactively changing tiers
-            bps = policySnapshot.appliedCommissionBps;
-          } else {
-            const rep=await this.fees.reputation(c,nurseId);
-            bps=commissionFor(Number(request.commission_bps??2000),await this.fees.tiers(c),rep.reputation,rep.reviews);
-          }
+          // Preserve the original assigned rate (including a valid zero). For
+          // a legacy assignment without a tier snapshot use its stored request
+          // rate instead of applying today's mutable tiers retroactively.
+          const bps = Number(policySnapshot?.appliedCommissionBps ?? request.commission_bps_applied ?? request.commission_bps);
           const delivered = (await c.query(`SELECT
             coalesce(sum(unit_price*performed_quantity),0) AS base_price,
             coalesce(sum(round(expected_minutes::numeric*performed_quantity/quantity)),0) AS included_minutes,

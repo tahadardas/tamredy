@@ -1,0 +1,34 @@
+تحديث خادم تمريضي 3.1 RC3
+
+1. ارفع الملفات tamreedy-server.tar.gz وRELEASE_MANIFEST.json وSHA256SUMS.txt إلى مجلد نقل خاص، مثل /srv/tamreedy-transfer. ارفع server-images/tamreedy-images-linux.tar.gz فقط إذا كان متاحًا في البيان ويطابق معمارية خادمك. ملف ZIP بديل لنقل المصدر، ويستخدم الإجراء أدناه نسخة tar.gz المعتمدة للتحقق من الاستخراج.
+
+2. تحقّق من البصمات قبل الفك، ثم فك الإصدار في مجلد جديد. أبقِ المجلد الحالي وملف بيئته وشهاداته وملف Firebase ومفتاح تشفير الملفات كما هي. حدّد المسارات الفعلية قبل نسخ الأوامر.
+
+export TRANSFER_DIR=/srv/tamreedy-transfer
+export CURRENT_ROOT=/srv/tamreedy-current
+export CURRENT_ENV="$CURRENT_ROOT/infra/docker/.env"
+export BACKUP_DIR="/srv/tamreedy-backups/rc3-$(date -u +%Y%m%dT%H%M%SZ)"
+cd "$TRANSFER_DIR"
+awk '$2=="tamreedy-server.tar.gz" || $2=="RELEASE_MANIFEST.json"' SHA256SUMS.txt | sha256sum --strict -c -
+mkdir /srv/tamreedy-rc3
+tar -xzf tamreedy-server.tar.gz -C /srv/tamreedy-rc3
+cd /srv/tamreedy-rc3
+bash infra/docker/release/preflight.sh
+
+إذا كانت الإعدادات الحالية تعتمد Compose Override عيّن CURRENT_OVERRIDE إلى مساره المطلق. عند وجود مسارات مخصصة لشهادات TURN أو Firebase، عيّن TURN_TLS_DIR وFCM_SERVICE_ACCOUNT_HOST_FILE للمسارات المطلقة الحالية. يمكن تحديد CURRENT_MANIFEST لمسار بيان الإصدار الحالي عند وجوده خارج المجلد الحالي.
+
+3. رتّب نافذة الصيانة، وأوقف قبول الطلبات الجديدة عبر لوحة الإدارة الحالية وانتظر انتهاء الطلبات القائمة. السكربت يوقف خدمات التطبيق ويأخذ نسخة PostgreSQL ونسخة الملفات المشفرة قبل الترحيل. اجعل مجلد النسخ الاحتياطي متاحًا للمالك المخول فقط. استخدم BACKUP_ENV=true إذا احتجت نسخة محمية من ملف البيئة، واحفظ المفتاح الحالي منفصلًا في مخزن الأسرار. فحص قراءة النسخة لا يثبت الاستعادة.
+
+export CONFIRM_MAINTENANCE_WINDOW=tamreedy-rc3
+bash infra/docker/release/deploy.sh source
+bash infra/docker/release/verify.sh
+
+عند توفر صور معتمدة اختر deploy.sh prebuilt بدل وضع source. يستخدم الوضع المسبق الصور ذات الوسوم المحددة في البيان ولا يعيد بناءها. راجع الجاهزية ثم استأنف قبول الطلبات من لوحة الإدارة بقرار المالك.
+
+4. عند الحاجة إلى الرجوع، أبقِ قبول الطلبات موقوفًا واستخدم المسارات ونافذة الصيانة أعلاه، ثم نفّذ:
+
+bash infra/docker/release/rollback.sh
+
+يتوقف الرجوع إذا تغيّرت قائمة الترحيلات أو غاب دليل الإصدار السابق. تتطلب هذه الحالة خطة استعادة معتمدة. لا تستعد قاعدة البيانات تلقائيًا، إذ يمكن أن يؤدي ذلك إلى فقد عمليات لاحقة للنسخ الاحتياطي. احتفظ بالصور والأقراص وإعدادات الوكيل وشهادات SSL القائمة.
+
+5. الاختبارات المؤجلة لبيئة Staging تشمل الضغط الكبير، وFCM على أجهزة حقيقية، وWebRTC/ICE/TURN، واختبار استعادة مستقل للنسخ الاحتياطية، وiOS عند توفر macOS.

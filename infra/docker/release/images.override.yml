@@ -1,0 +1,9 @@
+services:
+  migrate:
+    image: ${TAMREEDY_API_IMAGE:?set TAMREEDY_API_IMAGE}
+  api:
+    image: ${TAMREEDY_API_IMAGE:?set TAMREEDY_API_IMAGE}
+  worker:
+    image: ${TAMREEDY_WORKER_IMAGE:?set TAMREEDY_WORKER_IMAGE}
+  admin:
+    image: ${TAMREEDY_ADMIN_IMAGE:?set TAMREEDY_ADMIN_IMAGE}

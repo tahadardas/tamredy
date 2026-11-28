@@ -102,16 +102,29 @@ test('PostgreSQL preserves assignment, lifecycle, billing and recovery invariant
   await dispatch.transition(winner.user,assignment,'complete');
   assert.equal((await dispatch.transition(winner.user,assignment,'complete')).replayed,true);
   const collect=(amount,key)=>db.transaction(c=>billing.collectCash(c,winner.user,request.id,amount,key));
-  const concurrent=await Promise.all([collect(750,'first'),collect(750,'first')]);
+  const firstKey=`${tag}:first`;
+  const concurrent=await Promise.all([collect(750,firstKey),collect(750,firstKey)]);
   assert.equal(concurrent.filter(response=>response.replayed).length,1);
   const partial=concurrent.find(response=>!response.replayed);
   assert.equal(partial.status,'PARTIALLY_PAID');
-  assert.equal((await collect(750,'first')).replayed,true);
-  await assert.rejects(collect(751,'first'),error=>error.getResponse?.().code==='FINANCIAL_IDEMPOTENCY_KEY_REUSED');
-  assert.equal((await collect(1250,'second')).status,'PAID');
+  assert.equal(partial.currencyCode,'SYP_NEW');
+  assert.equal(concurrent[0].paymentId,concurrent[1].paymentId);
+  const recovered=await billing.collectionStatus(db,winner.user,request.id,firstKey);
+  assert.equal(recovered.paymentId,partial.paymentId);
+  assert.equal(recovered.invoiceId,partial.invoiceId);
+  assert.equal(recovered.invoiceVersion,partial.invoiceVersion);
+  await assert.rejects(billing.collectionStatus(db,nurseEntries[1-winnerIndex].user,request.id,firstKey),
+    error=>error.getResponse?.().code==='INVOICE_NOT_COLLECTIBLE');
+  assert.equal((await billing.collectionStatus(db,winner.user,request.id,`${tag}:pending`)).found,false);
+  assert.equal((await collect(750,firstKey)).replayed,true);
+  await assert.rejects(collect(751,firstKey),error=>error.getResponse?.().code==='FINANCIAL_IDEMPOTENCY_KEY_REUSED');
+  const second=await collect(750,`${tag}:second`);
+  assert.equal(second.status,'PARTIALLY_PAID');
+  assert.notEqual(second.paymentId,partial.paymentId);
+  assert.equal((await collect(500,`${tag}:third`)).status,'PAID');
   const reconciled=(await q(`SELECT i.total_amount::text,i.paid_amount::text,count(c.id)::int AS receipts
     FROM invoices i JOIN cash_collections c ON c.visit_id=i.visit_id WHERE i.request_id=$1 GROUP BY i.id`,[request.id])).rows[0];
-  assert.deepEqual(reconciled,{total_amount:'2000.00',paid_amount:'2000.00',receipts:2});
+  assert.deepEqual(reconciled,{total_amount:'2000.00',paid_amount:'2000.00',receipts:3});
   assert.equal((await q('SELECT count(*)::int AS count FROM financial_unbalanced_transactions')).rows[0].count,0);
   const nursePosition=await new DuesService().balance(db,winner.nurse,'SYP_NEW');
   assert.equal(nursePosition.balance,400);

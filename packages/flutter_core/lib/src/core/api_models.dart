@@ -1,4 +1,15 @@
 import 'package:dio/dio.dart';
+import '../format.dart';
+
+MoneyAmount? _moneyField(Object? raw, Object? currency) =>
+    raw == null || currency is! String || currency.isEmpty ? null :
+        MoneyAmount.parse(raw, currency, decimalPlaces: currency == 'SYP_NEW' ? 0 : 2);
+
+int _moneyMajor(Object? raw) {
+  if (raw == null) return 0;
+  final money = MoneyAmount.parse(raw, '');
+  return (money.amountMinor ~/ BigInt.from(10).pow(money.decimalPlaces)).toInt();
+}
 
 /// Explicit network & backend availability states (Phase 9, Section 50).
 enum ConnectionHealth {
@@ -251,7 +262,7 @@ class TypedCareRequestItem {
     titleAr: '${j['title_ar'] ?? j['titleAr'] ?? j['service_title'] ?? ''}',
     quantity: (num.tryParse('${j['quantity'] ?? 1}') ?? 1).toInt(),
     performedQuantity: (num.tryParse('${j['performed_quantity'] ?? 0}') ?? 0).toInt(),
-    unitPrice: (num.tryParse('${j['unit_price'] ?? j['unitPrice'] ?? 0}') ?? 0).round(),
+    unitPrice: _moneyMajor(j['unit_price'] ?? j['unitPrice']),
     expectedMinutes: (num.tryParse('${j['expected_minutes'] ?? j['expectedMinutes'] ?? 30}') ?? 30).toInt(),
     actualMinutes: j['actual_minutes'] != null ? (num.tryParse('${j['actual_minutes']}') ?? 0).toInt() : null,
     itemStatus: '${j['item_status'] ?? j['status'] ?? 'PENDING'}',
@@ -266,6 +277,9 @@ class TypedCareRequest {
   final String status;
   final int version;
   final int priceAmount;
+  final MoneyAmount? exactPriceAmount, exactAmountDue, exactTipAmount;
+  String get formattedTotal => (exactAmountDue ?? exactPriceAmount)?.formatted ??
+      (currencyCode.isEmpty ? '—' : formatMoney(amountDue ?? priceAmount,currency:currencyCode));
   final String currencyCode;
   final String bookingMode;
   final String? marketplaceStatus;
@@ -299,6 +313,7 @@ class TypedCareRequest {
     required this.status,
     this.version = 1,
     this.priceAmount = 0,
+    this.exactPriceAmount, this.exactAmountDue, this.exactTipAmount,
     this.currencyCode = 'SYP_NEW',
     this.bookingMode = 'INSTANT',
     this.marketplaceStatus,
@@ -363,6 +378,9 @@ class TypedCareRequest {
       id: incoming.id.isNotEmpty ? incoming.id : id,
       status: incoming.status.isNotEmpty ? incoming.status : status,
       version: incoming.version,
+      exactPriceAmount: incoming.exactPriceAmount ?? exactPriceAmount,
+      exactAmountDue: incoming.exactAmountDue ?? exactAmountDue,
+      exactTipAmount: incoming.exactTipAmount ?? exactTipAmount,
       priceAmount: incoming.priceAmount != 0 ? incoming.priceAmount : priceAmount,
       currencyCode: incoming.currencyCode.isNotEmpty ? incoming.currencyCode : currencyCode,
       bookingMode: incoming.bookingMode.isNotEmpty ? incoming.bookingMode : bookingMode,
@@ -411,16 +429,19 @@ class TypedCareRequest {
       id: '${j['id'] ?? j['request_id'] ?? ''}',
       status: '${j['status'] ?? j['request_status'] ?? ''}',
       version: (num.tryParse('${j['version'] ?? 1}') ?? 1).toInt(),
-      priceAmount: (num.tryParse('${j['price_amount'] ?? 0}') ?? 0).round(),
-      currencyCode: '${j['currency_code'] ?? 'SYP_NEW'}',
+      priceAmount: _moneyMajor(j['price_amount']),
+      exactPriceAmount: _moneyField(j['price_amount'],j['currency_code']),
+      exactAmountDue: _moneyField(j['amount_due'],j['currency_code']),
+      exactTipAmount: _moneyField(j['tip_amount'],j['currency_code']),
+      currencyCode: '${j['currency_code'] ?? ''}',
       bookingMode: '${j['booking_mode'] ?? 'INSTANT'}',
       marketplaceStatus: j['marketplace_status']?.toString(),
       clinicalApprovalStatus: j['clinical_approval_status']?.toString(),
       paymentStatus: j['payment_status']?.toString(),
       visitOutcome: (j['visit_outcome'] ?? j['visitOutcome'])?.toString(),
       visitOutcomeReason: (j['visit_outcome_reason'] ?? j['visitOutcomeReason'])?.toString(),
-      amountDue: j['amount_due'] != null ? (num.tryParse('${j['amount_due']}') ?? 0).round() : null,
-      tipAmount: (num.tryParse('${j['tip_amount'] ?? 0}') ?? 0).round(),
+      amountDue: j['amount_due'] != null ? _moneyMajor(j['amount_due']) : null,
+      tipAmount: _moneyMajor(j['tip_amount']),
       serviceTitle: '${j['service_title'] ?? ''}',
       beneficiaryName: '${j['beneficiary_name'] ?? ''}',
       addressText: j['address_text']?.toString(),
@@ -525,6 +546,9 @@ class TypedUnpaidInvoice {
   final String invoiceId;
   final String status;
   final int remaining;
+  final MoneyAmount? exactRemaining;
+  String get formattedRemaining => exactRemaining?.formatted ??
+      (currencyCode.isEmpty ? '—' : formatMoney(remaining,currency:currencyCode));
   final String currencyCode;
   final String? serviceTitle;
   final String? beneficiaryName;
@@ -535,6 +559,7 @@ class TypedUnpaidInvoice {
     required this.invoiceId,
     required this.status,
     required this.remaining,
+    this.exactRemaining,
     this.currencyCode = 'SYP_NEW',
     this.serviceTitle,
     this.beneficiaryName,
@@ -545,8 +570,9 @@ class TypedUnpaidInvoice {
     assignmentId: '${j['assignment_id'] ?? j['assignmentId'] ?? ''}',
     invoiceId: '${j['invoice_id'] ?? j['invoiceId'] ?? j['id'] ?? ''}',
     status: '${j['status'] ?? 'ISSUED'}',
-    remaining: (num.tryParse('${j['remaining'] ?? 0}') ?? 0).round(),
-    currencyCode: '${j['currency_code'] ?? 'SYP_NEW'}',
+    remaining: _moneyMajor(j['remaining']),
+    exactRemaining: _moneyField(j['remaining'],j['currency_code']),
+    currencyCode: '${j['currency_code'] ?? ''}',
     serviceTitle: j['service_title']?.toString(),
     beneficiaryName: j['beneficiary_name']?.toString(),
   );
@@ -561,6 +587,10 @@ class TypedNurseOffer {
   final int expectedMinutes;
   final int priceAmount;
   final int nurseShare;
+  final String currencyCode;
+  final MoneyAmount? exactNurseShare;
+  String get formattedNurseShare => exactNurseShare?.formatted ??
+      (currencyCode.isEmpty ? '—' : formatMoney(nurseShare,currency:currencyCode));
   final int waveNo;
   final DateTime expiresAt;
   final DateTime serverNow;
@@ -574,6 +604,8 @@ class TypedNurseOffer {
     required this.expectedMinutes,
     required this.priceAmount,
     required this.nurseShare,
+    this.currencyCode = 'SYP_NEW',
+    this.exactNurseShare,
     this.waveNo = 1,
     required this.expiresAt,
     required this.serverNow,
@@ -591,11 +623,11 @@ class TypedNurseOffer {
     final serverNow = DateTime.tryParse('${j['server_now'] ?? ''}') ?? DateTime.now();
     final expiresAt = DateTime.tryParse('${j['expires_at'] ?? ''}') ??
         serverNow.add(const Duration(seconds: 30));
-    final price = (num.tryParse('${j['price_amount'] ?? 0}') ?? 0).round();
+    final price = _moneyMajor(j['price_amount']);
     final bps = (num.tryParse('${j['commission_bps'] ?? 2000}') ?? 2000).toInt();
     final share = j['nurse_share'] != null
-        ? (num.tryParse('${j['nurse_share']}') ?? 0).round()
-        : (price * (10000 - bps) / 10000).round();
+        ? _moneyMajor(j['nurse_share'])
+        : ((BigInt.from(price) * BigInt.from(10000 - bps) + BigInt.from(5000)) ~/ BigInt.from(10000)).toInt();
     return TypedNurseOffer(
       offerId: '${j['id'] ?? j['offerId'] ?? ''}',
       requestId: '${j['request_id'] ?? j['requestId'] ?? ''}',
@@ -605,6 +637,8 @@ class TypedNurseOffer {
       expectedMinutes: (num.tryParse('${j['expected_minutes'] ?? 30}') ?? 30).toInt(),
       priceAmount: price,
       nurseShare: share,
+      currencyCode: '${j['currency_code'] ?? ''}',
+      exactNurseShare: _moneyField(j['nurse_share'],j['currency_code']),
       waveNo: (num.tryParse('${j['wave_no'] ?? 1}') ?? 1).toInt(),
       expiresAt: expiresAt,
       serverNow: serverNow,

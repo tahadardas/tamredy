@@ -18,6 +18,8 @@ class NurseFinanceStore extends ChangeNotifier {
   int? balance;
   List<Map<String, dynamic>> financialAccountsByCurrency = const [];
   bool legacyReconciliationRequired = false;
+  bool financialSetupRequired = false;
+  Map<String,dynamic>? primaryPosition;
   String? currencyCode;
   int _refreshGeneration = 0;
   bool isBlocked = false;
@@ -33,6 +35,8 @@ class NurseFinanceStore extends ChangeNotifier {
     _refreshGeneration++;
     financialAccountsByCurrency = const [];
     legacyReconciliationRequired = false;
+    financialSetupRequired = false;
+    primaryPosition = null;
     currencyCode = null;
     todayEarnings = null;
     netDue = null;
@@ -86,13 +90,24 @@ class NurseFinanceStore extends ChangeNotifier {
           ? accounts.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList() : const [];
       currencyCode = sum['currencyCode']?.toString();
       legacyReconciliationRequired = sum['legacyReconciliationRequired'] == true;
+      financialSetupRequired = sum['financialStatus'] == 'FINANCIAL_SETUP_REQUIRED';
+      final currencies = dues['balancesByCurrency'];
+      primaryPosition = null;
+      if (currencies is List) {
+        for (final position in currencies.whereType<Map>()) {
+          if (position['currencyCode'] == currencyCode) {
+            primaryPosition = Map<String,dynamic>.from(position);
+            break;
+          }
+        }
+      }
 
       todayEarnings = (num.tryParse('${sum['today_earnings'] ?? sum['earnings']?['today'] ?? sum['todayEarnings'] ?? dues['todayEarnings'] ?? 0}') ?? 0).round();
       netDue = (num.tryParse('${dues['netDue'] ?? dues['net'] ?? sum['net_balance'] ?? 0}') ?? 0).round();
       monthVisits = (num.tryParse('${dues['monthVisits'] ?? sum['completed_visits'] ?? 0}') ?? 0).toInt();
       commission = (num.tryParse('${dues['commission'] ?? sum['total_commission'] ?? 0}') ?? 0).round();
       balance = (num.tryParse('${dues['balance'] ?? sum['cash_balance'] ?? 0}') ?? 0).round();
-      isBlocked = dues['blocked'] == true;
+      isBlocked = sum['isFinanciallyBlocked'] == true;
       companyOwedAmount = (num.tryParse('${dues['nurseOwesCompany'] ?? dues['cashHeld'] ?? 0}') ?? 0).round();
       nurseOwedAmount = (num.tryParse('${dues['companyOwesNurse'] ?? dues['prepaidBalance'] ?? 0}') ?? 0).round();
 

@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:tamreedy_core/tamreedy_core.dart';
 import '../../core/nurse_session_coordinator.dart';
 
+String _money(Object? amount, Object? currency) {
+  if (amount == null || currency is! String || currency.isEmpty) return '—';
+  return formatMoney(amount,currency:currency);
+}
+
 class FinancialCenterScreen extends StatelessWidget {
   final NurseSessionCoordinator session;
 
@@ -41,20 +46,22 @@ class FinancialCenterScreen extends StatelessWidget {
                             onRetry: store.refresh,
                           )
                         else ...[
+                          if (store.financialSetupRequired)
+                            const NoticeBox('حسابك معتمد طبيًا، ويحتاج إلى استكمال الإعداد المالي من الإدارة.'),
                           if (store.legacyReconciliationRequired)
                             const NoticeBox('الرصيد التاريخي يحتاج تسوية إدارية لإثبات العملة قبل استخدامه'),
                           for (final account in store.financialAccountsByCurrency)
                             TamCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               Text('حساب ${account['currencyCode']}', style: aeroText(size: 15, weight: FontWeight.w800)),
-                              KeyValueRow('الرصيد المسبق', '${account['prepaidBalance']} ${account['currencyCode']}'),
-                              KeyValueRow('المحجوز', '${account['reservedBalance']} ${account['currencyCode']}'),
-                              KeyValueRow('المتاح', '${account['availableBalance']} ${account['currencyCode']}'),
-                              KeyValueRow('الحد الائتماني', '${account['creditLimit']} ${account['currencyCode']}'),
+                              KeyValueRow('الرصيد المسبق', _money(account['prepaidBalance'],account['currencyCode'])),
+                              KeyValueRow('المحجوز', _money(account['reservedBalance'],account['currencyCode'])),
+                              KeyValueRow('المتاح', _money(account['availableBalance'],account['currencyCode'])),
+                              KeyValueRow('الحد الائتماني', _money(account['creditLimit'],account['currencyCode'])),
                               if (account['settlementRequired'] == true) const NoticeBox('يحتاج الحساب إلى تسوية'),
                             ])),
                           TamFinancialSummary(
                             title: 'صافي المستحقات الحالية',
-                            primaryValue: store.netDue != null ? formatMoney(store.netDue!) : '—',
+                            primaryValue: _money(store.primaryPosition?['balanceExact'] ?? store.primaryPosition?['balance'],store.currencyCode),
                             subtitle: 'بيانات موثقة ومطابقة لسجل القيود في الخادم',
                             metrics: [
                               (
@@ -64,7 +71,7 @@ class FinancialCenterScreen extends StatelessWidget {
                               ),
                               (
                                 label: 'عمولات المنصة',
-                                value: store.commission != null ? formatMoney(store.commission!) : '—',
+                                value: _money(store.commission,store.currencyCode),
                                 color: null,
                               ),
                             ],
@@ -77,10 +84,10 @@ class FinancialCenterScreen extends StatelessWidget {
                                 Text('تفصيل الرصيد والتوريد (${store.currencyCode})',
                                     style: aeroText(size: 14.5, weight: FontWeight.w800)),
                                 const SizedBox(height: 8),
-                                KeyValueRow('رصيد متاح لك', formatMoney(store.nurseOwedAmount)),
-                                KeyValueRow('مستحق توريده للشركة', formatMoney(store.companyOwedAmount)),
+                                KeyValueRow('رصيد متاح لك', _money(store.primaryPosition?['nursePayableExact'] ?? store.primaryPosition?['nursePayable'],store.currencyCode)),
+                                KeyValueRow('مستحق توريده للشركة', _money(store.primaryPosition?['cashHeldExact'] ?? store.primaryPosition?['cashHeld'],store.currencyCode)),
                                 if (store.balance != null)
-                                  KeyValueRow('الرصيد الدفتري', formatMoney(store.balance!)),
+                                  KeyValueRow('الرصيد الدفتري', _money(store.primaryPosition?['balanceExact'] ?? store.primaryPosition?['balance'],store.currencyCode)),
                               ],
                             ),
                           ),
@@ -96,14 +103,14 @@ class FinancialCenterScreen extends StatelessWidget {
                               TamCard(
                                 child: KeyValueRow(
                                   h['direction'] == 'FROM_NURSE' ? 'توريد للشركة' : 'دفعة مستلمة من الشركة',
-                                  formatMoney((num.tryParse('${h['amount'] ?? 0}') ?? 0).round()),
+                                  _money(h['amount'],h['currency_code']),
                                 ),
                               ),
                             for (final entry in store.ledgerEntries.take(20))
                               TamCard(
                                 child: KeyValueRow(
                                   '${entry['description'] ?? entry['entry_type'] ?? 'قيد مالي'}',
-                                  formatMoney((num.tryParse('${entry['amount'] ?? 0}') ?? 0).round()),
+                                  _money(entry['amount'] ?? entry['debit_amount'] ?? entry['credit_amount'],entry['currency']),
                                 ),
                               ),
                           ],

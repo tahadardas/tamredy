@@ -147,7 +147,7 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
                         'الموعد',
                         '${MaterialLocalizations.of(context).formatMediumDate(req.scheduledAt!.toLocal())} • ${TimeOfDay.fromDateTime(req.scheduledAt!.toLocal()).format(context)}',
                       ),
-                    KeyValueRow('القيمة التقديرية', formatMoney(req.amountDue ?? req.priceAmount)),
+                    KeyValueRow('القيمة التقديرية', req.formattedTotal),
                   ],
                 ),
               ),
